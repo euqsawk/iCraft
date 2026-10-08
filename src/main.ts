@@ -69,7 +69,16 @@ async function boot(): Promise<void> {
     if (saveTimer > RULES.autosaveSeconds) { saveTimer = 0; save(); }
   });
 
-  document.addEventListener('visibilitychange', () => { if (document.hidden) save(); });
+  // Absence : l'usine a tourné au ralenti, on montre ce qu'elle a produit.
+  let hiddenAt = 0;
+  const comeBack = (awayMs: number) => {
+    const report = game.catchUp(awayMs);
+    if (report) { hud.showAway(report); save(); }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { hiddenAt = Date.now(); save(); }
+    else if (hiddenAt) { comeBack(Date.now() - hiddenAt); hiddenAt = 0; }
+  });
   window.addEventListener('pagehide', save);
   loading.remove();
   requestPersistence();
@@ -77,10 +86,13 @@ async function boot(): Promise<void> {
   if (__DEV__ || new URLSearchParams(location.search).has('debug')) {
     (window as unknown as Record<string, unknown>).__game = game;
     (window as unknown as Record<string, unknown>).__renderer = renderer;
+    (window as unknown as Record<string, unknown>).__hud = hud;
   }
   if (!saved) {
     hud.toast('Touche le sol pour envoyer le robot', 'info');
     await save();
+  } else {
+    comeBack(Date.now() - saved.time);
   }
 }
 

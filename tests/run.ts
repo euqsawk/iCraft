@@ -97,6 +97,7 @@ test('un tapis tracé depuis une machine en sort, et entre dans la machine visé
   const g = new Game('TEST-4');
   g.money = 10000;
   const four = g.placeMachine('four', 4, 9)!;
+  assert(four, 'four non posé');
   const t = trace(g, [[2.5, 2.5], [2.5, 6.5], [2.5, 9.5], [4.5, 9.5]]);
   const r = t.result();
   assert(r[0].x === 2 && r[0].y === 4 && r[0].inDir === 1, `première case ${JSON.stringify(r[0])}`);
@@ -106,30 +107,31 @@ test('un tapis tracé depuis une machine en sort, et entre dans la machine visé
 console.log('Usine');
 function buildIronLine(g: Game): void {
   g.money = 10000;
-  g.world.reveal(-6, 0, 14);
-  assert(g.placeMachine('foreuse', -7, -3), 'foreuse fer');
-  assert(g.placeMachine('foreuse', -7, 6), 'foreuse charbon');
-  assert(g.placeMachine('four', -3, -3), 'four');
+  g.world.reveal(-6, 2, 20);
+  assert(g.placeMachine('foreuse', -13, -5), 'foreuse fer');
+  assert(g.placeMachine('foreuse', -12, 9), 'foreuse charbon');
+  assert(g.placeMachine('four', -8, -5), 'four');
   // Fer → four
-  assert(g.placeBelts(trace(g, [[-6.5, -2.5], [-3.5, -2.5], [-2.5, -2.5]]).result()), 'tapis fer');
+  assert(g.placeBelts(trace(g, [[-12.5, -4.5], [-8.5, -4.5], [-7.5, -4.5]]).result()), 'tapis fer');
   // Charbon → four (monte puis tourne)
-  assert(g.placeBelts(trace(g, [[-6.5, 6.5], [-4.5, 6.5], [-4.5, -1.5], [-2.5, -1.5]]).result()), 'tapis charbon');
+  assert(g.placeBelts(trace(g, [[-11.5, 9.5], [-9.5, 9.5], [-9.5, -3.5], [-7.5, -3.5]]).result()), 'tapis charbon');
   // Four → Noyau
-  assert(g.placeBelts(trace(g, [[-2.5, -2.5], [-0.5, -2.5], [-0.5, 0.5], [0.5, 0.5]]).result()), 'tapis noyau');
+  assert(g.placeBelts(trace(g, [[-7.5, -4.5], [-5.5, -4.5], [-5.5, 0.5], [0.5, 0.5]]).result()), 'tapis noyau');
 }
 
-test('les drones construisent tous les fantômes', () => {
+test('au départ, aucun drone : le robot construit seul tous les fantômes', () => {
   const g = new Game('TEST-5');
+  assert(g.drones.length === 0, `drones au départ : ${g.drones.length}`);
   buildIronLine(g);
   assert(g.pending.length > 10, `chantiers : ${g.pending.length}`);
-  run(g, 60);
+  run(g, 150);
   assert(g.pending.length === 0, `chantiers restants : ${g.pending.length}`);
 });
 test('foreuse → four à charbon → Noyau : la première commande se termine', () => {
   const g = new Game('TEST-6');
   buildIronLine(g);
   const xp0 = g.xp, money0 = g.money;
-  run(g, 120);
+  run(g, 260);
   const four = [...g.factory.machines.values()].find((m) => m.type === 'four')!;
   assert(four.made > 0, `le four n'a rien fabriqué (état ${four.status}, entrées ${JSON.stringify(four.inBuf)})`);
   assert(g.order === null && g.choices.length === 3, `commande : ${JSON.stringify(g.order?.lines)}`);
@@ -139,26 +141,68 @@ test('foreuse → four à charbon → Noyau : la première commande se termine',
 test('sans charbon, le four attend', () => {
   const g = new Game('TEST-7');
   g.money = 10000;
-  g.world.reveal(-6, 0, 14);
-  g.placeMachine('foreuse', -7, -3);
-  g.placeMachine('four', -3, -3);
-  g.placeBelts(trace(g, [[-6.5, -2.5], [-3.5, -2.5], [-2.5, -2.5]]).result());
-  run(g, 40);
+  g.world.reveal(-6, 2, 20);
+  g.placeMachine('foreuse', -13, -5);
+  g.placeMachine('four', -8, -5);
+  g.placeBelts(trace(g, [[-12.5, -4.5], [-8.5, -4.5], [-7.5, -4.5]]).result());
+  run(g, 80);
   const four = [...g.factory.machines.values()].find((m) => m.type === 'four')!;
   assert(four.made === 0 && four.status === 'nofuel', `état ${four.status}, fabriqués ${four.made}`);
 });
 test('les objets gardent leurs distances sur le tapis', () => {
   const g = new Game('TEST-8');
   g.money = 10000;
-  g.world.reveal(-6, 0, 14);
-  g.placeMachine('foreuse', -7, -3);
-  g.placeBelts(trace(g, [[-6.5, -2.5], [-1.5, -2.5]]).result());
-  run(g, 90);
+  g.world.reveal(-6, 2, 20);
+  g.placeMachine('foreuse', -13, -5);
+  g.placeBelts(trace(g, [[-12.5, -4.5], [-6.5, -4.5]]).result());
+  run(g, 120);
   const items: number[] = [];
   for (const b of g.factory.belts.values()) for (const it of b.items) items.push(b.x + it.p);
   items.sort((a, b) => a - b);
   for (let i = 1; i < items.length; i++) assert(items[i] - items[i - 1] >= 0.49, `écart ${items[i] - items[i - 1]}`);
   assert(items.length >= 8, `objets en file : ${items.length}`);
+});
+test('séparateur : un tapis tracé depuis le milieu d’un autre partage les objets', () => {
+  const g = new Game('TEST-11');
+  g.money = 10000;
+  g.level = 2;
+  g.world.reveal(-6, 2, 20);
+  g.placeMachine('foreuse', -13, -5);
+  g.placeBelts(trace(g, [[-12.5, -4.5], [-5.5, -4.5]]).result());
+  run(g, 60);
+  const t = trace(g, [[-8.5, -4.5], [-8.5, -2.5], [-8.5, 1.5]]);
+  assert(t.splitFrom && t.splitDir === 1 && t.valid, `dérivation non reconnue (${t.splitDir})`);
+  assert(g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir! }), 'pose de la dérivation');
+  run(g, 120);
+  const main = g.factory.beltAt(-6, -5)!, branch = g.factory.beltAt(-9, 1)!;
+  assert(main.items.length > 0 && branch.items.length > 0, `principal ${main.items.length}, dérivation ${branch.items.length}`);
+  g.removeAt(-9, -4); // on retire la première case de la dérivation
+  assert(g.factory.beltAt(-9, -5)!.split === undefined, 'le séparateur aurait dû redevenir un tapis simple');
+});
+test('séparateur réservé au niveau 2', () => {
+  const g = new Game('TEST-12');
+  g.money = 10000;
+  g.world.reveal(-6, 2, 20);
+  g.placeBelts(trace(g, [[-6.5, -8.5], [-2.5, -8.5]]).result());
+  run(g, 20);
+  const t = trace(g, [[-4.5, -8.5], [-4.5, -6.5]]);
+  assert(!g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir! }), 'devrait être refusé au niveau 1');
+});
+test('absence : 10 % de production, 8 h au plus, rien ne se livre tout seul', () => {
+  const g = new Game('TEST-13');
+  buildIronLine(g);
+  run(g, 200);
+  const order = g.order;
+  const doneBefore = order ? order.lines[0].done : 0;
+  const ingots0 = g.stock.lingot_fer ?? 0;
+  const r = g.catchUp(24 * 3600 * 1000, 20000)!;
+  assert(r.counted === 8 * 3600, `durée comptée ${r.counted}`);
+  const got = r.gained.lingot_fer ?? 0;
+  assert(got > 100, `lingots gagnés : ${got}`);
+  assert((g.stock.lingot_fer ?? 0) <= 500, 'stock du Noyau dépassé');
+  assert(!order || order.lines[0].done === doneBefore, 'la commande a avancé pendant l’absence');
+  assert((g.stock.lingot_fer ?? 0) === ingots0 + got, 'stock incohérent');
+  assert(g.catchUp(30 * 1000) === null, 'une absence de 30 s ne compte pas');
 });
 test('supprimer rembourse', () => {
   const g = new Game('TEST-9');
@@ -171,14 +215,23 @@ test('supprimer rembourse', () => {
 test('sauvegarde et rechargement', () => {
   const g = new Game('TEST-10');
   buildIronLine(g);
-  run(g, 50);
+  run(g, 120);
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
   assert(g2.factory.belts.size === g.factory.belts.size, 'tapis');
   assert(g2.factory.machines.size === g.factory.machines.size, 'machines');
   assert(g2.money === g.money && g2.level === g.level, 'argent / niveau');
-  run(g2, 60);
+  run(g2, 150);
   assert(g2.order === null || g2.order.lines[0].done > 0, 'la production ne reprend pas');
+});
+test('une ancienne sauvegarde (sans drones ni séparateurs) se charge', () => {
+  const g = new Game('TEST-14');
+  buildIronLine(g);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  delete s.drones;
+  s.factory.belts = s.factory.belts.map((b: unknown[]) => b.slice(0, 6));
+  const g2 = new Game(s.seed, s);
+  assert(g2.drones.length === 0 && g2.factory.belts.size === g.factory.belts.size, 'chargement');
 });
 
 console.log('Commandes');

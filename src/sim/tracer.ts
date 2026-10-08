@@ -1,6 +1,6 @@
 // Tracé des tapis au doigt : le chemin du doigt devient des lignes droites
 // sur la grille, avec des virages à angle droit.
-import { DX, DY, dirBetween, type Dir } from './geom.ts';
+import { DX, DY, dirBetween, opposite, type Dir } from './geom.ts';
 import type { Belt, Factory, Machine } from './factory.ts';
 
 export interface TraceCell {
@@ -23,6 +23,8 @@ export class BeltTracer {
   blocked = false;
   readonly startMachine: Machine | null = null;
   readonly extend: Belt | null = null;
+  /** Tapis existant d'où part une dérivation (il devient un séparateur). */
+  readonly splitFrom: Belt | null = null;
   private startDir: Dir | null = null;
   private factory: Factory;
 
@@ -38,6 +40,8 @@ export class BeltTracer {
       if (!n || n.kind !== 'belt') {
         this.extend = b;
         this.cells = [{ x: sx, y: sy }];
+      } else if (b.built && b.split === undefined) {
+        this.splitFrom = b;
       } else {
         this.blocked = true;
       }
@@ -62,11 +66,28 @@ export class BeltTracer {
   }
 
   get valid(): boolean {
-    return this.newCount >= 1 && (this.cells.length >= 2 || this.endTarget !== null || this.startMachine !== null);
+    return this.newCount >= 1 && (this.cells.length >= 2 || this.endTarget !== null || this.startMachine !== null || this.splitFrom !== null);
+  }
+
+  /** Sens de la dérivation créée, s'il y en a une. */
+  get splitDir(): Dir | null {
+    return this.splitFrom ? this.startDir : null;
   }
 
   move(fx: number, fy: number): void {
     if (this.blocked && this.cells.length === 0) return;
+    const sb = this.splitFrom;
+    if (sb && this.cells.length === 0) {
+      // Dérivation : la première case part sur un côté libre du tapis.
+      const dx = fx - (sb.x + 0.5), dy = fy - (sb.y + 0.5);
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.8) return;
+      const d: Dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
+      if (d === sb.dir || d === opposite(sb.inDir)) return;
+      const x = sb.x + DX[d], y = sb.y + DY[d];
+      if (!this.usable(x, y)) { this.blocked = true; return; }
+      this.startDir = d;
+      this.cells.push({ x, y });
+    }
     const m = this.startMachine;
     if (m && this.cells.length === 0) {
       const cx = Math.floor(fx), cy = Math.floor(fy);

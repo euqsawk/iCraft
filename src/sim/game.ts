@@ -4,7 +4,7 @@ import { machineDef } from '../data/machines.ts';
 import { itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
 import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
-import { key, unkey } from './geom.ts';
+import { key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
 
@@ -40,7 +40,17 @@ export type GameEvent =
   | { type: 'toast'; text: string; tone?: 'info' | 'warn' | 'good' }
   | { type: 'built'; job: Job }
   | { type: 'reveal' }
-  | { type: 'factory' };
+  | { type: 'factory' }
+  | { type: 'drones' };
+
+/** Ce qui s'est passé pendant l'absence du joueur. */
+export interface OfflineReport {
+  /** Durée réelle de l'absence, en secondes. */
+  away: number;
+  /** Durée prise en compte (plafonnée). */
+  counted: number;
+  gained: Record<string, number>;
+}
 
 export interface GameSave {
   v: 1;
@@ -59,6 +69,8 @@ export interface GameSave {
   orderSeq: number;
   rerolls: number;
   delivered: number;
+  /** Nombre de drones (module de drones). Absent des premières sauvegardes. */
+  drones?: number;
 }
 
 export class Game {
@@ -77,6 +89,14 @@ export class Game {
   rerolls = 0;
   delivered = 0;
   time = 0;
+  /** Nombre de drones obtenus avec les commandes. */
+  droneCount = RULES.startDrones;
+  /** Chantier en cours du robot lui-même. */
+  robotJob: Job | null = null;
+  robotBuilding = false;
+  private robotT = 0;
+  /** Vrai pendant le calcul de la production hors ligne. */
+  private offline = false;
   private listeners: ((e: GameEvent) => void)[] = [];
   private lastRobotCell = '';
   readonly noyau: Machine;
@@ -85,9 +105,7 @@ export class Game {
     this.world = new World(seed);
     this.factory = new Factory(this.world);
     this.factory.onDeliver = (item) => this.deliver(item);
-    for (let i = 0; i < RULES.droneCount; i++) {
-      this.drones.push({ x: this.robot.x, y: this.robot.y, state: 'home', job: null, t: 0, slot: (i / RULES.droneCount) * Math.PI * 2 });
-    }
+    this.factory.coreAccepts = (item) => !this.offline || (this.stock[item] ?? 0) < RULES.offlineStockCap;
     if (save) {
       this.load(save);
       this.noyau = [...this.factory.machines.values()].find((m) => m.type === 'noyau')!;
@@ -96,7 +114,17 @@ export class Game {
       this.noyau = this.factory.addMachine('noyau', 0, 0, true);
       this.order = firstOrder(this.orderSeq++);
     }
+    this.rebuildDrones();
     this.revealRobot(true);
+  }
+
+  private rebuildDrones(): void {
+    const n = this.droneCount;
+    while (this.drones.length < n) {
+      this.drones.push({ x: this.robot.x, y: this.robot.y - 1, state: 'home', job: null, t: 0, slot: 0 });
+    }
+    this.drones.length = n;
+    this.drones.forEach((d, i) => { d.slot = (i / Math.max(n, 1)) * Math.PI * 2; });
   }
 
   on(fn: (e: GameEvent) => void): () => void {
@@ -137,6 +165,11 @@ export class Game {
 
   private deliver(item: string): void {
     this.delivered++;
+    if (this.offline) {
+      // Pendant l'absence, rien n'est livré : tout s'accumule au Noyau.
+      this.stock[item] = (this.stock[item] ?? 0) + 1;
+      return;
+    }
     const line = this.order?.lines.find((l) => l.item === item && l.done < l.qty);
     if (line) {
       line.done++;
@@ -153,6 +186,11 @@ export class Game {
     this.order = null;
     this.earn(o.money);
     this.addXp(o.xp);
+    if (o.equip === 'drone' && this.droneCount < RULES.maxDrones) {
+      this.droneCount++;
+      this.rebuildDrones();
+      this.emit({ type: 'drones' });
+    }
     this.emit({ type: 'orderDone', order: o });
     this.refreshChoices();
   }
@@ -160,7 +198,7 @@ export class Game {
   refreshChoices(): void {
     const seed = this.world.seedNum ^ (this.orderSeq * 7919) ^ (this.rerolls * 104729);
     const discovered = new Set([...this.world.discovered]);
-    this.choices = generateChoices(seed >>> 0, this.level, discovered, this.orderSeq);
+    this.choices = generateChoices(seed >>> 0, this.level, discovered, this.orderSeq, this.droneCount < RULES.maxDrones);
     this.orderSeq += 3;
     this.emit({ type: 'order' });
   }
@@ -179,12 +217,61 @@ export class Game {
     this.order = o;
     this.choices = [];
     // Ce qui attend déjà au Noyau compte tout de suite.
+    this.deliverStock();
+  }
+
+  /** Ce que le stock du Noyau peut apporter à la commande en cours. */
+  stockUsable(): number {
+    const o = this.order;
+    if (!o) return 0;
+    return o.lines.reduce((s, l) => s + Math.min(this.stock[l.item] ?? 0, Math.max(0, l.qty - l.done)), 0);
+  }
+
+  /** Livre à la commande en cours ce qui attend au Noyau. Renvoie le nombre d'objets livrés. */
+  deliverStock(): number {
+    const o = this.order;
+    if (!o) return 0;
+    let n = 0;
     for (const l of o.lines) {
-      const have = Math.min(this.stock[l.item] ?? 0, l.qty);
-      if (have > 0) { l.done += have; this.stock[l.item] -= have; }
+      const have = Math.min(this.stock[l.item] ?? 0, Math.max(0, l.qty - l.done));
+      if (have > 0) { l.done += have; this.stock[l.item] -= have; n += have; }
     }
     this.emit({ type: 'order' });
     if (orderComplete(o)) this.completeOrder();
+    return n;
+  }
+
+  // ---------- Absence ----------
+
+  /**
+   * L'usine a continué de tourner pendant l'absence, au ralenti (10 %) et sur 8 h au plus.
+   * On rejoue la simulation de l'usine en accéléré ; les objets s'accumulent au Noyau
+   * (stock limité) et aucune commande ne se termine toute seule.
+   */
+  catchUp(awayMs: number, budgetMs = 2500): OfflineReport | null {
+    const away = awayMs / 1000;
+    if (!(away >= 60)) return null;
+    const counted = Math.min(away, RULES.offlineMaxSeconds);
+    const target = counted * RULES.offlineRate;
+    const before = { ...this.stock };
+    const step = 0.2;
+    const start = Date.now();
+    this.offline = true;
+    try {
+      for (let t = 0; t < target; t += step) {
+        this.factory.tick(step);
+        if (Date.now() - start > budgetMs) break;
+      }
+    } finally {
+      this.offline = false;
+    }
+    const gained: Record<string, number> = {};
+    for (const [k, v] of Object.entries(this.stock)) {
+      const d = v - (before[k] ?? 0);
+      if (d > 0) gained[k] = d;
+    }
+    this.emit({ type: 'order' });
+    return { away, counted, gained };
   }
 
   // ---------- Construction ----------
@@ -207,11 +294,16 @@ export class Game {
     return m;
   }
 
-  placeBelts(cells: TraceCell[]): boolean {
+  placeBelts(cells: TraceCell[], split?: { from: Belt; dir: Dir }): boolean {
     const fresh = cells.filter((c) => !c.existing);
     const cost = fresh.length * RULES.beltCost;
     if (fresh.length === 0) return false;
+    if (split && this.level < RULES.splitterLevel) {
+      this.emit({ type: 'toast', text: `Séparateur de tapis : niveau ${RULES.splitterLevel}`, tone: 'warn' });
+      return false;
+    }
     if (!this.spend(cost)) return false;
+    if (split) this.factory.setSplit(split.from, split.dir);
     for (const c of cells) {
       if (c.existing) {
         const b = this.factory.beltAt(c.x, c.y);
@@ -315,26 +407,40 @@ export class Game {
     if (this.world.reveal(cx, cy, RULES.revealRobot)) this.emit({ type: 'reveal' });
   }
 
+  /** Le robot construit lui-même : il va au chantier le plus proche et le construit à courte portée. */
   private tickRobot(dt: number): void {
     const r = this.robot;
-    // Sans ordre du joueur, le robot va vers le chantier le plus proche hors de portée.
-    if (!r.manual) {
-      const inRange = this.pending.some((j) => {
+    this.robotBuilding = false;
+    if (this.robotJob && !this.jobPos(this.robotJob)) { this.robotJob = null; this.robotT = 0; }
+    if (!this.robotJob && this.pending.length) {
+      const taken = new Set(this.drones.filter((d) => d.job).map((d) => d.job!));
+      let best: Job | null = null, bd = Infinity;
+      for (const j of this.pending) {
+        if (taken.has(j)) continue;
         const p = this.jobPos(j);
-        return p && Math.hypot(p.x - r.x, p.y - r.y) <= RULES.buildRange;
-      });
-      if (!inRange && this.pending.length) {
-        let best: { x: number; y: number } | null = null, bd = Infinity;
-        for (const j of this.pending) {
-          const p = this.jobPos(j);
-          if (!p) continue;
-          const d = Math.hypot(p.x - r.x, p.y - r.y);
-          if (d < bd) { bd = d; best = p; }
+        if (!p) continue;
+        const d = Math.hypot(p.x - r.x, p.y - r.y);
+        if (d < bd) { bd = d; best = j; }
+      }
+      this.robotJob = best;
+      this.robotT = 0;
+    }
+    if (this.robotJob && !r.manual) {
+      const p = this.jobPos(this.robotJob)!;
+      const d = Math.hypot(p.x - r.x, p.y - r.y);
+      if (d <= RULES.robotBuildRange) {
+        r.target = null;
+        this.robotBuilding = true;
+        this.robotT += dt;
+        const need = this.robotJob.kind === 'belt' ? RULES.robotBeltTime : RULES.robotMachineTime;
+        if (this.robotT >= need) {
+          this.finishJob(this.robotJob);
+          this.robotJob = null;
+          this.robotT = 0;
         }
-        if (best) {
-          const k = (bd - (RULES.buildRange - 2)) / bd;
-          r.target = { x: r.x + (best.x - r.x) * k, y: r.y + (best.y - r.y) * k };
-        }
+      } else {
+        const k = (d - (RULES.robotBuildRange - 0.6)) / d;
+        r.target = { x: r.x + (p.x - r.x) * k, y: r.y + (p.y - r.y) * k };
       }
     }
     if (r.target) {
@@ -362,7 +468,7 @@ export class Game {
       if (d.job && !this.jobPos(d.job)) { d.job = null; d.state = 'back'; }
       if (!d.job && (d.state === 'home' || d.state === 'back')) {
         const j = this.pending.find((p) => {
-          if (taken.has(p)) return false;
+          if (taken.has(p) || p === this.robotJob) return false;
           const pos = this.jobPos(p);
           return pos && Math.hypot(pos.x - r.x, pos.y - r.y) <= RULES.buildRange;
         });
@@ -411,13 +517,14 @@ export class Game {
       pending: this.pending, fog: this.world.saveFog(),
       order: this.order, choices: this.choices, stock: this.stock,
       orderSeq: this.orderSeq, rerolls: this.rerolls, delivered: this.delivered,
+      drones: this.droneCount,
     };
   }
 
   private load(s: GameSave): void {
     this.money = s.money; this.xp = s.xp; this.level = s.level;
     this.robot.x = s.robot.x; this.robot.y = s.robot.y;
-    for (const d of this.drones) { d.x = s.robot.x; d.y = s.robot.y; }
+    this.droneCount = s.drones ?? RULES.startDrones;
     this.world.loadFog(s.fog);
     this.factory.load(s.factory);
     this.pending = s.pending.filter((j) => (j.kind === 'belt' ? this.factory.belts.has(j.k) : this.factory.machines.has(j.id)));

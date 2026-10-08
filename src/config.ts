@@ -56,14 +56,27 @@ export const RULES = {
   beltGap: 0.5,
   robotSpeed: 4.5,
   droneSpeed: 7,
-  droneCount: 2,
+  /** Le robot commence sans drone : ils arrivent avec les commandes rares (module de drones). */
+  startDrones: 0,
+  maxDrones: 3,
   /** Portée de construction des drones autour du robot, en cases. */
   buildRange: 8,
   beltBuildTime: 0.18,
   machineBuildTime: 1.1,
+  /** Le robot construit lui-même, à courte portée, un peu plus lentement que les drones. */
+  robotBuildRange: 2.5,
+  robotBeltTime: 0.3,
+  robotMachineTime: 1.6,
+  /** Niveau qui débloque les séparateurs de tapis. */
+  splitterLevel: 2,
+  /** Production hors ligne : 10 % de la vitesse, sur 8 h au plus. */
+  offlineRate: 0.1,
+  offlineMaxSeconds: 8 * 3600,
+  /** Stock maximum par objet au Noyau pendant l'absence. */
+  offlineStockCap: 500,
   revealRobot: 7,
   revealBuilding: 4,
-  revealStart: 12,
+  revealStart: 19,
   machineBuffer: 6,
   noyauSize: 4,
   rerollBase: 20,

@@ -1,11 +1,11 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
-import { BIOME_COLORS, CELL, PALETTE, xpForLevel } from '../config.ts';
+import { BIOME_COLORS, CELL, PALETTE, RULES, xpForLevel } from '../config.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { BUILDABLE, machineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import type { Machine } from '../sim/factory.ts';
-import { Game, type GameEvent } from '../sim/game.ts';
+import { Game, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { orderProgress, RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
@@ -156,6 +156,7 @@ export class Hud implements GestureHandlers {
       case 'order': this.refreshOrder(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
+      case 'drones': this.toast(`Module de drones : ${this.game.droneCount} drone${this.game.droneCount > 1 ? 's' : ''} construisent avec ton robot`, 'good'); break;
       default: break;
     }
   }
@@ -309,8 +310,21 @@ export class Hud implements GestureHandlers {
     b.style.top = `${Math.max(140, y)}px`;
   }
 
+  /** Place la loupe en haut à droite, ou à gauche si le doigt passe dessous. */
+  private updateLoupe(sx: number, sy: number): void {
+    const size = 140;
+    const top = (this.root.querySelector('.order-row') as HTMLElement).getBoundingClientRect().bottom + 16;
+    const right = window.innerWidth - 16 - size;
+    const cur = this.r.loupe;
+    let x = cur ? cur.x : right;
+    const under = (lx: number) => sx > lx - 30 && sx < lx + size + 30 && sy < top + size + 40;
+    if (under(x)) x = x === right ? 16 : right;
+    this.r.loupe = { fx: sx, fy: sy, x, y: top };
+  }
+
   toolStart(sx: number, sy: number): void {
     this.closePopover();
+    if (this.tool === 'tapis' || this.tool === 'gomme') this.updateLoupe(sx, sy);
     const w = this.worldAt(sx, sy);
     if (this.tool === 'tapis') {
       this.tracer = new BeltTracer(this.game.factory, w.x, w.y);
@@ -325,12 +339,16 @@ export class Hud implements GestureHandlers {
 
   toolMove(sx: number, sy: number): void {
     const w = this.worldAt(sx, sy);
+    if (this.tool === 'tapis' || this.tool === 'gomme') this.updateLoupe(sx, sy);
     if (this.tool === 'tapis' && this.tracer) {
       this.tracer.move(w.x, w.y);
       const n = this.tracer.newCount;
       const ok = this.tracer.valid && !this.tracer.blocked;
       const affordable = this.game.money >= n;
-      this.showBubble(sx, sy - 56, n > 0 ? `${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${n}` : 'Glisse pour tracer', !ok || !affordable);
+      const what = this.tracer.splitFrom ? 'Séparateur · ' : '';
+      const locked = !!this.tracer.splitFrom && this.game.level < RULES.splitterLevel;
+      const label = locked ? `Séparateur : niveau ${RULES.splitterLevel}` : n > 0 ? `${what}${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${n}` : this.tracer.splitFrom ? 'Glisse sur le côté pour séparer' : 'Glisse pour tracer';
+      this.showBubble(sx, sy - 56, label, locked || !ok || !affordable);
     } else if (this.tool === 'machine' || this.tool === 'move') {
       this.updatePlacement(sx, sy);
     } else if (this.tool === 'gomme') {
@@ -343,7 +361,8 @@ export class Hud implements GestureHandlers {
     const pv = this.r.preview;
     if (!cancelled) {
       if (this.tool === 'tapis' && this.tracer?.valid) {
-        this.game.placeBelts(this.tracer.result());
+        const t = this.tracer;
+        this.game.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir } : undefined);
       } else if (this.tool === 'machine' && pv?.kind === 'place' && this.machineType) {
         this.game.placeMachine(this.machineType, pv.x, pv.y);
       } else if (this.tool === 'move' && pv?.kind === 'place' && this.moving) {
@@ -354,6 +373,7 @@ export class Hud implements GestureHandlers {
     this.tracer = null;
     this.r.preview = null;
     this.r.guides = [];
+    this.r.loupe = null;
   }
 
   private erase(wx: number, wy: number): void {
@@ -421,12 +441,12 @@ export class Hud implements GestureHandlers {
         const cur = m.choice ?? 'plastique';
         choice = `<div class="row"><button class="btn ${cur === 'plastique' ? 'primary' : ''}" data-choice="plastique">Plastique</button><button class="btn ${cur === 'carburant' ? 'primary' : ''}" data-choice="carburant">Carburant</button></div>`;
       }
-      const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p>
+      const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p><p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
         ${inChips ? `<p>Entrées</p><div class="chips">${inChips}</div>` : ''}
         ${outChips ? `<p>Sorties</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
-          <button class="btn danger" data-act="del">${ICONS.trash}${m.built ? 'Supprimer' : 'Annuler'} · +${def.cost}</button>
+          <button class="btn danger" data-act="del">${ICONS.trash}${m.built ? 'Supprimer' : 'Annuler'}</button>
         </div>`;
       if (!this.setPopover(`m${m.id}`, info, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeMachine(m); this.closePopover(); };
@@ -446,9 +466,10 @@ export class Hud implements GestureHandlers {
       const chain = f.chainOf(b);
       const items = chain.reduce((s, c) => s + c.items.length, 0);
       const pending = chain.some((c) => !c.built);
-      const info = `<h3>Tapis · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>
-        <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p>`;
-      const actions = `<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis · +${chain.length}</button></div>`;
+      const splitter = b.split !== undefined ? '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>' : '';
+      const info = `<h3>${b.split !== undefined ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${splitter}
+        <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.length} ${ICONS.coinSm}</p>`;
+      const actions = `<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
       if (!this.setPopover(`b${sel.x},${sel.y}`, info, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
     }
@@ -517,7 +538,7 @@ export class Hud implements GestureHandlers {
   private orderCardHtml(o: Order, withProgress: boolean): string {
     const lines = o.lines.map((l) => `<div class="line"><img src="${this.itemIcons.get(l.item)}" alt="">${esc(item(l.item).name)}<span class="count">${withProgress ? `${Math.min(l.done, l.qty)} / ` : ''}${l.qty}</span></div>`).join('');
     return `<span class="tag ${o.rarity}">${RARITY_LABEL[o.rarity]}</span>${lines}
-      <div class="rewards"><span class="reward">${ICONS.xp}+${o.xp} XP</span><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span></div>`;
+      <div class="rewards"><span class="reward">${ICONS.xp}+${o.xp} XP</span><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span>${o.equip === 'drone' ? `<span class="reward equip">${ICONS.drone}+1 drone</span>` : ''}</div>`;
   }
 
   openOrders(): void {
@@ -562,7 +583,7 @@ export class Hud implements GestureHandlers {
     this.closeSheet();
     const box = h('div', 'celebrate');
     box.innerHTML = `<h2>Commande livrée !</h2><p>${esc(Game.orderTitle(o))}</p>
-      <div class="rewards" style="justify-content:center;margin-bottom:14px"><span class="reward">${ICONS.xp}+${o.xp} XP</span><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span></div>`;
+      <div class="rewards" style="justify-content:center;margin-bottom:14px"><span class="reward">${ICONS.xp}+${o.xp} XP</span><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span>${o.equip === 'drone' ? `<span class="reward equip">${ICONS.drone}+1 drone</span>` : ''}</div>`;
     const next = h('button', 'btn primary', 'Choisir la suivante');
     next.style.width = '100%';
     next.onclick = () => { box.remove(); this.openOrders(); };
@@ -591,6 +612,8 @@ export class Hud implements GestureHandlers {
       };
       seedCard.append(copy);
 
+      const upd = h('button', 'btn primary', 'Chercher une mise à jour');
+      upd.onclick = () => this.checkUpdate(upd);
       const center = h('button', 'btn', 'Recentrer sur le robot');
       center.onclick = () => { this.r.centerOnRobot(); close(); };
 
@@ -613,8 +636,66 @@ export class Hud implements GestureHandlers {
       tips.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer le robot. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
         ${standalone ? '' : '<p class="muted"><b>Installer</b> · Dans Safari : Partager, puis « Sur l’écran d’accueil ». Le jeu s’ouvre alors en plein écran et ta sauvegarde est mieux protégée.</p>'}`;
 
-      sheet.append(head, seedCard, center, newCard, tips);
+      sheet.append(head, upd, seedCard, center, newCard, tips);
     });
+  }
+
+  private async checkUpdate(btn: HTMLButtonElement): Promise<void> {
+    btn.disabled = true;
+    btn.textContent = 'Recherche…';
+    try {
+      const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(String(res.status));
+      const { v } = (await res.json()) as { v: string };
+      if (v === __VERSION__) {
+        btn.textContent = 'Tu as la dernière version';
+        this.toast('Tu as déjà la dernière version', 'good');
+        return;
+      }
+      btn.textContent = 'Mise à jour…';
+      await this.cb.save();
+      // On vide le cache hors ligne puis on recharge : la nouvelle version se télécharge.
+      try {
+        const reg = await navigator.serviceWorker?.getRegistration();
+        await reg?.update();
+        if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
+      } catch { /* on recharge quand même */ }
+      location.reload();
+    } catch {
+      btn.disabled = false;
+      btn.textContent = 'Chercher une mise à jour';
+      this.toast('Impossible de joindre le serveur : vérifie ta connexion', 'warn');
+    }
+  }
+
+  /** Écran de retour : ce que l'usine a produit pendant l'absence. */
+  showAway(r: OfflineReport): void {
+    const dur = (sec: number) => {
+      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+      return h ? `${h} h${m ? ` ${String(m).padStart(2, '0')}` : ''}` : `${Math.max(1, m)} min`;
+    };
+    const gained = Object.entries(r.gained).sort((a, b) => item(b[0]).tier - item(a[0]).tier || b[1] - a[1]);
+    const capped = r.away > r.counted + 60;
+    this.closeSheet();
+    this.root.querySelector('.celebrate')?.remove();
+    const box = h('div', 'celebrate away');
+    const list = gained.length
+      ? `<div class="chips gained">${gained.map(([id, n]) => `<span class="chip"><img src="${this.itemIcons.get(id)}" alt="">+${fmt(n)} ${esc(n > 1 ? item(id).plural : item(id).name.toLowerCase())}</span>`).join('')}</div>`
+      : '<p>Ton usine n’a rien envoyé au Noyau. Relie une chaîne au Noyau pour qu’elle produise pendant ton absence.</p>';
+    box.innerHTML = `<h2>Pendant ton absence</h2><p>${dur(r.away)}${capped ? ` · ${dur(r.counted)} comptées` : ''}</p>${list}
+      <p class="muted-small">Quand le jeu est fermé, l’usine tourne au ralenti (10 %, ${RULES.offlineMaxSeconds / 3600} h au plus). Tout attend au Noyau.</p>`;
+    const usable = this.game.stockUsable();
+    const btn = h('button', 'btn primary', usable > 0 ? `Livrer au Noyau · ${usable} pour la commande` : 'Reprendre');
+    btn.style.width = '100%';
+    btn.onclick = () => {
+      box.remove();
+      if (usable > 0) {
+        const n = this.game.deliverStock();
+        if (n > 0 && this.game.order) this.toast(`${n} objets livrés`, 'good');
+      }
+    };
+    box.append(btn);
+    this.root.append(box);
   }
 
   toast(text: string, tone: 'info' | 'warn' | 'good' = 'info'): void {

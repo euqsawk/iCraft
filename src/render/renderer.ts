@@ -1,5 +1,5 @@
 // Rendu du monde avec PixiJS : sol, filons, tapis, machines, objets, robot, brouillard.
-import { Application, CanvasSource, Container, Graphics, Sprite, Text, Texture, TilingSprite, type ICanvas } from 'pixi.js';
+import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Text, Texture, TilingSprite, type ICanvas } from 'pixi.js';
 
 /** Les types DOM et ceux de PixiJS divergent sur getContext('webgpu') : simple conversion. */
 const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
@@ -15,6 +15,33 @@ import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
 import { Camera } from './camera.ts';
 import { dashedPolyline, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
+
+/** Contour d'un rectangle arrondi qui part du milieu du bord haut, dans le sens des aiguilles d'une montre. */
+function trackPoints(x: number, y: number, w: number, h: number, r: number): { x: number; y: number }[] {
+  const pts = roundRectPoints(x, y, w, h, r);
+  const top = { x: x + w / 2, y };
+  return [top, ...pts, top];
+}
+
+/** Début d'une ligne brisée, sur une fraction de sa longueur. */
+function partialPolyline(pts: { x: number; y: number }[], frac: number): { x: number; y: number }[] {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  let left = total * Math.min(1, frac);
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const d = Math.hypot(b.x - a.x, b.y - a.y);
+    if (d >= left) {
+      const k = d ? left / d : 0;
+      out.push({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
+      return out;
+    }
+    out.push(b);
+    left -= d;
+  }
+  return out;
+}
 
 const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 
@@ -73,6 +100,11 @@ export class GameRenderer {
   private time = 0;
   preview: Preview = null;
   selection: Selection = null;
+  /** Loupe : ce qui se passe sous le doigt, agrandi dans un coin de l'écran. */
+  loupe: { fx: number; fy: number; x: number; y: number } | null = null;
+  static readonly LOUPE = 140;
+  private loupeLayer = new Container();
+  private loupeRT!: RenderTexture;
   /** Lignes d'alignement à dessiner pendant la pose d'une machine. */
   guides: { x0: number; y0: number; x1: number; y1: number }[] = [];
 
@@ -92,6 +124,7 @@ export class GameRenderer {
       g.destroy();
     }
     this.buildRobot();
+    this.buildLoupe();
     game.on((e) => {
       if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
       if (e.type === 'deliver' && this.noyauView) this.noyauView.pulse = 1;
@@ -99,6 +132,41 @@ export class GameRenderer {
     const r = game.robot;
     this.camera.x = ((r.x + 2) / 2) * CELL;
     this.camera.y = ((r.y + 2) / 2) * CELL;
+  }
+
+  private buildLoupe(): void {
+    const size = GameRenderer.LOUPE;
+    this.loupeRT = RenderTexture.create({ width: size, height: size, resolution: this.app.renderer.resolution, antialias: true });
+    const frame = new Graphics();
+    frame.roundRect(0, 5, size, size, 22).fill(PALETTE.shadow);
+    frame.roundRect(-4, -4, size + 8, size + 8, 25).fill(PALETTE.white);
+    const sprite = new Sprite(this.loupeRT);
+    const mask = new Graphics().roundRect(0, 0, size, size, 20).fill(0xffffff);
+    sprite.mask = mask;
+    // Repère au centre : le point exact sous le doigt.
+    const mark = new Graphics();
+    mark.circle(size / 2, size / 2, 7).stroke({ width: 2.5, color: PALETTE.coral });
+    mark.circle(size / 2, size / 2, 2).fill(PALETTE.coral);
+    this.loupeLayer.addChild(frame, sprite, mask, mark);
+    this.loupeLayer.visible = false;
+    this.app.stage.addChild(this.loupeLayer);
+  }
+
+  private renderLoupe(): void {
+    const L = this.loupe;
+    this.loupeLayer.visible = !!L;
+    if (!L) return;
+    const size = GameRenderer.LOUPE, cam = this.camera;
+    const w = cam.screenToWorld(L.fx, L.fy);
+    const z = Math.min(2.6, Math.max(1.5, cam.zoom * 1.8));
+    const wl = this.worldLayer;
+    const px = wl.position.x, py = wl.position.y, sc = wl.scale.x;
+    wl.scale.set(z);
+    wl.position.set(size / 2 - w.x * z, size / 2 - w.y * z);
+    this.app.renderer.render({ container: wl, target: this.loupeRT, clear: true, clearColor: PALETTE.ground });
+    wl.scale.set(sc);
+    wl.position.set(px, py);
+    this.loupeLayer.position.set(L.x, L.y);
   }
 
   /** Recentre la caméra sur le robot. */
@@ -244,6 +312,9 @@ export class GameRenderer {
       for (const b of list) {
         const p = this.beltPath(b);
         g.moveTo(p[0].x, p[0].y + dy).lineTo(p[1].x, p[1].y + dy).lineTo(p[2].x, p[2].y + dy);
+        if (b.split !== undefined) {
+          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * CELL / 2, p[1].y + DY[b.split] * CELL / 2 + dy);
+        }
       }
     };
     line(built, 3);
@@ -258,6 +329,12 @@ export class GameRenderer {
       g.moveTo(cx - fx * 2 + px * 3.2, cy - fy * 2 + py * 3.2).lineTo(cx + fx * 1.2, cy + fy * 1.2).lineTo(cx - fx * 2 - px * 3.2, cy - fy * 2 - py * 3.2);
     }
     g.stroke({ width: 2, color: PALETTE.roller, cap: 'round', join: 'round' });
+    // Séparateurs : un losange blanc cerclé (comme sur la maquette).
+    for (const b of built) {
+      if (b.split === undefined) continue;
+      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+      g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
+    }
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
     gg.stroke({ width: 11, color: PALETTE.white, alpha: 0.9, cap: 'round' });
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
@@ -279,7 +356,8 @@ export class GameRenderer {
           x = bx + DX[belt.inDir] * t * CELL / 2; y = by + DY[belt.inDir] * t * CELL / 2;
         } else {
           const t = (p - 0.5) * 2;
-          x = bx + DX[belt.dir] * t * CELL / 2; y = by + DY[belt.dir] * t * CELL / 2;
+          const d = it.o && belt.split !== undefined ? belt.split : belt.dir;
+          x = bx + DX[d] * t * CELL / 2; y = by + DY[d] * t * CELL / 2;
         }
         let s = this.itemPool[used];
         if (!s) { s = new Sprite(); s.anchor.set(0.5); this.itemLayer.addChild(s); this.itemPool.push(s); }
@@ -332,16 +410,18 @@ export class GameRenderer {
   }
 
   private buildNoyau(m: Machine): void {
+    // Le Noyau est carré et remplit ses 4 × 4 cases : un tapis peut y entrer par n'importe quel côté, coins compris.
     const root = new Container();
     const ring = new Graphics();
     const body = new Graphics();
-    body.circle(0, 4, 38).fill(0xd8644d);
-    body.circle(0, 0, 38).fill(PALETTE.coral);
+    const S = m.w * CELL;
+    body.roundRect(-S / 2 + 12, -S / 2 + 16, S - 24, S - 24, 16).fill(0xd8644d);
+    body.roundRect(-S / 2 + 12, -S / 2 + 12, S - 24, S - 24, 16).fill(PALETTE.coral);
     const t = new Text({ text: 'Noyau', style: { fontFamily: FONT, fontSize: 13, fontWeight: '900', fill: 0xffffff }, resolution: 3 });
     t.anchor.set(0.5);
     const badge = new Graphics();
     root.addChild(ring, body, t, badge);
-    root.position.set((m.x + 2) * CELL, (m.y + 2) * CELL);
+    root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     this.machineLayer.addChild(root);
     this.noyauView = { root, ring, badge, progress: -1, pulse: 0 };
   }
@@ -391,16 +471,24 @@ export class GameRenderer {
       if (Math.abs(prog - nv.progress) > 0.001) {
         nv.progress = prog;
         nv.ring.clear();
-        nv.ring.circle(0, 0, 48).stroke({ width: 8, color: PALETTE.white });
-        if (prog > 0) nv.ring.arc(0, 0, 48, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2).stroke({ width: 8, color: PALETTE.coral, cap: 'round' });
+        const S = 4 * CELL, r = 22, x0 = -S / 2 + 4;
+        const track = trackPoints(x0, x0, S - 8, S - 8, r);
+        nv.ring.roundRect(x0, x0 + 4, S - 8, S - 8, r).stroke({ width: 8, color: PALETTE.shadow });
+        nv.ring.roundRect(x0, x0, S - 8, S - 8, r).stroke({ width: 8, color: PALETTE.white });
+        if (prog > 0) {
+          const part = partialPolyline(track, prog);
+          nv.ring.moveTo(part[0].x, part[0].y);
+          for (const q of part.slice(1)) nv.ring.lineTo(q.x, q.y);
+          nv.ring.stroke({ width: 8, color: PALETTE.coral, cap: 'round', join: 'round' });
+        }
       }
       nv.pulse = Math.max(0, nv.pulse - dt * 3);
       nv.root.scale.set(1 + nv.pulse * 0.04);
       nv.badge.clear();
       if (!o) {
         const b = 1 + Math.sin(this.time * 5) * 0.12;
-        nv.badge.circle(34, -34, 11 * b).fill(PALETTE.yellow).stroke({ width: 2.5, color: PALETTE.ink });
-        nv.badge.roundRect(32.5, -41, 3, 9, 1.5).fill(PALETTE.ink).circle(34, -28, 1.8).fill(PALETTE.ink);
+        nv.badge.circle(42, -42, 11 * b).fill(PALETTE.yellow).stroke({ width: 2.5, color: PALETTE.ink });
+        nv.badge.roundRect(40.5, -49, 3, 9, 1.5).fill(PALETTE.ink).circle(42, -36, 1.8).fill(PALETTE.ink);
       }
     }
   }
@@ -424,20 +512,23 @@ export class GameRenderer {
     root.addChild(shadow, flip);
     this.actorLayer.addChild(root);
     this.robotView = { root, body, beam, glow, flip };
-    for (let i = 0; i < this.game.drones.length; i++) {
-      const d = new Container();
-      const dg = new Graphics();
-      dg.circle(0, 0, 7).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
-      dg.moveTo(-10, -9).lineTo(10, -9).stroke({ width: 2, color: PALETTE.ink, cap: 'round' });
-      dg.moveTo(0, -7).lineTo(0, -9).stroke({ width: 2, color: PALETTE.ink });
-      dg.circle(0, 0, 2.5).fill(PALETTE.yellow);
-      d.addChild(dg);
-      this.actorLayer.addChild(d);
-      this.droneViews.push(d);
-    }
+  }
+
+  private makeDroneView(): Container {
+    const d = new Container();
+    const dg = new Graphics();
+    dg.circle(0, 0, 7).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
+    dg.moveTo(-10, -9).lineTo(10, -9).stroke({ width: 2, color: PALETTE.ink, cap: 'round' });
+    dg.moveTo(0, -7).lineTo(0, -9).stroke({ width: 2, color: PALETTE.ink });
+    dg.circle(0, 0, 2.5).fill(PALETTE.yellow);
+    d.addChild(dg);
+    this.actorLayer.addChild(d);
+    return d;
   }
 
   private updateActors(): void {
+    while (this.droneViews.length < this.game.drones.length) this.droneViews.push(this.makeDroneView());
+    while (this.droneViews.length > this.game.drones.length) this.droneViews.pop()!.destroy({ children: true });
     const r = this.game.robot, v = this.robotView;
     v.root.position.set(r.x * CELL, r.y * CELL);
     v.flip.scale.x = Math.cos(r.heading) < -0.1 ? -1 : 1;
@@ -460,6 +551,17 @@ export class GameRenderer {
       dashedPolyline(fx, [{ x: d.x * CELL, y: d.y * CELL - 14 }, { x: p.x * CELL, y: p.y * CELL }], 3, 3);
     }
     fx.stroke({ width: 2, color: PALETTE.ink, alpha: 0.35 });
+    // Le robot construit lui-même : faisceau jaune depuis son phare.
+    if (this.game.robotBuilding && this.game.robotJob) {
+      const p = this.game.jobPos(this.game.robotJob);
+      if (p) {
+        const lx = r.x * CELL + 10 * v.flip.scale.x, ly = r.y * CELL - 20 + v.body.y;
+        dashedPolyline(fx, [{ x: lx, y: ly }, { x: p.x * CELL, y: p.y * CELL }], 4, 3);
+        fx.stroke({ width: 3, color: PALETTE.yellow, alpha: 0.9, cap: 'round' });
+        const pulse = 0.5 + 0.5 * Math.sin(this.time * 12);
+        fx.circle(p.x * CELL, p.y * CELL, 5 + pulse * 3).fill({ color: PALETTE.yellow, alpha: 0.5 });
+      }
+    }
   }
 
   // ---------- Superpositions : tracé en cours, pose, gomme, sélection ----------
@@ -563,5 +665,6 @@ export class GameRenderer {
     this.drawItems();
     this.updateActors();
     this.drawOverlay();
+    this.renderLoupe();
   }
 }

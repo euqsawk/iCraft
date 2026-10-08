@@ -1,7 +1,7 @@
 // Service worker : le jeu fonctionne hors connexion une fois chargé.
 // La version est remplacée à chaque build, ce qui renouvelle le cache.
 const CACHE = 'usine-__VERSION__';
-const SHELL = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png'];
+const SHELL = ['./', 'index.html', 'app.js?v=__VERSION__', 'styles.css?v=__VERSION__', 'manifest.webmanifest', 'icons/icon-180.png', 'icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -21,11 +21,13 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(req.url);
   const isFont = url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com');
   if (url.origin !== self.location.origin && !isFont) return;
+  // Le numéro de version sert à chercher les mises à jour : toujours depuis le réseau.
+  if (url.pathname.endsWith('version.json')) return;
 
   if (req.mode === 'navigate') {
     // Page : réseau d'abord (pour recevoir les mises à jour), cache si hors ligne.
     e.respondWith(
-      fetch(req).then((res) => {
+      fetch(req.url, { cache: 'no-cache' }).then((res) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put('index.html', copy));
         return res;

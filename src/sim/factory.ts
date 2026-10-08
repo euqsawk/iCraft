@@ -8,6 +8,8 @@ export interface BeltItem {
   t: string;
   /** Avancée dans la case, de 0 (entrée) à 1 (sortie). */
   p: number;
+  /** Sur un séparateur : 1 si l'objet part par la dérivation. */
+  o?: 1;
 }
 
 export interface Belt {
@@ -19,6 +21,10 @@ export interface Belt {
   inDir: Dir;
   built: boolean;
   items: BeltItem[];
+  /** Séparateur : sens de la dérivation (les objets alternent entre `dir` et `split`). */
+  split?: Dir;
+  /** Alternance du séparateur. */
+  toggle?: number;
 }
 
 export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore';
@@ -73,9 +79,12 @@ export class Factory {
   private dirty = true;
   private order: Belt[] = [];
   private nextOf = new Map<Belt, Next>();
+  private splitOf = new Map<Belt, Next>();
   private outputs = new Map<Machine, Belt[]>();
   private accepts = new Map<string, Set<string>>();
 
+  /** Le Noyau accepte-t-il cet objet ? (Limité pendant l'absence du joueur.) */
+  coreAccepts: (item: string) => boolean = () => true;
   /** Appelé quand un objet entre dans le Noyau. */
   onDeliver: (item: string) => void = () => {};
 
@@ -220,6 +229,11 @@ export class Factory {
     return b;
   }
 
+  setSplit(b: Belt, dir: Dir): void {
+    b.split = dir;
+    this.dirty = true;
+  }
+
   setBeltDir(b: Belt, dir: Dir): void {
     b.dir = dir;
     this.dirty = true;
@@ -227,6 +241,11 @@ export class Factory {
 
   removeBelt(b: Belt): void {
     this.belts.delete(key(b.x, b.y));
+    // Un séparateur dont on retire la dérivation redevient un tapis simple.
+    for (let d = 0; d < 4; d++) {
+      const nb = this.beltAt(b.x - DX[d], b.y - DY[d]);
+      if (nb && nb.split === d) delete nb.split;
+    }
     this.dirty = true;
   }
 
@@ -248,20 +267,11 @@ export class Factory {
     this.outputs.clear();
     for (const m of this.machines.values()) this.outputs.set(m, []);
 
+    this.splitOf.clear();
     for (const b of this.belts.values()) {
-      const nx = b.x + DX[b.dir], ny = b.y + DY[b.dir];
-      const nb = this.beltAt(nx, ny);
-      let nxt: Next = null;
-      if (nb) {
-        // Deux tapis face à face ne se relient pas.
-        if (!(nb.x + DX[nb.dir] === b.x && nb.y + DY[nb.dir] === b.y)) {
-          nxt = { kind: 'belt', belt: nb, side: nb.inDir !== b.dir };
-        }
-      } else {
-        const m = this.machineAt(nx, ny);
-        if (m) nxt = { kind: 'machine', machine: m };
-      }
+      const nxt = this.linkFor(b, b.dir);
       this.nextOf.set(b, nxt);
+      if (b.split !== undefined) this.splitOf.set(b, this.linkFor(b, b.split));
       // Sortie de machine : la case d'où vient le tapis est dans une machine.
       const fm = this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
       if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
@@ -281,10 +291,38 @@ export class Factory {
         stack.push([b, true]);
         const n = this.nextOf.get(b);
         if (n?.kind === 'belt' && !visited.has(n.belt)) stack.push([n.belt, false]);
+        const sp = this.splitOf.get(b);
+        if (sp?.kind === 'belt' && !visited.has(sp.belt)) stack.push([sp.belt, false]);
       }
     };
     for (const b of this.belts.values()) visit(b);
     this.order = order;
+  }
+
+  /** Ce qui suit une case de tapis dans une direction donnée. */
+  private linkFor(b: Belt, dir: Dir): Next {
+    const nx = b.x + DX[dir], ny = b.y + DY[dir];
+    const nb = this.beltAt(nx, ny);
+    if (nb) {
+      // Deux tapis face à face ne se relient pas.
+      if (nb.x + DX[nb.dir] === b.x && nb.y + DY[nb.dir] === b.y) return null;
+      return { kind: 'belt', belt: nb, side: nb.inDir !== dir };
+    }
+    const m = this.machineAt(nx, ny);
+    return m ? { kind: 'machine', machine: m } : null;
+  }
+
+  /** La dérivation d'un séparateur (pour les tests). */
+  splitNext(b: Belt): Next {
+    this.refresh();
+    return this.splitOf.get(b) ?? null;
+  }
+
+  /** Un objet entre dans une case : sur un séparateur, il prend une sortie sur deux. */
+  private enter(b: Belt, it: BeltItem): void {
+    if (b.split === undefined) { delete it.o; return; }
+    b.toggle = (b.toggle ?? 0) ^ 1;
+    if (b.toggle) it.o = 1; else delete it.o;
   }
 
   /** Sorties d'une machine (pour le rendu et les tests). */
@@ -304,7 +342,7 @@ export class Factory {
   canAccept(m: Machine, item: string): boolean {
     if (!m.built) return false;
     const def = machineDef(m.type);
-    if (def.kind === 'core') return true;
+    if (def.kind === 'core') return this.coreAccepts(item);
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
@@ -314,6 +352,16 @@ export class Factory {
     const def = machineDef(m.type);
     if (def.kind === 'core') { this.onDeliver(item); return; }
     m.inBuf[item] = (m.inBuf[item] ?? 0) + 1;
+  }
+
+  /** La suite peut-elle prendre un objet maintenant ? */
+  private canTake(n: Next, item: string): boolean {
+    if (!n) return false;
+    if (n.kind === 'machine') return this.canAccept(n.machine, item);
+    if (!n.belt.built) return false;
+    if (n.side) return this.roomAt(n.belt, 0.5);
+    const items = n.belt.items;
+    return items.length === 0 || items[items.length - 1].p >= RULES.beltGap;
   }
 
   /** Une case peut-elle recevoir un objet à la position p ? */
@@ -330,10 +378,20 @@ export class Factory {
 
     for (const b of this.order) {
       if (!b.built || b.items.length === 0) continue;
-      const nxt = this.nextOf.get(b) ?? null;
+      const main = this.nextOf.get(b) ?? null;
+      const branch = b.split !== undefined ? this.splitOf.get(b) ?? null : null;
       const items = b.items; // triés : le plus avancé en premier
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
+        // Sur un séparateur, si une sortie n'existe plus, l'objet prend l'autre.
+        if (it.o && !branch) delete it.o;
+        else if (!it.o && !main && branch) it.o = 1;
+        // Le premier objet d'un séparateur prend l'autre sortie si la sienne est bouchée.
+        if (i === 0 && main && branch) {
+          const want = it.o ? branch : main, other = it.o ? main : branch;
+          if (!this.canTake(want, it.t) && this.canTake(other, it.t)) { if (it.o) delete it.o; else it.o = 1; }
+        }
+        const nxt = it.o ? branch : main;
         let limit: number;
         if (i > 0) {
           limit = items[i - 1].p - gap;
@@ -357,7 +415,9 @@ export class Factory {
             const entry = nxt.side ? 0.5 : it.p - 1;
             if (this.roomAt(target, entry)) {
               items.shift(); i--;
-              target.items.push({ t: it.t, p: entry });
+              const moved: BeltItem = { t: it.t, p: entry };
+              this.enter(target, moved);
+              target.items.push(moved);
               if (nxt.side) target.items.sort((a, c) => c.p - a.p);
             } else {
               it.p = 1;
@@ -465,7 +525,9 @@ export class Factory {
       if (rear < RULES.beltGap) continue;
       const t = kinds[(m.rrOut + s) % kinds.length];
       m.outBuf[t]--;
-      b.items.push({ t, p: 0 });
+      const it: BeltItem = { t, p: 0 };
+      this.enter(b, it);
+      b.items.push(it);
       m.rrOut = (m.rrOut + s + 1) % Math.max(outs.length, 1);
       return;
     }
@@ -476,7 +538,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000])]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made,
@@ -486,9 +548,10 @@ export class Factory {
 
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear();
-    for (const [x, y, dir, inDir, built, items] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
-      b.items = items.map(([t, p]) => ({ t, p }));
+      b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
+      if (split !== undefined && split >= 0) b.split = split as Dir;
     }
     for (const sm of s.machines) {
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built);
@@ -504,7 +567,7 @@ export class Factory {
 
 export interface FactorySave {
   nextId: number;
-  belts: [number, number, number, number, number, [string, number][]][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number;

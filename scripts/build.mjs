@@ -35,10 +35,14 @@ const options = {
 
 function writeStatic() {
   copyDir(path.join(root, 'public'), dist);
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  // Les fichiers portent la version dans leur adresse : une mise à jour ne lit jamais un vieux fichier en cache.
+  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8')
+    .replace('src="app.js"', `src="app.js?v=${version}"`)
+    .replace('href="styles.css"', `href="styles.css?v=${version}"`);
   fs.writeFileSync(path.join(dist, 'index.html'), html);
-  const sw = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8').replace('__VERSION__', version);
+  const sw = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8').replaceAll('__VERSION__', version);
   fs.writeFileSync(path.join(dist, 'sw.js'), sw);
+  fs.writeFileSync(path.join(dist, 'version.json'), JSON.stringify({ v: version }));
 }
 
 function writeInline() {

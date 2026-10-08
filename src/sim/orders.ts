@@ -23,6 +23,8 @@ export interface Order {
   lines: OrderLine[];
   xp: number;
   money: number;
+  /** Équipement offert en plus (commandes rares). */
+  equip?: 'drone';
 }
 
 /** Objets fabricables avec les machines débloquées et les matières découvertes. */
@@ -65,7 +67,7 @@ export function firstOrder(id: number): Order {
 }
 
 /** Trois propositions de commandes. */
-export function generateChoices(seed: number, level: number, discovered: Set<string>, startId: number): Order[] {
+export function generateChoices(seed: number, level: number, discovered: Set<string>, startId: number, canEquip = false): Order[] {
   const rand = rng(seed);
   const pool = [...producibleItems(level, discovered)].filter((id) => ITEMS[id] && item(id).tier < 7);
   if (pool.length === 0) pool.push('fer');
@@ -99,7 +101,9 @@ export function generateChoices(seed: number, level: number, discovered: Set<str
       }
     }
     const rw = rewards(lines, rarity === 'commune' ? 1 : rarity === 'rare' ? 1.8 : 3.5);
-    orders.push({ id: startId + i, rarity, lines, ...rw });
+    const o: Order = { id: startId + i, rarity, lines, ...rw };
+    if (canEquip && (rarity === 'tres_rare' || (rarity === 'rare' && rand() < 0.5))) o.equip = 'drone';
+    orders.push(o);
   }
   return orders;
 }

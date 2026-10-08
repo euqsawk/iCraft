@@ -55,13 +55,13 @@ const BIOME_ORES: Record<BiomeId, { type: string; w: number; rich?: boolean }[]>
 
 /** Filons garantis autour du départ (le Noyau occupe les cases 0 à 3). */
 const START_PATCHES: Omit<Patch, 'id' | 'p1' | 'p2'>[] = [
-  { type: 'fer', cx: -6, cy: -2, r: 3.2, richness: 'normal' },
-  { type: 'charbon', cx: -6, cy: 7, r: 3, richness: 'normal' },
-  { type: 'cuivre', cx: 10, cy: 10, r: 3, richness: 'normal' },
-  { type: 'calcaire', cx: 12, cy: -6, r: 2.6, richness: 'pauvre' },
-  { type: 'fer', cx: -16, cy: 16, r: 3.4, richness: 'riche' },
+  { type: 'fer', cx: -12, cy: -4, r: 3.4, richness: 'normal' },
+  { type: 'charbon', cx: -11, cy: 10, r: 3.2, richness: 'normal' },
+  { type: 'cuivre', cx: 16, cy: 12, r: 3.2, richness: 'normal' },
+  { type: 'calcaire', cx: 16, cy: -10, r: 2.8, richness: 'pauvre' },
+  { type: 'fer', cx: -26, cy: 24, r: 3.6, richness: 'riche' },
 ];
-const START_RADIUS = 18;
+const START_RADIUS = 30;
 
 export class World {
   readonly seed: string;
