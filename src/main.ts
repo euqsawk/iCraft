@@ -21,14 +21,20 @@ async function waitForFont(): Promise<void> {
   } catch { /* police de secours */ }
 }
 
+const bootStep = (t: string) => (window as unknown as { __bootStep?: (t: string) => void }).__bootStep?.(t);
+
 async function boot(): Promise<void> {
+  bootStep('Jeu chargé, démarrage… (étape 3)');
+  document.getElementById('boot-static')?.remove();
   const loading = document.createElement('div');
   loading.className = 'loading';
   loading.innerHTML = '<div class="cube"></div>Usine fractale';
   document.body.append(loading);
 
   await waitForFont();
-  const saved = await loadGame();
+  loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Lecture de la sauvegarde… (étape 4)</small>';
+  const saved = await Promise.race([loadGame(), new Promise<null>((r) => setTimeout(() => r(null), 4000))]);
+  loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Démarrage du rendu… (étape 5)</small>';
   const game = saved ? new Game(saved.seed, saved as GameSave) : new Game(randomSeedCode());
 
   const app = new Application();

@@ -57,11 +57,14 @@ function writeInline() {
     `<script>\n${guard}\n</script>`,
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">',
     `<style>\n${css}\n</style>`,
+    '<div id="boot-static" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font:800 16px -apple-system,system-ui,sans-serif;color:#2E3A4B;text-align:center;padding:24px">Usine fractale<small id="boot-step" style="font-weight:700;font-size:12px;color:#4A5868">Chargement de la page… (étape 1)</small></div>',
     '<div id="game"></div>',
     '<div id="hud"></div>',
     `<script type="module">\n${js}\n</script>`,
   ].join('\n');
   fs.writeFileSync(path.join(dist, 'inline.html'), out);
+  // Variante qui charge le jeu depuis un fichier à côté de la page (lien de test hébergé).
+  fs.writeFileSync(path.join(dist, 'artifact.html'), out.replace(`<script type="module">\n${js}\n</script>`, `<script type="module" src="app.js?v=${version}"></script>`));
 }
 
 fs.rmSync(dist, { recursive: true, force: true });

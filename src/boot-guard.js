@@ -16,6 +16,8 @@
 
   function show(title) {
     if (window.__gameStarted || document.getElementById('boot-guard')) return;
+    var st = document.getElementById('boot-static');
+    if (st) st.remove();
     var box = document.createElement('div');
     box.id = 'boot-guard';
     box.setAttribute('style', 'position:fixed;inset:0;z-index:99;background:#DCEBE3;color:#2E3A4B;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;box-sizing:border-box;font:700 14px/1.4 -apple-system,system-ui,sans-serif;text-align:center');
@@ -47,6 +49,12 @@
     (document.body || document.documentElement).appendChild(box);
   }
 
+  // Étape 2 : les scripts s'exécutent.
+  function step(t) { var el = document.getElementById('boot-step'); if (el) el.textContent = t; }
+  window.__bootStep = step;
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { step('Scripts actifs, chargement du jeu… (étape 2)'); });
+  else step('Scripts actifs, chargement du jeu… (étape 2)');
+
   window.__bootFailed = function (msg) { note(msg); show('Le jeu n’a pas pu démarrer'); };
-  setTimeout(function () { show('Le jeu ne démarre pas'); }, 9000);
+  setTimeout(function () { show('Le jeu ne démarre pas'); }, 12000);
 })();
