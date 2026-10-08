@@ -1,0 +1,20 @@
+{
+  "name": "usine-fractale",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Un jeu d'usine en 2D pour téléphone, joué dans le navigateur.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --serve",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --no-warnings tests/run.ts"
+  },
+  "dependencies": {
+    "pixi.js": "8.9.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3"
+  }
+}

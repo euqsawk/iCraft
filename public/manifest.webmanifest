@@ -1,0 +1,17 @@
+{
+  "name": "Usine fractale",
+  "short_name": "Usine",
+  "description": "Un jeu d'usine en 2D : trace tes tapis au doigt, replie tes chaînes en ateliers.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#DCEBE3",
+  "theme_color": "#DCEBE3",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
