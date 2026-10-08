@@ -226,7 +226,7 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 
 .celebrate {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); background: #fff; border-radius: 26px;
-  box-shadow: 0 6px 0 var(--shadow); padding: 20px 24px; text-align: center; min-width: 250px;
+  box-shadow: 0 6px 0 var(--shadow); padding: 20px 24px; text-align: center; min-width: 290px;
   animation: pop .45s cubic-bezier(.2, 1.4, .4, 1);
 }
 .celebrate h2 { margin: 0 0 4px; font-size: 22px; font-weight: 900; }
@@ -249,3 +249,21 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .celebrate.away { width: min(340px, calc(100% - 32px)); max-height: 70%; overflow-y: auto; }
 .celebrate .chips.gained { justify-content: center; margin: 0 0 12px; }
 .celebrate .muted-small { font-size: 11px; font-weight: 700; color: var(--ink2); margin: 0 0 12px; }
+.gauge { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; }
+.gauge .g-label { display: inline-flex; align-items: center; gap: 4px; color: var(--ink2); }
+.gauge .g-label img { width: 14px; height: 14px; }
+.gauge .g-bar { flex: 1; min-width: 40px; height: 8px; border-radius: 4px; background: #E8EFEB; overflow: hidden; }
+.gauge .g-bar > span { display: block; height: 100%; background: var(--ink); border-radius: 4px; }
+.gauge.low .g-bar > span { background: var(--coral); }
+.gauge.low b { color: var(--coral-dark); }
+.gauge b { font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
+.slots { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+.slot { position: relative; aspect-ratio: 1; border-radius: 10px; background: #F0F5F2; display: flex; align-items: center; justify-content: center; }
+.slot img { width: 22px; height: 22px; }
+.slot b { position: absolute; right: 4px; bottom: 1px; font-size: 11px; font-weight: 900; }
+.slot.empty { background: #F6F9F7; box-shadow: inset 0 0 0 1.5px #E3ECE7; }
+.drone-row { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; }
+.drone-row > span:first-child { white-space: nowrap; }
+.drone-row .gauge { flex: 1; }
+.drone-row small { color: var(--coral-dark); font-weight: 800; }
+.chip.muted { color: #9AA6B2; padding-left: 8px; }

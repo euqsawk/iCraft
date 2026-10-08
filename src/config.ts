@@ -56,11 +56,29 @@ export const RULES = {
   beltGap: 0.5,
   robotSpeed: 4.5,
   droneSpeed: 7,
-  /** Le robot commence sans drone : ils arrivent avec les commandes rares (module de drones). */
-  startDrones: 0,
+  /** Un drone au départ (avec 10 charbons en cadeau) ; les suivants viennent des commandes rares. */
+  startDrones: 1,
+  giftCoal: 10,
+  /** Charbon : case carburant de 10 partout ; durée d'un charbon en secondes de travail. */
+  fuelStack: 10,
+  coalMachineSeconds: 10,
+  coalRobotSeconds: 30,
+  coalDroneSeconds: 20,
+  /** Une machine sous ce seuil fait clignoter son voyant. */
+  lowFuel: 2,
+  /** Inventaires : piles de 10 ; robot 5 cases, drone 1 case, coffre 10 cases. */
+  invStack: 10,
+  robotSlots: 5,
+  chestSlots: 10,
+  /** Sans charbon, le robot avance au quart de sa vitesse ; les drones se posent sur lui. */
+  robotNoFuelSpeed: 0.25,
+  /** Minage du robot : objets par seconde sur un filon normal. */
+  robotMineRate: 0.5,
   maxDrones: 3,
   /** Portée de construction des drones autour du robot, en cases. */
   buildRange: 8,
+  /** Portée des drones pour le charbon et les livraisons (coffres, machines), autour du robot. */
+  supplyRange: 16,
   beltBuildTime: 0.18,
   machineBuildTime: 1.1,
   /** Le robot construit lui-même, à courte portée, un peu plus lentement que les drones. */

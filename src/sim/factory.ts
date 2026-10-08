@@ -39,7 +39,10 @@ export interface Machine {
   built: boolean;
   inBuf: Record<string, number>;
   outBuf: Record<string, number>;
+  /** Charbon dans la case carburant (0 à 10). */
   fuel: number;
+  /** Secondes de travail restantes du charbon en cours. */
+  burn: number;
   craft: { ri: number; t: number } | null;
   /** Foreuse : matière et vitesse (objets par seconde). */
   ore?: string;
@@ -187,7 +190,7 @@ export class Factory {
     const check = def.kind === 'drill' ? this.checkMachine(type, x, y) : { ok: true } as PlaceCheck;
     const m: Machine = {
       id: this.nextId++, type, x, y, w: def.w, h: def.h, built,
-      inBuf: {}, outBuf: {}, fuel: 0, craft: null, drillT: 0,
+      inBuf: {}, outBuf: {}, fuel: 0, burn: 0, craft: null, drillT: 0,
       status: 'idle', rrOut: 0, rrRecipe: 0, made: 0,
       ore: check.ore, rate: check.rate,
     };
@@ -339,19 +342,102 @@ export class Factory {
     return s;
   }
 
+  // ---------- Charbon et coffres ----------
+
+  /** Place restante dans la case carburant. */
+  fuelRoom(m: Machine): number {
+    const def = machineDef(m.type);
+    return def.coal ? Math.max(0, RULES.fuelStack - m.fuel) : 0;
+  }
+
+  /** Ajoute du charbon dans la case carburant ; renvoie la quantité ajoutée. */
+  addFuel(m: Machine, n: number): number {
+    const k = Math.min(n, this.fuelRoom(m));
+    m.fuel += k;
+    return k;
+  }
+
+  /** La machine fait clignoter son voyant : il lui faut du charbon. */
+  lowFuel(m: Machine): boolean {
+    return m.built && machineDef(m.type).coal && m.fuel <= RULES.lowFuel;
+  }
+
+  /** Cases occupées d'un coffre (piles de 10). */
+  storageSlots(m: Machine): number {
+    let n = 0;
+    for (const v of Object.values(m.inBuf)) n += Math.ceil(v / RULES.invStack);
+    return n;
+  }
+
+  /** Place restante dans un coffre pour un type d'objet. */
+  storageRoom(m: Machine, item: string): number {
+    const have = m.inBuf[item] ?? 0;
+    const partial = have % RULES.invStack ? RULES.invStack - (have % RULES.invStack) : 0;
+    return partial + (RULES.chestSlots - this.storageSlots(m)) * RULES.invStack;
+  }
+
+  /** Brûle du charbon pour travailler dt secondes ; faux s'il n'y en a plus. */
+  private useFuel(m: Machine, def: MachineDef, dt: number): boolean {
+    if (!def.coal) return true;
+    if (m.burn <= 0) {
+      if (m.fuel <= 0) return false;
+      m.fuel--;
+      m.burn += RULES.coalMachineSeconds;
+    }
+    m.burn -= dt;
+    return true;
+  }
+
   canAccept(m: Machine, item: string): boolean {
     if (!m.built) return false;
     const def = machineDef(m.type);
     if (def.kind === 'core') return this.coreAccepts(item);
+    if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
+    if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) return true;
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
   }
 
+  /** Une machine qui utilise le charbon comme ingrédient (haut-fourneau). */
+  private coalIngredient(def: MachineDef): boolean {
+    return def.recipes.some((r) => r.in.charbon);
+  }
+
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
     if (def.kind === 'core') { this.onDeliver(item); return; }
+    if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) {
+      // Le carburant d'abord ; un haut-fourneau bien chargé garde le reste comme ingrédient.
+      const asIngredient = this.coalIngredient(def) && m.fuel >= 3 && (m.inBuf.charbon ?? 0) < RULES.machineBuffer;
+      if (!asIngredient) { m.fuel++; return; }
+    }
     m.inBuf[item] = (m.inBuf[item] ?? 0) + 1;
+  }
+
+  /** Retire des objets d'un coffre ; renvoie la quantité prise. */
+  takeFromStorage(m: Machine, item: string, n: number): number {
+    const k = Math.min(n, m.inBuf[item] ?? 0);
+    if (k > 0) m.inBuf[item] -= k;
+    if (m.inBuf[item] === 0) delete m.inBuf[item];
+    return k;
+  }
+
+  /** Dépose des objets dans un coffre ; renvoie la quantité déposée. */
+  putInStorage(m: Machine, item: string, n: number): number {
+    const k = Math.min(n, this.storageRoom(m, item));
+    if (k > 0) m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
+    return k;
+  }
+
+  /** Dépose des ingrédients dans une machine ; renvoie la quantité déposée. */
+  putInMachine(m: Machine, item: string, n: number): number {
+    const def = machineDef(m.type);
+    if (def.kind === 'storage') return this.putInStorage(m, item, n);
+    if (def.kind !== 'crafter' || !this.acceptSet(def).has(item) || item === 'charbon') return 0;
+    const k = Math.min(n, RULES.machineBuffer - (m.inBuf[item] ?? 0));
+    if (k > 0) m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
+    return Math.max(0, k);
   }
 
   /** La suite peut-elle prendre un objet maintenant ? */
@@ -437,7 +523,7 @@ export class Factory {
       const def = machineDef(m.type);
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
-      if (def.kind !== 'core') this.pushOutputs(m);
+      if (def.kind !== 'core') this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
     }
   }
 
@@ -450,6 +536,7 @@ export class Factory {
   private tickDrill(m: Machine, dt: number): void {
     if (!m.ore || !m.rate) { m.status = 'noore'; return; }
     if (this.outCount(m) >= RULES.machineBuffer) { m.status = 'blocked'; m.drillT = Math.min(m.drillT, 1); return; }
+    if (!this.useFuel(m, machineDef(m.type), dt)) { m.status = 'nofuel'; return; }
     m.status = 'working';
     m.drillT += dt * m.rate;
     if (m.drillT >= 1) {
@@ -471,8 +558,11 @@ export class Factory {
   private tickCrafter(m: Machine, def: MachineDef, dt: number): void {
     if (m.craft) {
       const rec = def.recipes[m.craft.ri];
-      m.craft.t += dt;
-      if (m.craft.t < rec.time) { m.status = 'working'; return; }
+      if (m.craft.t < rec.time) {
+        if (!this.useFuel(m, def, dt)) { m.status = 'nofuel'; return; }
+        m.craft.t += dt;
+        if (m.craft.t < rec.time) { m.status = 'working'; return; }
+      }
       for (const [k, v] of Object.entries(rec.out)) {
         if ((m.outBuf[k] ?? 0) + v > RULES.machineBuffer) { m.status = 'blocked'; m.craft.t = rec.time; return; }
       }
@@ -489,17 +579,7 @@ export class Factory {
       let ok = true;
       for (const [k, v] of Object.entries(rec.in)) if ((m.inBuf[k] ?? 0) < v) { ok = false; break; }
       if (!ok) continue;
-      if (def.fuel && m.fuel <= 0) {
-        if ((m.inBuf[def.fuel.item] ?? 0) > 0) {
-          m.inBuf[def.fuel.item]--;
-          m.fuel += def.fuel.per;
-        } else {
-          m.status = 'nofuel';
-          return;
-        }
-      }
       for (const [k, v] of Object.entries(rec.in)) m.inBuf[k] -= v;
-      if (def.fuel) m.fuel -= 1;
       m.craft = { ri, t: 0 };
       m.rrRecipe = ri + 1;
       m.status = 'working';
@@ -513,10 +593,10 @@ export class Factory {
     return false;
   }
 
-  private pushOutputs(m: Machine): void {
+  private pushOutputs(m: Machine, buf: Record<string, number>): void {
     const outs = this.outputs.get(m);
     if (!outs || outs.length === 0) return;
-    const kinds = Object.keys(m.outBuf).filter((k) => m.outBuf[k] > 0);
+    const kinds = Object.keys(buf).filter((k) => buf[k] > 0);
     if (kinds.length === 0) return;
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
@@ -524,7 +604,8 @@ export class Factory {
       const rear = b.items.length ? b.items[b.items.length - 1].p : Infinity;
       if (rear < RULES.beltGap) continue;
       const t = kinds[(m.rrOut + s) % kinds.length];
-      m.outBuf[t]--;
+      buf[t]--;
+      if (buf[t] === 0 && buf === m.inBuf) delete buf[t];
       const it: BeltItem = { t, p: 0 };
       this.enter(b, it);
       b.items.push(it);
@@ -541,7 +622,7 @@ export class Factory {
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
-        fuel: m.fuel, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made,
+        fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made,
       })),
     };
   }
@@ -558,7 +639,7 @@ export class Factory {
       this.machines.delete(m.id);
       m.id = sm.id;
       this.machines.set(m.id, m);
-      Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: sm.fuel, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
+      Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
     }
     this.nextId = s.nextId;
     this.dirty = true;
@@ -570,7 +651,7 @@ export interface FactorySave {
   belts: [number, number, number, number, number, [string, number, number?][], number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
-    inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number;
+    inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number;
   }[];
 }

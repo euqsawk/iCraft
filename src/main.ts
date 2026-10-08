@@ -89,7 +89,7 @@ async function boot(): Promise<void> {
     (window as unknown as Record<string, unknown>).__hud = hud;
   }
   if (!saved) {
-    hud.toast('Touche le sol pour envoyer le robot', 'info');
+    hud.toast('Envoie le robot sur le charbon : à l’arrêt, il mine tout seul', 'info');
     await save();
   } else {
     comeBack(Date.now() - saved.time);

@@ -1,6 +1,7 @@
 // Les machines et leurs recettes (planche « Toutes les recettes »).
 // Chaque machine déduit sa recette de ce qu'on lui apporte : aucune machine n'a deux recettes
 // avec les mêmes entrées, sauf la raffinerie avec du pétrole (plastique ou carburant).
+// Avant l'électricité, toutes les machines brûlent du charbon (une case carburant de 10).
 
 export interface Recipe {
   in: Record<string, number>;
@@ -9,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage';
 
 export interface MachineDef {
   id: string;
@@ -22,8 +23,8 @@ export interface MachineDef {
   /** Niveau à partir duquel la machine se débloque. */
   unlock: number;
   recipes: Recipe[];
-  /** Combustible : chaque unité permet `per` fabrications. */
-  fuel?: { item: string; per: number };
+  /** Fonctionne au charbon (case carburant). */
+  coal: boolean;
   /** Peut être posée par le joueur. */
   buildable: boolean;
   /** Phrase courte pour la palette. */
@@ -34,13 +35,12 @@ const r = (inp: Record<string, number>, out: Record<string, number>, time: numbe
 
 export const MACHINES: Record<string, MachineDef> = {
   foreuse: {
-    id: 'foreuse', name: 'Foreuse', kind: 'drill', w: 2, h: 2, cost: 40, unlock: 1, recipes: [], buildable: true,
+    id: 'foreuse', name: 'Foreuse', kind: 'drill', coal: true, w: 2, h: 2, cost: 40, unlock: 1, recipes: [], buildable: true,
     hint: 'Posée sur un filon',
   },
   four: {
-    id: 'four', name: 'Four', kind: 'crafter', w: 2, h: 2, cost: 40, unlock: 1, buildable: true,
-    fuel: { item: 'charbon', per: 2 },
-    hint: 'Minerai → lingot · brûle du charbon',
+    id: 'four', name: 'Four', kind: 'crafter', coal: true, w: 2, h: 2, cost: 40, unlock: 1, buildable: true,
+    hint: 'Minerai → lingot',
     recipes: [
       r({ fer: 1 }, { lingot_fer: 1 }, 1.6),
       r({ cuivre: 1 }, { lingot_cuivre: 1 }, 1.6),
@@ -49,7 +49,7 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   presse: {
-    id: 'presse', name: 'Presse', kind: 'crafter', w: 2, h: 2, cost: 60, unlock: 1, buildable: true,
+    id: 'presse', name: 'Presse', kind: 'crafter', coal: true, w: 2, h: 2, cost: 60, unlock: 1, buildable: true,
     hint: 'Lingot → plaque',
     recipes: [
       r({ lingot_fer: 1 }, { plaque_fer: 1 }, 1.2),
@@ -58,7 +58,7 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   tour: {
-    id: 'tour', name: 'Tour', kind: 'crafter', w: 2, h: 2, cost: 70, unlock: 2, buildable: true,
+    id: 'tour', name: 'Tour', kind: 'crafter', coal: true, w: 2, h: 2, cost: 70, unlock: 2, buildable: true,
     hint: 'Lingot de fer → vis',
     recipes: [
       r({ lingot_fer: 1 }, { vis: 1 }, 1.2),
@@ -66,7 +66,7 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   trefileuse: {
-    id: 'trefileuse', name: 'Tréfileuse', kind: 'crafter', w: 2, h: 2, cost: 70, unlock: 3, buildable: true,
+    id: 'trefileuse', name: 'Tréfileuse', kind: 'crafter', coal: true, w: 2, h: 2, cost: 70, unlock: 3, buildable: true,
     hint: 'Lingot de cuivre → fil',
     recipes: [
       r({ lingot_cuivre: 1 }, { fil_cuivre: 1 }, 1.2),
@@ -74,12 +74,12 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   haut_fourneau: {
-    id: 'haut_fourneau', name: 'Haut-fourneau', kind: 'crafter', w: 2, h: 2, cost: 120, unlock: 4, buildable: true,
+    id: 'haut_fourneau', name: 'Haut-fourneau', kind: 'crafter', coal: true, w: 2, h: 2, cost: 120, unlock: 4, buildable: true,
     hint: 'Lingot de fer + charbon → acier',
     recipes: [r({ lingot_fer: 1, charbon: 1 }, { acier: 1 }, 2)],
   },
   assembleur: {
-    id: 'assembleur', name: 'Assembleur', kind: 'crafter', w: 2, h: 2, cost: 150, unlock: 5, buildable: true,
+    id: 'assembleur', name: 'Assembleur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 150, unlock: 5, buildable: true,
     hint: 'Deux pièces → une pièce travaillée',
     recipes: [
       r({ plaque_fer: 1, vis: 1 }, { engrenage: 1 }, 1.6),
@@ -95,7 +95,7 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   broyeur: {
-    id: 'broyeur', name: 'Broyeur', kind: 'crafter', w: 2, h: 2, cost: 90, unlock: 6, buildable: true,
+    id: 'broyeur', name: 'Broyeur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 90, unlock: 6, buildable: true,
     hint: 'Calcaire → ciment, quartz → cristal',
     recipes: [
       r({ calcaire: 1 }, { ciment: 1 }, 1.4),
@@ -103,12 +103,12 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   melangeur: {
-    id: 'melangeur', name: 'Mélangeur', kind: 'crafter', w: 2, h: 2, cost: 110, unlock: 7, buildable: true,
+    id: 'melangeur', name: 'Mélangeur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 110, unlock: 7, buildable: true,
     hint: 'Ciment + sable → béton',
     recipes: [r({ ciment: 1, sable: 1 }, { beton: 1 }, 1.8)],
   },
   raffinerie: {
-    id: 'raffinerie', name: 'Raffinerie', kind: 'crafter', w: 2, h: 2, cost: 160, unlock: 8, buildable: true,
+    id: 'raffinerie', name: 'Raffinerie', kind: 'crafter', coal: true, w: 2, h: 2, cost: 160, unlock: 8, buildable: true,
     hint: 'Bauxite → aluminium, pétrole → plastique ou carburant',
     recipes: [
       r({ bauxite: 1 }, { aluminium: 1 }, 2),
@@ -117,7 +117,7 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   fabricant: {
-    id: 'fabricant', name: 'Fabricant', kind: 'crafter', w: 2, h: 2, cost: 250, unlock: 9, buildable: true,
+    id: 'fabricant', name: 'Fabricant', kind: 'crafter', coal: true, w: 2, h: 2, cost: 250, unlock: 9, buildable: true,
     hint: 'Trois composants → une machine',
     recipes: [
       r({ verre: 1, circuit: 1, tole_alu: 1 }, { panneau_solaire: 1 }, 3),
@@ -129,12 +129,16 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   centrifugeuse: {
-    id: 'centrifugeuse', name: 'Centrifugeuse', kind: 'crafter', w: 2, h: 2, cost: 300, unlock: 12, buildable: true,
+    id: 'centrifugeuse', name: 'Centrifugeuse', kind: 'crafter', coal: true, w: 2, h: 2, cost: 300, unlock: 12, buildable: true,
     hint: 'Uranium → uranium enrichi',
     recipes: [r({ uranium: 1 }, { uranium_enrichi: 1 }, 3)],
   },
+  coffre: {
+    id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde 100 objets · les drones y prennent le charbon',
+  },
   noyau: {
-    id: 'noyau', name: 'Noyau', kind: 'core', w: 4, h: 4, cost: 0, unlock: 1, recipes: [], buildable: false,
+    id: 'noyau', name: 'Noyau', kind: 'core', coal: false, w: 4, h: 4, cost: 0, unlock: 1, recipes: [], buildable: false,
     hint: 'Reçoit les livraisons',
   },
 };
@@ -151,7 +155,7 @@ export function machineDef(id: string): MachineDef {
 export function acceptedInputs(def: MachineDef): Set<string> {
   const s = new Set<string>();
   for (const rec of def.recipes) for (const k of Object.keys(rec.in)) s.add(k);
-  if (def.fuel) s.add(def.fuel.item);
+  if (def.coal) s.add('charbon');
   return s;
 }
 

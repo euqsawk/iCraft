@@ -17,7 +17,7 @@ const STATUS_TEXT: Record<string, string> = {
   idle: 'En attente',
   working: 'En marche',
   blocked: 'Sortie pleine : branche un tapis ou vide la suite',
-  nofuel: 'Il manque du charbon',
+  nofuel: 'Plus de charbon : le voyant clignote, un drone va en apporter',
   noinput: 'Il manque un ingrédient',
   noore: 'Pas de filon dessous',
 };
@@ -261,10 +261,13 @@ export class Hud implements GestureHandlers {
   }
 
   tap(sx: number, sy: number): void {
+    if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
     const w = this.worldAt(sx, sy);
     const cx = Math.floor(w.x), cy = Math.floor(w.y);
     const f = this.game.factory;
     const m = f.machineAt(cx, cy);
+    const rb = this.game.robot;
+    if (Math.hypot(w.x - rb.x, w.y - (rb.y - 0.6)) < 0.9) { this.select({ kind: 'robot' }); return; }
     if (m?.type === 'noyau') { this.closePopover(); this.openOrders(); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
@@ -425,24 +428,26 @@ export class Hud implements GestureHandlers {
       const def = machineDef(m.type);
       let title = def.name, text = '';
       if (!m.built) {
-        text = 'En construction : les drones arrivent.';
+        text = 'En construction.';
       } else if (def.kind === 'drill') {
         const patch = this.game.world.patchAt(m.x, m.y) ?? this.game.world.patchAt(m.x + 1, m.y + 1);
         title = `Foreuse · ${m.ore ? item(m.ore).name.toLowerCase() : '?'}`;
         text = `${STATUS_TEXT[m.status]}. Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(m.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
       } else {
-        text = `${STATUS_TEXT[m.status]}. ${def.hint}.`;
-        if (def.fuel) text += ` Charbon : ${m.fuel + (m.inBuf[def.fuel.item] ?? 0) * def.fuel.per} fournées.`;
+        text = def.kind === 'storage'
+          ? `${def.hint}. ${this.game.factory.storageSlots(m)} cases sur 10 occupées.`
+          : `${STATUS_TEXT[m.status]}. ${def.hint}.`;
       }
-      const inChips = this.chips(Object.fromEntries(Object.entries(m.inBuf).filter(([k]) => k !== def.fuel?.item)));
+      const fuelLine = m.built && def.coal ? this.gauge('Charbon', m.fuel, 10, this.game.factory.lowFuel(m)) : '';
+      const inChips = this.chips(m.inBuf);
       const outChips = this.chips(m.outBuf);
       let choice = '';
       if (m.type === 'raffinerie') {
         const cur = m.choice ?? 'plastique';
         choice = `<div class="row"><button class="btn ${cur === 'plastique' ? 'primary' : ''}" data-choice="plastique">Plastique</button><button class="btn ${cur === 'carburant' ? 'primary' : ''}" data-choice="carburant">Carburant</button></div>`;
       }
-      const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p><p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
-        ${inChips ? `<p>Entrées</p><div class="chips">${inChips}</div>` : ''}
+      const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p>${fuelLine}<p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
+        ${inChips ? `<p>${def.kind === 'storage' ? 'Contenu' : 'Entrées'}</p><div class="chips">${inChips}</div>` : ''}
         ${outChips ? `<p>Sorties</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
@@ -460,6 +465,8 @@ export class Hud implements GestureHandlers {
       p.querySelectorAll<HTMLButtonElement>('[data-choice]').forEach((b) => {
         b.onclick = () => { f.setChoice(m, b.dataset.choice!); this.renderPopover(); };
       });
+    } else if (sel?.kind === 'robot') {
+      this.renderRobotPopover();
     } else if (sel?.kind === 'belt') {
       const b = f.beltAt(sel.x, sel.y);
       if (!b) { this.closePopover(); return; }
@@ -473,6 +480,32 @@ export class Hud implements GestureHandlers {
       if (!this.setPopover(`b${sel.x},${sel.y}`, info, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
     }
+  }
+
+  /** Jauge de charbon (case carburant). */
+  private gauge(label: string, n: number, max: number, low: boolean): string {
+    return `<div class="gauge${low ? ' low' : ''}"><span class="g-label"><img src="${this.itemIcons.get('charbon')}" alt="">${label}</span><span class="g-bar"><span style="width:${(n / max) * 100}%"></span></span><b>${n}/${max}</b></div>`;
+  }
+
+  private slotsHtml(slots: ({ t: string; n: number } | null)[]): string {
+    return `<div class="slots">${slots.map((sl) => sl
+      ? `<span class="slot" title="${esc(item(sl.t).name)}"><img src="${this.itemIcons.get(sl.t)}" alt="${esc(item(sl.t).name)}"><b>${sl.n}</b></span>`
+      : '<span class="slot empty"></span>').join('')}</div>`;
+  }
+
+  private renderRobotPopover(): void {
+    const g = this.game, r = g.robot;
+    const status = g.robotOutOfCoal
+      ? 'Plus de charbon : il avance au ralenti. Arrête-le sur un filon de charbon.'
+      : r.mining ? `Il mine : ${item(r.mining).name.toLowerCase()}.`
+      : g.robotBuilding ? 'Il construit.'
+      : r.moving ? 'Il roule.'
+      : 'Arrête-le sur un filon : il mine tout seul. Ses drones distribuent ce qu’il trouve.';
+    const drones = g.drones.map((d, i) => `<div class="drone-row"><span>Drone ${i + 1}</span>${this.gauge('', d.fuel, 10, d.fuel <= 2)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : '<span class="chip muted">vide</span>'}${d.state === 'parked' ? '<small>posé</small>' : ''}</div>`).join('');
+    const info = `<h3>Robot</h3><p>${esc(status)}</p>${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}
+      <p>Inventaire</p>${this.slotsHtml(r.inv.slots)}
+      ${g.drones.length ? `<p>Drones</p>${drones}` : '<p>Pas encore de drone.</p>'}`;
+    this.setPopover('robot', info, '');
   }
 
   private popKey = '';
@@ -502,6 +535,9 @@ export class Hud implements GestureHandlers {
       const m = this.game.factory.machines.get(sel.id);
       if (!m) return;
       wx = (m.x + m.w / 2) * CELL; wy = m.y * CELL; top = (m.y + m.h) * CELL;
+    } else if (sel.kind === 'robot') {
+      const r = this.game.robot;
+      wx = r.x * CELL; wy = (r.y - 1.6) * CELL; top = (r.y + 0.4) * CELL;
     } else {
       wx = (sel.x + 0.5) * CELL; wy = sel.y * CELL; top = (sel.y + 1) * CELL;
     }

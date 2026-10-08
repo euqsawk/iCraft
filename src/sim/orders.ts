@@ -35,7 +35,7 @@ export function producibleItems(level: number, discovered: Set<string>): Set<str
     grew = false;
     for (const m of Object.values(MACHINES)) {
       if (!m.buildable || m.unlock > level) continue;
-      if (m.fuel && !ok.has(m.fuel.item)) continue;
+      if (m.coal && !ok.has('charbon')) continue;
       for (const rec of m.recipes) {
         if (!Object.keys(rec.in).every((k) => ok.has(k))) continue;
         for (const o of Object.keys(rec.out)) if (!ok.has(o)) { ok.add(o); grew = true; }

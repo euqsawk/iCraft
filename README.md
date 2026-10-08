@@ -24,16 +24,20 @@ Pour poser une machine, elle apparaît un peu au-dessus du doigt pour rester vis
 
 ### La première usine
 
-1. **Machine → Foreuse**, posée sur le filon de fer (gris-bleu), puis une autre sur le charbon (gris foncé).
-2. **Machine → Four**, entre les deux et le Noyau.
-3. **Tapis** : trace du fer jusqu'au four, du charbon jusqu'au four, puis du four jusqu'au Noyau.
-4. Le robot construit chaque fantôme à son tour, le four brûle le charbon et fond le fer, le Noyau reçoit les lingots : la première commande est livrée.
+1. Envoie le robot sur le filon de charbon (gris foncé) : à l'arrêt, il mine tout seul.
+2. **Machine → Foreuse** sur le charbon, et un **Coffre** à côté, relié par un tapis. Le premier drone apporte ses 10 charbons de départ à la foreuse.
+3. **Machine → Foreuse** sur le fer (gris-bleu), puis un **Four**.
+4. **Tapis** : du fer jusqu'au four, puis du four jusqu'au Noyau.
+5. Le robot construit chaque fantôme à son tour. Le drone va chercher le charbon dans le coffre et recharge les machines dont le voyant clignote. Le Noyau reçoit les lingots : la première commande est livrée.
 
 ## Règles déjà en place
 
 - **Recettes déduites de l'entrée** : une machine fait ce qu'on lui apporte (une presse transforme un lingot de fer en plaque, de l'aluminium en tôle…). Seule la raffinerie avec du pétrole demande un choix, dans sa bulle.
-- **Four à charbon** : un charbon permet deux fournées. Sans charbon, le four attend.
-- **Construction** : chaque pose coûte des pièces et apparaît en fantôme. Au début, le robot construit seul, à courte portée, en allant de chantier en chantier. Les drones arrivent avec les commandes rares (« +1 drone », 3 au plus) et construisent autour du robot.
+- **Tout au charbon** (jusqu'à l'électricité) : chaque machine a une case carburant de 10 charbons ; un charbon dure 10 s de travail. Un tapis qui apporte du charbon remplit cette case. Quand elle tombe à 2, un voyant clignote sur la machine.
+- **Robot** : une case carburant (un charbon = 30 s de route, de chantier ou de minage) et 5 cases d'inventaire de 10. À l'arrêt sur un filon, il mine et garde ce qu'il trouve ; il se recharge avec le charbon de son inventaire. Sans charbon, il avance au quart de sa vitesse. Touche-le pour voir sa jauge et son inventaire.
+- **Drones** : un au départ (avec 10 charbons), d'autres avec les commandes rares (3 au plus). Chacun a une case carburant (un charbon = 20 s de vol) et une case d'inventaire. Ils construisent, rechargent les machines en charbon en priorité celles qui clignotent, vont remplir leur cargaison au coffre le plus proche ou dans l'inventaire du robot, et distribuent ce que le robot a miné. Sans charbon, ils se posent sur le robot. Portée : 8 cases autour du robot pour construire, 16 pour le charbon et les livraisons.
+- **Coffre** (1 case, 100 objets) : un tapis peut le remplir, un tapis peut en sortir, les drones y prennent le charbon.
+- **Construction** : chaque pose coûte des pièces et apparaît en fantôme. Le robot construit à courte portée, en allant de chantier en chantier ; les drones l'aident autour de lui.
 - **Séparateur** (niveau 2) : un objet sur deux part dans la dérivation ; si une sortie est pleine, tout passe par l'autre. Pour fusionner deux tapis, il suffit d'en faire arriver un sur le côté de l'autre.
 - **Noyau** : carré, il reçoit les tapis par n'importe quelle case de son bord.
 - **Supprimer** rembourse 100 % (bulle ou gomme).

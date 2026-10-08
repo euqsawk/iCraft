@@ -180,6 +180,11 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       }
       g.circle(0, 0, 3).fill(ink);
       break;
+    case 'coffre':
+      g.roundRect(-7.5, -5, 15, 11, 2.5).fill(0xc98a4b);
+      g.rect(-7.5, -1.5, 15, 1.6).fill(0x8a5a2b);
+      g.roundRect(-1.8, -2.6, 3.6, 3.8, 1).fill(PALETTE.yellow).stroke({ width: 1, color: ink });
+      break;
     default:
       g.roundRect(-10, -10, 20, 20, 5).stroke(st);
   }

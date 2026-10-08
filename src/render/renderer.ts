@@ -51,7 +51,7 @@ export type Preview =
   | { kind: 'erase'; x: number; y: number }
   | null;
 
-export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number } | null;
+export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number } | { kind: 'robot' } | null;
 
 interface ChunkView {
   ground: Sprite;
@@ -65,6 +65,7 @@ interface MachineView {
   body: Graphics;
   icon: Container;
   badge: Graphics;
+  lamp: Graphics;
   label: Text | null;
   built: boolean;
   ore?: string;
@@ -388,7 +389,7 @@ export class GameRenderer {
     const badge = new Graphics();
     const W = def.w * CELL, H = def.h * CELL;
     const isDrill = def.kind === 'drill';
-    const bw = isDrill ? W - 8 : W - 2, bh = isDrill ? H - 8 : H - 2, br = isDrill ? 12 : 15;
+    const bw = isDrill ? W - 8 : W - 2, bh = isDrill ? H - 8 : H - 2, br = isDrill ? 12 : def.w === 1 ? 7 : 15;
     if (m.built) {
       drawMachineBody(body, bw, bh, br);
     } else {
@@ -398,7 +399,11 @@ export class GameRenderer {
       icon.alpha = 0.4;
     }
     drawMachineIcon(iconG, m.type, m.ore);
-    root.addChild(body, icon, badge);
+    // Voyant du charbon, en haut à gauche : il clignote quand la machine en manque.
+    const lamp = new Graphics();
+    lamp.circle(-bw / 2 + 7, -bh / 2 + 7, 4.5).fill(0xffffff).circle(-bw / 2 + 7, -bh / 2 + 7, 3).fill(PALETTE.coral);
+    lamp.visible = false;
+    root.addChild(body, icon, badge, lamp);
     let label: Text | null = null;
     const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
     label = this.makeLabel(name);
@@ -406,7 +411,7 @@ export class GameRenderer {
     root.addChild(label);
     root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
     this.machineLayer.addChild(root);
-    return { root, body, icon, badge, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '' };
+    return { root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '' };
   }
 
   private buildNoyau(m: Machine): void {
@@ -449,14 +454,15 @@ export class GameRenderer {
       v.icon.scale.set(s);
       if (m.type === 'four' && m.status === 'working') v.icon.y = Math.sin(this.time * 9) * 0.6;
       if (v.label) v.label.visible = this.camera.zoom > 0.6;
+      const low = this.game.factory.lowFuel(m);
+      v.lamp.visible = low && Math.sin(this.time * (m.fuel <= 0 && m.burn <= 0 ? 12 : 6)) > -0.2;
       if (m.status !== v.status) {
         v.status = m.status;
         v.badge.clear();
-        if (m.built && (m.status === 'nofuel' || m.status === 'blocked')) {
+        if (m.built && m.status === 'blocked') {
           const x = def.w * CELL / 2 - 4, y = -def.h * CELL / 2 + 4;
           v.badge.circle(x, y, 8).fill(0xffffff).stroke({ width: 2, color: PALETTE.coral });
-          if (m.status === 'nofuel') v.badge.circle(x, y, 3.5).fill(item('charbon').color);
-          else v.badge.rect(x - 3, y - 3.5, 2, 7).rect(x + 1, y - 3.5, 2, 7).fill(PALETTE.coral);
+          v.badge.rect(x - 3, y - 3.5, 2, 7).rect(x + 1, y - 3.5, 2, 7).fill(PALETTE.coral);
         }
       }
     }
@@ -521,7 +527,11 @@ export class GameRenderer {
     dg.moveTo(-10, -9).lineTo(10, -9).stroke({ width: 2, color: PALETTE.ink, cap: 'round' });
     dg.moveTo(0, -7).lineTo(0, -9).stroke({ width: 2, color: PALETTE.ink });
     dg.circle(0, 0, 2.5).fill(PALETTE.yellow);
-    d.addChild(dg);
+    const cargo = new Sprite();
+    cargo.anchor.set(0.5);
+    cargo.position.set(0, 12);
+    cargo.label = 'cargo';
+    d.addChild(cargo, dg);
     this.actorLayer.addChild(d);
     return d;
   }
@@ -537,16 +547,32 @@ export class GameRenderer {
     v.beam.alpha = 0.5 + 0.35 * pulse;
     v.glow.alpha = 0.4 + 0.6 * pulse;
     v.glow.scale.set(1);
+    // Le robot mine : il tremble un peu, et chaque objet trouvé saute au-dessus de lui.
+    v.body.x = r.mining ? Math.sin(this.time * 40) * 0.8 : 0;
+    if (r.mined !== this.lastMined) {
+      if (r.mined > this.lastMined && r.mining) this.spawnPop(r.mining, r.x * CELL, r.y * CELL - 36);
+      this.lastMined = r.mined;
+    }
+    this.updatePops();
     this.game.drones.forEach((d, i) => {
       const dv = this.droneViews[i];
-      dv.position.set(d.x * CELL, d.y * CELL - 22 + Math.sin(this.time * 4 + i) * 2.5);
+      if (d.state === 'parked') {
+        dv.position.set(r.x * CELL + (i - (this.game.drones.length - 1) / 2) * 14, r.y * CELL + v.body.y - 40);
+        dv.alpha = 0.75;
+      } else {
+        dv.position.set(d.x * CELL, d.y * CELL - 22 + Math.sin(this.time * 4 + i) * 2.5);
+        dv.alpha = 1;
+      }
+      const cargo = dv.getChildByLabel('cargo') as Sprite;
+      cargo.visible = !!d.cargo;
+      if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
     });
     // Faisceaux de construction : pointillés du drone vers le chantier.
     const fx = this.fx;
     fx.clear();
     for (const d of this.game.drones) {
-      if (d.state !== 'build' || !d.job) continue;
-      const p = this.game.jobPos(d.job);
+      if (d.state !== 'work' || d.task?.kind !== 'build') continue;
+      const p = this.game.jobPos(d.task.job);
       if (!p) continue;
       dashedPolyline(fx, [{ x: d.x * CELL, y: d.y * CELL - 14 }, { x: p.x * CELL, y: p.y * CELL }], 3, 3);
     }
@@ -562,6 +588,31 @@ export class GameRenderer {
         fx.circle(p.x * CELL, p.y * CELL, 5 + pulse * 3).fill({ color: PALETTE.yellow, alpha: 0.5 });
       }
     }
+  }
+
+  private lastMined = 0;
+  private pops: { s: Sprite; t: number }[] = [];
+
+  private spawnPop(itemId: string, x: number, y: number): void {
+    const s = new Sprite(this.itemTextures.get(itemId)!);
+    s.anchor.set(0.5);
+    s.position.set(x, y);
+    this.actorLayer.addChild(s);
+    this.pops.push({ s, t: 0 });
+  }
+
+  private updatePops(): void {
+    for (const p of this.pops) {
+      p.t += 1 / 60;
+      p.s.y -= 0.5;
+      p.s.alpha = Math.max(0, 1 - p.t / 0.9);
+      p.s.scale.set(1 + p.t * 0.4);
+    }
+    this.pops = this.pops.filter((p) => {
+      if (p.t < 0.9) return true;
+      p.s.destroy();
+      return false;
+    });
   }
 
   // ---------- Superpositions : tracé en cours, pose, gomme, sélection ----------
@@ -605,7 +656,11 @@ export class GameRenderer {
       g.circle((pv.x + 0.5) * CELL, (pv.y + 0.5) * CELL, CELL * 0.8).fill({ color: PALETTE.coral, alpha: 0.25 }).stroke({ width: 2, color: PALETTE.coral });
     }
     const sel = this.selection;
-    if (sel?.kind === 'machine') {
+    if (sel?.kind === 'robot') {
+      const r = this.game.robot;
+      dashedPolyline(g, Array.from({ length: 33 }, (_, i) => ({ x: r.x * CELL + Math.cos(i / 32 * Math.PI * 2) * 26, y: r.y * CELL - 16 + Math.sin(i / 32 * Math.PI * 2) * 26 })), 5, 4);
+      g.stroke({ width: 2.5, color: PALETTE.coral });
+    } else if (sel?.kind === 'machine') {
       const m = this.game.factory.machines.get(sel.id);
       if (m) {
         const pad = 5;
@@ -631,6 +686,7 @@ export class GameRenderer {
     drawMachineBody(g, 46, 46, 15);
     const ig = new Graphics();
     drawMachineIcon(ig, type, type === 'foreuse' ? 'fer' : undefined);
+    if (type === 'coffre') ig.scale.set(1.8);
     c.addChild(g, ig);
     const canvas = this.app.renderer.extract.canvas({ target: c, resolution: 3 }) as HTMLCanvasElement;
     c.destroy({ children: true });

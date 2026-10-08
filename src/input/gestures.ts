@@ -47,9 +47,10 @@ export class Gestures {
   }
 
   private down(e: PointerEvent): void {
-    this.el.setPointerCapture?.(e.pointerId);
     const p = this.local(e);
-    this.pointers.set(e.pointerId, { x: p.x, y: p.y, sx: p.x, sy: p.y, t: performance.now() });
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    this.el.setPointerCapture?.(e.pointerId);
+    this.pointers.set(e.pointerId, { x: p.x, y: p.y, sx: p.x, sy: p.y, t: e.timeStamp });
     if (this.pointers.size === 1) {
       if (this.h.toolActive() && e.button !== 2) {
         this.mode = 'tool';
@@ -73,6 +74,7 @@ export class Gestures {
     const ptr = this.pointers.get(e.pointerId);
     if (!ptr) return;
     const p = this.local(e);
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
     const dx = p.x - ptr.x, dy = p.y - ptr.y;
     ptr.x = p.x; ptr.y = p.y;
     if (this.mode === 'pending' && Math.hypot(p.x - ptr.sx, p.y - ptr.sy) > TAP_SLOP) this.mode = 'pan';
@@ -97,7 +99,7 @@ export class Gestures {
     if (!ptr) return;
     this.pointers.delete(e.pointerId);
     if (this.mode === 'pending' && !cancelled) {
-      const quick = performance.now() - ptr.t < TAP_TIME;
+      const quick = e.timeStamp - ptr.t < TAP_TIME;
       if (quick) this.h.tap(ptr.x, ptr.y);
     } else if (this.mode === 'tool') {
       this.h.toolEnd(cancelled);
