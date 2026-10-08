@@ -36,9 +36,10 @@ const options = {
 function writeStatic() {
   copyDir(path.join(root, 'public'), dist);
   // Les fichiers portent la version dans leur adresse : une mise à jour ne lit jamais un vieux fichier en cache.
-  const guard = fs.readFileSync(path.join(root, 'src/boot-guard.js'), 'utf8');
+  // Garde-fou du démarrage : un petit script classique, en fichier séparé.
+  fs.copyFileSync(path.join(root, 'src/boot-guard.js'), path.join(dist, 'boot.js'));
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8')
-    .replace('/*BOOT-GUARD*/', guard)
+    .replace('src="boot.js"', `src="boot.js?v=${version}"`)
     .replace('src="app.js"', `src="app.js?v=${version}"`)
     .replace('href="styles.css"', `href="styles.css?v=${version}"`);
   fs.writeFileSync(path.join(dist, 'index.html'), html);
@@ -64,7 +65,10 @@ function writeInline() {
   ].join('\n');
   fs.writeFileSync(path.join(dist, 'inline.html'), out);
   // Variante qui charge le jeu depuis un fichier à côté de la page (lien de test hébergé).
-  fs.writeFileSync(path.join(dist, 'artifact.html'), out.replace(`<script type="module">\n${js}\n</script>`, `<script type="module" src="app.js?v=${version}"></script>`));
+  const noscript = '<noscript><div style="position:fixed;inset:0;z-index:100;background:#DCEBE3;display:flex;align-items:center;justify-content:center;padding:24px;text-align:center;font:800 15px -apple-system,system-ui,sans-serif;color:#2E3A4B">JavaScript est désactivé pour cette page.</div></noscript>';
+  fs.writeFileSync(path.join(dist, 'artifact.html'), out
+    .replace(`<script>\n${guard}\n</script>`, `<script src="boot.js?v=${version}"></script>`)
+    .replace(`<script type="module">\n${js}\n</script>`, `${noscript}\n<script type="module" src="app.js?v=${version}"></script>`));
 }
 
 fs.rmSync(dist, { recursive: true, force: true });
