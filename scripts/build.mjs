@@ -42,14 +42,17 @@ function writeStatic() {
 }
 
 function writeInline() {
-  const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  // Fragment de page autonome (sans <html>/<head>/<body>) : pour un lien de test hébergé.
   const css = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
   const js = fs.readFileSync(path.join(dist, 'app.js'), 'utf8').replace(/<\/script/g, '<\\/script');
-  const out = html
-    .replace(/<link rel="manifest"[^>]*>\n?/, '')
-    .replace(/<link rel="apple-touch-icon"[^>]*>\n?/, '')
-    .replace('<link rel="stylesheet" href="styles.css">', `<style>\n${css}\n</style>`)
-    .replace('<script type="module" src="app.js"></script>', `<script type="module">\n${js}\n</script>`);
+  const out = [
+    '<title>Usine fractale</title>',
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">',
+    `<style>\n${css}\n</style>`,
+    '<div id="game"></div>',
+    '<div id="hud"></div>',
+    `<script type="module">\n${js}\n</script>`,
+  ].join('\n');
   fs.writeFileSync(path.join(dist, 'inline.html'), out);
 }
 
