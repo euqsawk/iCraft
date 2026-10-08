@@ -1,5 +1,7 @@
 // Point d'entrée : charge la partie, crée le rendu, l'interface et la boucle de jeu.
 import { Application } from 'pixi.js';
+// Sans « eval » : le jeu marche aussi sur les pages qui l'interdisent (lien de test hébergé).
+import 'pixi.js/unsafe-eval';
 import { PALETTE, RULES } from './config.ts';
 import { Gestures } from './input/gestures.ts';
 import { GameRenderer } from './render/renderer.ts';
@@ -105,6 +107,12 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 }
 
 boot().catch((e) => {
-  document.body.innerHTML = `<div class="loading">Oups, le jeu n'a pas pu démarrer.<small style="font-weight:700;max-width:280px;text-align:center">${String(e?.message ?? e)}</small></div>`;
+  // On garde la feuille de style : seul le message remplace le jeu.
+  document.querySelectorAll('.loading, #game, #hud').forEach((el) => el.remove());
+  const box = document.createElement('div');
+  box.className = 'loading';
+  box.innerHTML = `Oups, le jeu n'a pas pu démarrer.<small style="font-weight:700;max-width:280px;text-align:center"></small>`;
+  box.querySelector('small')!.textContent = String(e?.message ?? e);
+  document.body.append(box);
   console.error(e);
 });
