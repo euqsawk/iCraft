@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diagnostic · Usine fractale</title>
+<style>
+body { margin: 0; padding: 20px 16px 40px; background: #DCEBE3; color: #2E3A4B; font: 600 14px/1.45 -apple-system, system-ui, sans-serif; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+p { margin: 0 0 12px; color: #4A5868; }
+ol { margin: 0 0 16px; padding-left: 22px; }
+li { margin: 6px 0; word-break: break-word; }
+.ok { color: #2E6B51; } .ko { color: #C4473A; } .wait { color: #6B7684; }
+button { height: 44px; padding: 0 16px; border: none; border-radius: 12px; background: #2E3A4B; color: #fff; font: 800 14px -apple-system, system-ui, sans-serif; margin: 4px 6px 4px 0; }
+code { font-size: 11px; user-select: text; -webkit-user-select: text; }
+</style>
+</head>
+<body>
+<h1>Diagnostic du jeu</h1>
+<p>Fais une capture d’écran de cette page et envoie-la.</p>
+<ol id="log"><li class="ko">Si tu ne vois que cette ligne, JavaScript ne s’exécute pas du tout sur ce site.</li></ol>
+<button id="reset" type="button">Supprimer le service worker et le cache</button>
+<button id="play" type="button">Ouvrir le jeu</button>
+<script>
+(function () {
+  var log = document.getElementById('log');
+  log.innerHTML = '';
+  function line(cls, text) {
+    var li = document.createElement('li');
+    li.className = cls;
+    li.textContent = text;
+    log.appendChild(li);
+    return li;
+  }
+  line('ok', '1. JavaScript s’exécute.');
+  line('ok', '2. Navigateur : ' + navigator.userAgent);
+  window.addEventListener('error', function (e) { line('ko', 'Erreur : ' + e.message + ' (' + (e.filename || '').split('/').pop() + ':' + e.lineno + ')'); });
+  window.addEventListener('unhandledrejection', function (e) { line('ko', 'Erreur : ' + (e.reason && e.reason.message ? e.reason.message : e.reason)); });
+
+  var t0 = Date.now();
+  setTimeout(function () { line('ok', '3. Les minuteries fonctionnent (' + (Date.now() - t0) + ' ms).'); }, 300);
+
+  try {
+    if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        line(rs.length ? 'wait' : 'ok', '4. Service workers installés : ' + rs.length + (navigator.serviceWorker.controller ? ' (cette page est contrôlée par l’un d’eux)' : ''));
+      });
+    } else line('ok', '4. Pas de service worker.');
+  } catch (e) { line('ko', '4. Service worker : ' + e.message); }
+
+  function probe(n, url) {
+    var li = line('wait', n + '. ' + url + ' : en cours…');
+    var start = Date.now();
+    return fetch(url + (url.indexOf('?') < 0 ? '?t=' : '&t=') + Date.now(), { cache: 'no-store' }).then(function (r) {
+      return r.text().then(function (txt) {
+        li.className = r.ok ? 'ok' : 'ko';
+        li.textContent = n + '. ' + url + ' : ' + r.status + ', ' + txt.length + ' caractères, ' + (Date.now() - start) + ' ms, type ' + (r.headers.get('content-type') || '?');
+      });
+    }).catch(function (e) { li.className = 'ko'; li.textContent = n + '. ' + url + ' : échec (' + e.message + ')'; });
+  }
+
+  probe(5, 'version.json').then(function () { return probe(6, 'boot.js'); }).then(function () { return probe(7, 'app.js'); }).then(function () {
+    var li = line('wait', '8. Exécution du jeu en module : en cours…');
+    var s = document.createElement('script');
+    s.type = 'module';
+    s.textContent = 'window.__diagModuleOk = true;';
+    document.head.appendChild(s);
+    setTimeout(function () {
+      if (window.__diagModuleOk) { li.className = 'ok'; li.textContent = '8. Les modules JavaScript fonctionnent.'; }
+      else { li.className = 'ko'; li.textContent = '8. Les modules JavaScript ne s’exécutent pas.'; }
+      var li9 = line('wait', '9. Analyse du code du jeu : en cours…');
+      fetch('app.js?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (code) {
+        try {
+          // On vérifie seulement que le navigateur comprend la syntaxe, sans lancer le jeu.
+          new Function('return 1;\n' + code.replace(/\bimport\.meta\b/g, '({})').replace(/^\s*export\s*\{[^}]*\};?\s*$/m, ''));
+          li9.className = 'ok'; li9.textContent = '9. Le navigateur comprend la syntaxe du jeu.';
+        } catch (e) {
+          li9.className = 'ko'; li9.textContent = '9. Syntaxe refusée : ' + e.message;
+        }
+      }).catch(function (e) { li9.className = 'ko'; li9.textContent = '9. ' + e.message; });
+    }, 800);
+  });
+
+  document.getElementById('reset').onclick = function () {
+    var jobs = [];
+    try { if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); })); } catch (e) {}
+    try { if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.map(function (k) { return caches.delete(k); })); })); } catch (e) {}
+    Promise.all(jobs).then(function () { line('ok', 'Service worker et cache supprimés. Ta sauvegarde est conservée.'); }, function (e) { line('ko', 'Échec : ' + e.message); });
+  };
+  document.getElementById('play').onclick = function () { location.href = './?t=' + Date.now(); };
+})();
+</script>
+</body>
+</html>

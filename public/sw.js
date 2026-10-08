@@ -24,6 +24,9 @@ self.addEventListener('fetch', (e) => {
   // Le numéro de version sert à chercher les mises à jour : toujours depuis le réseau.
   if (url.pathname.endsWith('version.json')) return;
 
+  // La page de diagnostic n'est jamais interceptée.
+  if (url.pathname.endsWith('diag.html')) return;
+
   if (req.mode === 'navigate') {
     // Page : réseau d'abord (pour recevoir les mises à jour), cache si hors ligne.
     e.respondWith(
