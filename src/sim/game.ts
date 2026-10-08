@@ -9,6 +9,7 @@ import { firstOrder, generateChoices, orderComplete, type Order } from './orders
 import type { TraceCell } from './tracer.ts';
 import { Inventory, type Slot } from './inventory.ts';
 import { RICHNESS_RATE } from '../world/world.ts';
+import { ALL_NODES, BASE_UNLOCKS, NODE, START_POINTS, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 
 export type Job = { kind: 'belt'; k: number } | { kind: 'machine'; id: number };
 
@@ -73,7 +74,8 @@ export type GameEvent =
   | { type: 'built'; job: Job }
   | { type: 'reveal' }
   | { type: 'factory' }
-  | { type: 'drones' };
+  | { type: 'drones' }
+  | { type: 'unlock'; id: string };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
 export interface OfflineReport {
@@ -85,7 +87,7 @@ export interface OfflineReport {
 }
 
 export interface GameSave {
-  v: 1 | 2;
+  v: 1 | 2 | 3;
   seed: string;
   time: number;
   money: number;
@@ -103,6 +105,9 @@ export interface GameSave {
   delivered: number;
   /** Nombre de drones (module de drones). Absent des premières sauvegardes. */
   drones?: number;
+  /** Arbre de déblocages (depuis la version 3). */
+  unlocks?: string[];
+  points?: number;
   /** Charbon et inventaires du robot et des drones (depuis la version 2). */
   crew?: {
     robot: { fuel: number; burn: number; inv: (Slot | null)[] };
@@ -130,6 +135,9 @@ export class Game {
   rerolls = 0;
   delivered = 0;
   time = 0;
+  /** Déblocages acquis et points à dépenser. */
+  unlocks = new Set<string>(BASE_UNLOCKS);
+  points = START_POINTS;
   /** Nombre de drones obtenus avec les commandes. */
   droneCount = RULES.startDrones;
   /** Chantier en cours du robot lui-même. */
@@ -202,6 +210,7 @@ export class Game {
     while (this.xp >= xpForLevel(this.level)) {
       this.xp -= xpForLevel(this.level);
       this.level++;
+      this.points++;
       this.emit({ type: 'level', level: this.level });
     }
   }
@@ -241,7 +250,7 @@ export class Game {
   refreshChoices(): void {
     const seed = this.world.seedNum ^ (this.orderSeq * 7919) ^ (this.rerolls * 104729);
     const discovered = new Set([...this.world.discovered]);
-    this.choices = generateChoices(seed >>> 0, this.level, discovered, this.orderSeq, this.droneCount < RULES.maxDrones);
+    this.choices = generateChoices(seed >>> 0, this.level, discovered, this.orderSeq, this.droneCount < RULES.maxDrones, (id) => this.hasMachine(id));
     this.orderSeq += 3;
     this.emit({ type: 'order' });
   }
@@ -284,6 +293,52 @@ export class Game {
     return n;
   }
 
+  // ---------- Arbre de déblocages ----------
+
+  isUnlocked(id: string): boolean {
+    return this.unlocks.has(id);
+  }
+
+  /** Une machine est-elle débloquée ? (Celles hors de l'arbre le sont toujours.) */
+  hasMachine(id: string): boolean {
+    const node = nodeForMachine(id);
+    return !node || this.unlocks.has(node.id);
+  }
+
+  /** État d'un nœud : acquis, disponible, verrouillé, ou prévu plus tard. */
+  nodeState(node: UnlockNode): 'owned' | 'available' | 'locked' | 'soon' {
+    if (this.unlocks.has(node.id)) return 'owned';
+    const parentsOk = node.parents.every((p) => this.unlocks.has(p));
+    if (node.effect.kind === 'soon') return parentsOk ? 'soon' : 'locked';
+    return parentsOk && this.level >= node.level ? 'available' : 'locked';
+  }
+
+  unlock(id: string): boolean {
+    const node = NODE[id];
+    if (!node || this.nodeState(node) !== 'available' || this.points < node.cost) return false;
+    this.points -= node.cost;
+    this.unlocks.add(id);
+    this.applyUnlocks();
+    this.emit({ type: 'unlock', id });
+    return true;
+  }
+
+  /** Nombre de nœuds qu'on pourrait débloquer tout de suite. */
+  unlockableCount(): number {
+    return ALL_NODES.filter((x) => this.nodeState(x) === 'available' && x.cost <= this.points).length;
+  }
+
+  private applyUnlocks(): void {
+    let speed = 1, slots = RULES.chestSlots;
+    for (const id of this.unlocks) {
+      const e = NODE[id]?.effect;
+      if (e?.kind === 'beltSpeed') speed = Math.max(speed, e.mult);
+      if (e?.kind === 'chestSlots') slots = Math.max(slots, e.slots);
+    }
+    this.factory.speedMult = speed;
+    this.factory.chestSlots = slots;
+  }
+
   // ---------- Absence ----------
 
   /**
@@ -321,8 +376,8 @@ export class Game {
 
   placeMachine(type: string, x: number, y: number): Machine | null {
     const def = machineDef(type);
-    if (def.unlock > this.level) {
-      this.emit({ type: 'toast', text: `${def.name} : niveau ${def.unlock}`, tone: 'warn' });
+    if (!this.hasMachine(type)) {
+      this.emit({ type: 'toast', text: `${def.name} : à débloquer dans l’arbre`, tone: 'warn' });
       return null;
     }
     const check = this.factory.checkMachine(type, x, y);
@@ -341,8 +396,8 @@ export class Game {
     const fresh = cells.filter((c) => !c.existing);
     const cost = fresh.length * RULES.beltCost;
     if (fresh.length === 0) return false;
-    if (split && this.level < RULES.splitterLevel) {
-      this.emit({ type: 'toast', text: `Séparateur de tapis : niveau ${RULES.splitterLevel}`, tone: 'warn' });
+    if (split && !this.isUnlocked('separateur')) {
+      this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
     }
     if (!this.spend(cost)) return false;
@@ -576,16 +631,23 @@ export class Game {
     return best;
   }
 
-  /** Une machine ou un coffre à portée qui accepte cet objet. */
+  /** La machine à portée la plus proche du robot qui accepte cet objet ; sinon le coffre le plus proche. */
   private destinationFor(item: string): Machine | null {
-    let chest: Machine | null = null;
+    let best: Machine | null = null, bd = Infinity;
+    let chest: Machine | null = null, cd = Infinity;
     for (const m of this.factory.machines.values()) {
-      if (!m.built || !this.near(this.center(m), RULES.supplyRange)) continue;
+      if (!m.built) continue;
+      const c = this.center(m);
+      const d = Math.hypot(c.x - this.robot.x, c.y - this.robot.y);
+      if (d > RULES.supplyRange) continue;
       const def = machineDef(m.type);
-      if (def.kind === 'crafter' && this.factory.canAccept(m, item) && item !== 'charbon') return m;
-      if (def.kind === 'storage' && !chest && this.factory.storageRoom(m, item) > 0) chest = m;
+      if (def.kind === 'crafter' && item !== 'charbon' && this.factory.canAccept(m, item)) {
+        if (d < bd) { bd = d; best = m; }
+      } else if (def.kind === 'storage' && this.factory.storageRoom(m, item) > 0 && d < cd) {
+        cd = d; chest = m;
+      }
     }
-    return chest;
+    return best ?? chest;
   }
 
   private pickTask(d: Drone): DroneTask | null {
@@ -737,13 +799,15 @@ export class Game {
   serialize(): GameSave {
     const r = this.robot;
     return {
-      v: 2, seed: this.world.seed, time: Date.now(), money: this.money, xp: this.xp, level: this.level,
+      v: 3, seed: this.world.seed, time: Date.now(), money: this.money, xp: this.xp, level: this.level,
       robot: { x: r.x, y: r.y },
       factory: this.factory.serialize(),
       pending: this.pending, fog: this.world.saveFog(),
       order: this.order, choices: this.choices, stock: this.stock,
       orderSeq: this.orderSeq, rerolls: this.rerolls, delivered: this.delivered,
       drones: this.droneCount,
+      unlocks: [...this.unlocks],
+      points: this.points,
       crew: {
         robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save() },
         drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null })),
@@ -759,6 +823,21 @@ export class Game {
     this.pending = s.pending.filter((j) => (j.kind === 'belt' ? this.factory.belts.has(j.k) : this.factory.machines.has(j.id)));
     this.order = s.order; this.choices = s.choices; this.stock = s.stock;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;
+    if (s.unlocks) {
+      this.unlocks = new Set([...BASE_UNLOCKS, ...s.unlocks]);
+      this.points = s.points ?? 0;
+    } else {
+      // Sauvegarde d'avant l'arbre : on garde ce que le niveau avait ouvert, et les points restants.
+      const legacy: Record<string, number> = { presse: 1, tour: 2, trefileuse: 3, haut_fourneau: 4, assembleur: 5, broyeur: 6, melangeur: 7, raffinerie: 8, fabricant: 9, centrifugeuse: 12, separateur: 2 };
+      let spent = 0;
+      for (const [id, lvl] of Object.entries(legacy)) {
+        if (this.level >= lvl) { this.unlocks.add(id); spent += NODE[id]?.cost ?? 0; }
+      }
+      // Les parents manquants sont ajoutés pour garder un arbre cohérent.
+      for (const x of ALL_NODES) if (this.unlocks.has(x.id)) x.parents.forEach((p) => this.unlocks.add(p));
+      this.points = Math.max(0, START_POINTS + this.level - 1 - spent);
+    }
+    this.applyUnlocks();
     if (s.crew) {
       this.droneCount = s.drones ?? RULES.startDrones;
       this.rebuildDrones();

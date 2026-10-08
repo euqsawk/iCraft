@@ -86,6 +86,10 @@ export class Factory {
   private outputs = new Map<Machine, Belt[]>();
   private accepts = new Map<string, Set<string>>();
 
+  /** Vitesse des tapis (déblocages Tapis rapide et express). */
+  speedMult = 1;
+  /** Cases d'un coffre (déblocage Grand coffre). */
+  chestSlots = RULES.chestSlots;
   /** Le Noyau accepte-t-il cet objet ? (Limité pendant l'absence du joueur.) */
   coreAccepts: (item: string) => boolean = () => true;
   /** Appelé quand un objet entre dans le Noyau. */
@@ -373,7 +377,7 @@ export class Factory {
   storageRoom(m: Machine, item: string): number {
     const have = m.inBuf[item] ?? 0;
     const partial = have % RULES.invStack ? RULES.invStack - (have % RULES.invStack) : 0;
-    return partial + (RULES.chestSlots - this.storageSlots(m)) * RULES.invStack;
+    return partial + Math.max(0, this.chestSlots - this.storageSlots(m)) * RULES.invStack;
   }
 
   /** Brûle du charbon pour travailler dt secondes ; faux s'il n'y en a plus. */
@@ -459,7 +463,7 @@ export class Factory {
 
   tick(dt: number): void {
     this.refresh();
-    const speed = RULES.beltSpeed * dt;
+    const speed = RULES.beltSpeed * this.speedMult * dt;
     const gap = RULES.beltGap;
 
     for (const b of this.order) {

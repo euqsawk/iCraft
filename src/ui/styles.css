@@ -267,3 +267,89 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .drone-row .gauge { flex: 1; }
 .drone-row small { color: var(--coral-dark); font-weight: 800; }
 .chip.muted { color: #9AA6B2; padding-left: 8px; }
+
+/* ---------- Arbre de déblocages ---------- */
+.tree { position: absolute; inset: 0; z-index: 4; background: var(--ground); animation: fade .2s; }
+.tree-top { position: absolute; left: 16px; right: 16px; top: var(--top); display: flex; align-items: center; gap: 10px; }
+.tree-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.tree-title h1 { margin: 0; font-size: 20px; font-weight: 900; line-height: 1.1; }
+.tree-sub { font-size: 11px; font-weight: 700; color: var(--ink2); }
+.tree-points small { font-size: 12px; font-weight: 800; color: var(--ink2); }
+.tree-tabs {
+  position: absolute; left: 10px; right: 10px; top: calc(var(--top) + 60px);
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 3px; padding: 5px;
+  border-radius: 22px; background: #fff; box-shadow: 0 4px 0 var(--shadow);
+}
+.tree-tab { position: relative; height: 40px; border-radius: 17px; font-size: 12px; font-weight: 800; }
+.tree-tab.active { background: var(--ink); color: #fff; }
+.tree-dot { position: absolute; top: 6px; right: 8px; width: 7px; height: 7px; border-radius: 4px; background: var(--coral); }
+.tree-scroll { position: absolute; left: 0; right: 0; top: calc(var(--top) + 122px); bottom: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.tree-canvas { position: relative; background-image: radial-gradient(#C4D9CE 1.3px, transparent 1.6px); background-size: 24px 24px; background-position: 0 6px; }
+.edge { position: absolute; }
+.edge.on { border-radius: 6px; background: #fff; box-shadow: 0 3px 0 var(--shadow); }
+.edge.off.v { width: 0; border-left: 3px dashed #AFC6BA; }
+.edge.off.h { height: 0; border-top: 3px dashed #AFC6BA; }
+.node { position: absolute; width: 100px; display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.node .tile {
+  position: relative; width: 76px; height: 76px; box-sizing: border-box; border-radius: 22px;
+  display: flex; align-items: center; justify-content: center; border: 2.5px solid transparent;
+}
+.node .ico { width: 40px; height: 40px; display: flex; }
+.node.owned .tile { background: #fff; box-shadow: 0 4px 0 var(--shadow); border-color: #fff; }
+.node.available .tile { background: #FFFBEF; border: 2.5px dashed var(--coin-edge); animation: avail 2.2s ease-in-out infinite; }
+.node.locked .tile { background: #E9F1ED; border-color: #E9F1ED; }
+.node.locked .ico { opacity: .35; }
+.node.soon .tile { background: #F4F8F6; border: 2.5px dashed #C9D6CF; }
+.node.soon .ico { opacity: .55; }
+.node.sel .tile { outline: 3px solid var(--coral); outline-offset: 4px; }
+@keyframes avail { 0%, 100% { box-shadow: 0 4px 0 #E0A82E, 0 0 0 0 rgba(255, 200, 87, 0); } 50% { box-shadow: 0 4px 0 #E0A82E, 0 0 0 6px rgba(255, 200, 87, .35); } }
+.node .lbl { padding: 1px 7px; border-radius: 8px; background: var(--ground); font-size: 12px; font-weight: 800; line-height: 16px; white-space: nowrap; }
+.node.locked .lbl, .node.soon .lbl { color: #6B7684; }
+.nb-owned { position: absolute; right: -6px; bottom: -6px; width: 24px; height: 24px; border-radius: 12px; background: var(--green); border: 2.5px solid #fff; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.nb-cost { position: absolute; right: -8px; top: -8px; height: 24px; min-width: 24px; padding: 0 7px; box-sizing: border-box; border-radius: 12px; background: var(--yellow); border: 2px solid var(--ink); display: flex; align-items: center; justify-content: center; gap: 2px; font-size: 12px; font-weight: 900; }
+.nb-lock { position: absolute; right: -6px; top: -6px; width: 22px; height: 22px; border-radius: 11px; background: #fff; display: flex; align-items: center; justify-content: center; color: #9AA6B2; }
+.nb-level, .nb-soon { position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%); padding: 1px 7px; border-radius: 8px; background: #fff; font-size: 10px; font-weight: 900; color: #6B7684; white-space: nowrap; }
+.tree-sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; box-sizing: border-box; padding: 18px 16px var(--bottom);
+  border-radius: 28px 28px 0 0; background: #fff; box-shadow: 0 -4px 0 rgba(188, 210, 198, .7);
+  display: flex; flex-direction: column; gap: 12px; max-width: 560px; margin: 0 auto;
+}
+.tree-sheet p { margin: 0; font-size: 13px; font-weight: 700; line-height: 1.4; color: var(--ink2); }
+.ts-head { display: flex; align-items: center; gap: 12px; }
+.ts-icon { width: 56px; height: 56px; flex: 0 0 auto; border-radius: 16px; background: #F4F8F6; display: flex; align-items: center; justify-content: center; }
+.ts-icon svg { width: 36px; height: 36px; }
+.ts-name { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ts-name b { font-size: 20px; font-weight: 900; line-height: 1.1; }
+.ts-tag { align-self: flex-start; padding: 1px 8px; border-radius: 8px; font-size: 10px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+.ts-tag.owned { background: var(--green-light); color: var(--green); }
+.ts-tag.available { background: var(--gold-light); color: var(--gold); }
+.ts-tag.locked, .ts-tag.soon { background: #EEF2F0; color: #6B7684; }
+.ts-req { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; color: var(--ink2); }
+.ts-btn { min-height: 50px; font-size: 15px; }
+.ts-btn:disabled { background: #EEF2F0; color: #6B7684; opacity: 1; }
+.chip.plain { padding: 5px 10px; }
+
+/* Badge de niveau cliquable, avec un point rouge quand il reste des points */
+.lvl-btn { display: flex; align-items: center; gap: 10px; text-align: left; position: relative; }
+.lvl-dot { position: absolute; left: 32px; top: -2px; width: 14px; height: 14px; border-radius: 7px; background: var(--coral); border: 2.5px solid var(--ground); }
+.mcard.more { background: #FFFBEF; border: 2px dashed var(--coin-edge); }
+
+/* Recettes d'une machine dans sa bulle */
+.recipes { display: flex; flex-direction: column; gap: 5px; }
+.recipe { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; padding: 5px 8px; border-radius: 12px; background: #F4F8F6; font-size: 11.5px; font-weight: 800; }
+.recipe.current { background: #FFF0C9; }
+.recipe.off { opacity: .45; }
+.recipe .it { display: inline-flex; align-items: center; gap: 3px; }
+.recipe img { width: 16px; height: 16px; }
+.recipe .arrow { color: var(--ink2); }
+
+/* Passage de niveau */
+.celebrate.level { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(340px, calc(100% - 32px)); box-sizing: border-box; }
+.celebrate.level h2 { margin: 0; }
+.celebrate.level p { margin: 0 0 4px; }
+.lv-badge { width: 70px; height: 70px; border-radius: 35px; background: var(--ink); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 900; box-shadow: 0 0 0 7px var(--coral); margin-bottom: 8px; }
+.lv-ready { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; padding: 10px; border-radius: 16px; background: #F4F8F6; box-sizing: border-box; margin-bottom: 4px; }
+.lv-ready div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.lv-ready small { font-size: 11px; font-weight: 800; }
+.lv-tile { width: 54px; height: 54px; box-sizing: border-box; border-radius: 16px; background: #FFFBEF; border: 2.5px dashed var(--coin-edge); display: flex; align-items: center; justify-content: center; }
+.lv-tile svg { width: 32px; height: 32px; }

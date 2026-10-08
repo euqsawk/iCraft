@@ -85,8 +85,6 @@ export const RULES = {
   robotBuildRange: 2.5,
   robotBeltTime: 0.3,
   robotMachineTime: 1.6,
-  /** Niveau qui débloque les séparateurs de tapis. */
-  splitterLevel: 2,
   /** Production hors ligne : 10 % de la vitesse, sur 8 h au plus. */
   offlineRate: 0.1,
   offlineMaxSeconds: 8 * 3600,

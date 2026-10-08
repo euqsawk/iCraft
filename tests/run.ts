@@ -177,7 +177,7 @@ test('les objets gardent leurs distances sur le tapis', () => {
 test('séparateur : un tapis tracé depuis le milieu d’un autre partage les objets', () => {
   const g = new Game('TEST-11');
   g.money = 10000;
-  g.level = 2;
+  g.points = 1; g.unlock('separateur');
   g.world.reveal(-6, 2, 20);
   g.placeMachine('foreuse', -13, -5);
   g.placeBelts(trace(g, [[-12.5, -4.5], [-5.5, -4.5]]).result());
@@ -193,14 +193,14 @@ test('séparateur : un tapis tracé depuis le milieu d’un autre partage les ob
   g.removeAt(-9, -4); // on retire la première case de la dérivation
   assert(g.factory.beltAt(-9, -5)!.split === undefined, 'le séparateur aurait dû redevenir un tapis simple');
 });
-test('séparateur réservé au niveau 2', () => {
+test('séparateur : à débloquer dans l’arbre', () => {
   const g = new Game('TEST-12');
   g.money = 10000;
   g.world.reveal(-6, 2, 20);
   g.placeBelts(trace(g, [[-6.5, -8.5], [-2.5, -8.5]]).result());
   run(g, 20);
   const t = trace(g, [[-4.5, -8.5], [-4.5, -6.5]]);
-  assert(!g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir! }), 'devrait être refusé au niveau 1');
+  assert(!g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir! }), 'devrait être refusé sans le déblocage');
 });
 test('absence : 10 % de production, 8 h au plus, rien ne se livre tout seul', () => {
   const g = new Game('TEST-13');
@@ -334,14 +334,54 @@ test('sans charbon, le robot ralentit et le drone se pose sur lui', () => {
   assert(d.state !== 'parked' && d.fuel > 0, 'le drone aurait dû repartir');
 });
 
+test('les drones livrent le minerai à la machine la plus proche du robot', () => {
+  const g = new Game('TEST-26');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const near = g.placeMachine('four', -9, -1)!;
+  const far = g.placeMachine('four', -2, 8)!;
+  run(g, 40);
+  g.sendRobot(-7, 1.5); // hors filon : le robot ne mine pas
+  run(g, 6);
+  g.robot.inv.add('fer', 4);
+  run(g, 15);
+  assert((near.inBuf.fer ?? 0) > 0 && !(far.inBuf.fer > 0), `proche ${near.inBuf.fer}, loin ${far.inBuf.fer}`);
+});
+
 console.log('Commandes');
 test('les propositions suivent ce qu’on sait fabriquer', () => {
-  const p1 = producibleItems(1, new Set(['fer', 'charbon', 'cuivre']));
+  const has = (ids: string[]) => (id: string) => ids.includes(id);
+  const p1 = producibleItems(has(['foreuse', 'four', 'presse']), new Set(['fer', 'charbon', 'cuivre']));
   assert(p1.has('plaque_fer') && p1.has('lingot_cuivre') && !p1.has('vis'), [...p1].join());
-  const p5 = producibleItems(5, new Set(['fer', 'charbon', 'cuivre']));
+  const p5 = producibleItems(has(['foreuse', 'four', 'presse', 'tour', 'haut_fourneau', 'assembleur', 'trefileuse']), new Set(['fer', 'charbon', 'cuivre']));
   assert(p5.has('engrenage') && p5.has('acier') && !p5.has('cable'), [...p5].join());
-  const c = generateChoices(42, 1, new Set(['fer', 'charbon']), 1);
+  const c = generateChoices(42, 1, new Set(['fer', 'charbon']), 1, false, has(['foreuse', 'four', 'presse']));
   assert(c.length === 3 && c.every((o) => o.lines.every((l) => p1.has(l.item))), JSON.stringify(c));
+});
+test('arbre : 1 point au départ, 1 par niveau, effets appliqués', () => {
+  const g = new Game('TEST-30');
+  assert(g.points === 1 && g.hasMachine('four') && !g.hasMachine('presse'), `départ : ${g.points} points`);
+  g.money = 1000; g.world.reveal(-6, 2, 20);
+  assert(!g.placeMachine('presse', 4, 9), 'la presse ne devrait pas se poser avant d’être débloquée');
+  assert(g.unlock('presse') && g.points === 0 && g.hasMachine('presse'), 'déblocage de la presse');
+  assert(!g.unlock('tour'), 'plus de point : le tour reste fermé');
+  g.addXp(125);
+  assert(g.level === 2 && g.points === 1, `niveau ${g.level}, points ${g.points}`);
+  assert(!g.unlock('assembleur'), 'l’assembleur demande le tour et le niveau 5');
+  assert(g.unlock('rapide') && g.factory.speedMult === 2, 'tapis rapide');
+  g.points = 5;
+  assert(g.unlock('separateur') && g.unlock('grand_coffre') && g.factory.chestSlots === 30, 'grand coffre');
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.hasMachine('presse') && g2.factory.speedMult === 2 && g2.points === g.points, 'sauvegarde de l’arbre');
+});
+test('arbre : une ancienne sauvegarde garde ses machines et reçoit ses points', () => {
+  const g = new Game('TEST-31');
+  g.addXp(125 + 250 + 375); // niveau 4
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  delete s.unlocks; delete s.points;
+  const g2 = new Game(s.seed, s);
+  assert(g2.level === 4 && g2.hasMachine('presse') && g2.hasMachine('tour') && g2.hasMachine('trefileuse') && g2.hasMachine('haut_fourneau'), 'machines du niveau 4');
+  assert(g2.isUnlocked('separateur') && g2.points >= 0, `points ${g2.points}`);
 });
 
 console.log(`\n${passed} réussis, ${failed} en échec`);

@@ -1,7 +1,7 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
 import { BIOME_COLORS, CELL, PALETTE, RULES, xpForLevel } from '../config.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
-import { BUILDABLE, machineDef } from '../data/machines.ts';
+import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import type { Machine } from '../sim/factory.ts';
@@ -10,6 +10,9 @@ import { orderProgress, RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
 import { ICONS } from './icons.ts';
+import { TreeScreen } from './tree.ts';
+import { ALL_NODES } from '../data/unlocks.ts';
+import { NODE_ICONS } from './nodeIcons.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'move';
 
@@ -52,6 +55,8 @@ export class Hud implements GestureHandlers {
 
   // Éléments
   private lvlBadge!: HTMLElement;
+  private lvlDot!: HTMLElement;
+  private tree!: TreeScreen;
   private lvlTitle!: HTMLElement;
   private xpBar!: HTMLElement;
   private xpText!: HTMLElement;
@@ -85,7 +90,10 @@ export class Hud implements GestureHandlers {
 
   private build(): void {
     const top = h('div', 'top');
-    const lvl = h('div', 'lvl');
+    const lvl = h('button', 'lvl lvl-btn');
+    lvl.setAttribute('aria-label', 'Arbre de déblocages');
+    lvl.onclick = () => this.openTree();
+    this.lvlDot = h('span', 'lvl-dot hidden');
     this.lvlBadge = h('div', 'lvl-badge', '1');
     const info = h('div', 'lvl-info');
     this.lvlTitle = h('b', '', 'Niveau 1');
@@ -94,7 +102,7 @@ export class Hud implements GestureHandlers {
     bar.append(this.xpBar);
     this.xpText = h('small');
     info.append(this.lvlTitle, bar, this.xpText);
-    lvl.append(this.lvlBadge, info);
+    lvl.append(this.lvlBadge, info, this.lvlDot);
     const right = h('div', 'top-right');
     this.money = h('div', 'pill money');
     const menu = h('button', 'round', ICONS.menu);
@@ -136,6 +144,34 @@ export class Hud implements GestureHandlers {
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
     this.root.append(top, row, this.palette, toolbar, this.bubble, this.popover, this.toasts);
+    this.tree = new TreeScreen(this.root, this.game, () => { this.renderPalette(); this.refreshLevel(); });
+  }
+
+  /** Ouvre l'arbre de déblocages. */
+  openTree(tab?: string, select?: string): void {
+    this.closePopover();
+    this.closeSheet();
+    this.setTool('none');
+    this.tree.open(tab, select);
+  }
+
+  /** Passage de niveau : un point de déblocage à dépenser. */
+  private levelUp(level: number): void {
+    this.root.querySelector('.celebrate.level')?.remove();
+    const g = this.game;
+    const ready = ALL_NODES.filter((x) => g.nodeState(x) === 'available').slice(0, 3);
+    const box = h('div', 'celebrate level');
+    box.innerHTML = `<div class="lv-badge">${level}</div><h2>Niveau ${level} !</h2>
+      <p>Tu gagnes <b>1 point de déblocage</b>. Tu en as ${g.points}.</p>
+      ${ready.length ? `<div class="lv-ready">${ready.map((x) => `<div><span class="lv-tile">${NODE_ICONS[x.icon] ?? ''}</span><small>${esc(x.name)}</small></div>`).join('')}</div>` : ''}`;
+    const open = h('button', 'btn primary', 'Ouvrir l’arbre');
+    open.style.width = '100%';
+    open.onclick = () => { box.remove(); this.openTree(); };
+    const later = h('button', 'btn', 'Plus tard');
+    later.style.width = '100%';
+    later.onclick = () => box.remove();
+    box.append(open, later);
+    this.root.append(box);
   }
 
   // ---------- Mises à jour ----------
@@ -148,11 +184,10 @@ export class Hud implements GestureHandlers {
         this.refreshLevel();
         this.lvlBadge.classList.add('bump');
         setTimeout(() => this.lvlBadge.classList.remove('bump'), 400);
-        const fresh = BUILDABLE.filter((m) => m.unlock === e.level).map((m) => m.name);
-        this.toast(`Niveau ${e.level} !${fresh.length ? ` Nouveau : ${fresh.join(', ')}` : ''}`, 'good');
-        this.renderPalette();
+        this.levelUp(e.level);
         break;
       }
+      case 'unlock': this.renderPalette(); this.refreshLevel(); break;
       case 'order': this.refreshOrder(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
@@ -183,6 +218,7 @@ export class Hud implements GestureHandlers {
     this.lvlTitle.textContent = `Niveau ${g.level}`;
     this.xpBar.style.width = `${Math.min(100, (g.xp / need) * 100)}%`;
     this.xpText.textContent = `${fmt(g.xp)} / ${fmt(need)} XP`;
+    this.lvlDot.classList.toggle('hidden', g.unlockableCount() === 0);
   }
 
   private refreshOrder(): void {
@@ -203,21 +239,21 @@ export class Hud implements GestureHandlers {
   private renderPalette(): void {
     const p = this.palette;
     p.innerHTML = '';
-    const list = [...BUILDABLE].sort((a, b) => a.unlock - b.unlock);
-    const next = list.find((m) => m.unlock > this.game.level);
-    for (const m of list) {
-      const locked = m.unlock > this.game.level;
-      if (locked && m !== next) continue;
-      const b = h('button', `mcard${locked ? ' locked' : ''}${this.machineType === m.id ? ' selected' : ''}`);
-      b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${locked ? `${ICONS.lock} Niv. ${m.unlock}` : `${ICONS.coinSm}${m.cost}`}</small>`;
+    for (const m of BUILDABLE) {
+      if (!this.game.hasMachine(m.id)) continue;
+      const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}`);
+      b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${ICONS.coinSm}${m.cost}</small>`;
       b.onclick = () => {
-        if (locked) { this.toast(`${m.name} : niveau ${m.unlock}. ${m.hint}`, 'warn'); return; }
         this.machineType = m.id;
         this.renderPalette();
         this.toast(`${m.name} : touche la carte pour la poser`, 'info');
       };
       p.append(b);
     }
+    // Dernière carte : l'arbre, pour débloquer d'autres machines.
+    const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${NODE_ICONS.assembleur}</span>Débloquer<small>${this.game.points} point${this.game.points > 1 ? 's' : ''}</small>`);
+    more.onclick = () => this.openTree('production');
+    p.append(more);
   }
 
   // ---------- Outils ----------
@@ -349,8 +385,8 @@ export class Hud implements GestureHandlers {
       const ok = this.tracer.valid && !this.tracer.blocked;
       const affordable = this.game.money >= n;
       const what = this.tracer.splitFrom ? 'Séparateur · ' : '';
-      const locked = !!this.tracer.splitFrom && this.game.level < RULES.splitterLevel;
-      const label = locked ? `Séparateur : niveau ${RULES.splitterLevel}` : n > 0 ? `${what}${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${n}` : this.tracer.splitFrom ? 'Glisse sur le côté pour séparer' : 'Glisse pour tracer';
+      const locked = !!this.tracer.splitFrom && !this.game.isUnlocked('separateur');
+      const label = locked ? 'Séparateur : à débloquer dans l’arbre' : n > 0 ? `${what}${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${n}` : this.tracer.splitFrom ? 'Glisse sur le côté pour séparer' : 'Glisse pour tracer';
       this.showBubble(sx, sy - 56, label, locked || !ok || !affordable);
     } else if (this.tool === 'machine' || this.tool === 'move') {
       this.updatePlacement(sx, sy);
@@ -441,14 +477,16 @@ export class Hud implements GestureHandlers {
       const fuelLine = m.built && def.coal ? this.gauge('Charbon', m.fuel, 10, this.game.factory.lowFuel(m)) : '';
       const inChips = this.chips(m.inBuf);
       const outChips = this.chips(m.outBuf);
+      const recipes = m.built ? this.recipesHtml(def, m) : '';
       let choice = '';
       if (m.type === 'raffinerie') {
         const cur = m.choice ?? 'plastique';
         choice = `<div class="row"><button class="btn ${cur === 'plastique' ? 'primary' : ''}" data-choice="plastique">Plastique</button><button class="btn ${cur === 'carburant' ? 'primary' : ''}" data-choice="carburant">Carburant</button></div>`;
       }
       const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p>${fuelLine}<p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
-        ${inChips ? `<p>${def.kind === 'storage' ? 'Contenu' : 'Entrées'}</p><div class="chips">${inChips}</div>` : ''}
-        ${outChips ? `<p>Sorties</p><div class="chips">${outChips}</div>` : ''}`;
+        ${recipes}
+        ${inChips ? `<p>${def.kind === 'storage' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
+        ${outChips ? `<p>Prêt à sortir</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
           <button class="btn danger" data-act="del">${ICONS.trash}${m.built ? 'Supprimer' : 'Annuler'}</button>
@@ -480,6 +518,28 @@ export class Hud implements GestureHandlers {
       if (!this.setPopover(`b${sel.x},${sel.y}`, info, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
     }
+  }
+
+  /** Ce que la machine attend en entrée et ce qu'elle renvoie en sortie. */
+  private recipesHtml(def: MachineDef, m: Machine): string {
+    const it = (id: string, n: number) => `<span class="it"><img src="${this.itemIcons.get(id)}" alt="">${n > 1 ? `${n} ` : ''}${esc(item(id).name)}</span>`;
+    const arrow = '<span class="arrow">→</span>';
+    if (def.kind === 'drill') {
+      return m.ore ? `<p>Ce qu’elle fait</p><div class="recipes"><div class="recipe current"><span class="it">Filon</span>${arrow}${it(m.ore, 1)}</div></div>` : '';
+    }
+    if (def.kind === 'storage') return '<p>Accepte tous les objets ; un tapis qui part du coffre les ressort.</p>';
+    if (def.kind !== 'crafter') return '';
+    const current = m.craft ? m.craft.ri : -1;
+    const rows = def.recipes.map((r, i) => {
+      const sig = Object.keys(r.in).sort().join('+');
+      const same = def.recipes.filter((x) => Object.keys(x.in).sort().join('+') === sig);
+      const chosen = same.length < 2 || (m.choice ?? Object.keys(same[0].out)[0]) === Object.keys(r.out)[0];
+      const ins = Object.entries(r.in).map(([k, v]) => it(k, v)).join('<span class="arrow">+</span>');
+      const outs = Object.entries(r.out).map(([k, v]) => it(k, v)).join('');
+      return `<div class="recipe${i === current ? ' current' : ''}${chosen ? '' : ' off'}">${ins}${arrow}${outs}</div>`;
+    }).join('');
+    const fuel = def.coal ? ' Elle brûle aussi du charbon.' : '';
+    return `<p>Entrée → sortie (la recette suit ce qu’on lui apporte).${fuel}</p><div class="recipes">${rows}</div>`;
   }
 
   /** Jauge de charbon (case carburant). */
@@ -672,7 +732,9 @@ export class Hud implements GestureHandlers {
       tips.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer le robot. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
         ${standalone ? '' : '<p class="muted"><b>Installer</b> · Dans Safari : Partager, puis « Sur l’écran d’accueil ». Le jeu s’ouvre alors en plein écran et ta sauvegarde est mieux protégée.</p>'}`;
 
-      sheet.append(head, upd, seedCard, center, newCard, tips);
+      const treeBtn = h('button', 'btn', `Arbre de déblocages · ${this.game.points} point${this.game.points > 1 ? 's' : ''}`);
+      treeBtn.onclick = () => { close(); this.openTree(); };
+      sheet.append(head, upd, treeBtn, seedCard, center, newCard, tips);
     });
   }
 

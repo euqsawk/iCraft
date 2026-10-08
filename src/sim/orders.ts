@@ -28,13 +28,13 @@ export interface Order {
 }
 
 /** Objets fabricables avec les machines débloquées et les matières découvertes. */
-export function producibleItems(level: number, discovered: Set<string>): Set<string> {
+export function producibleItems(hasMachine: (id: string) => boolean, discovered: Set<string>): Set<string> {
   const ok = new Set<string>(RAW_IDS.filter((r) => discovered.has(r)));
   let grew = true;
   while (grew) {
     grew = false;
     for (const m of Object.values(MACHINES)) {
-      if (!m.buildable || m.unlock > level) continue;
+      if (!m.buildable || !hasMachine(m.id)) continue;
       if (m.coal && !ok.has('charbon')) continue;
       for (const rec of m.recipes) {
         if (!Object.keys(rec.in).every((k) => ok.has(k))) continue;
@@ -67,9 +67,9 @@ export function firstOrder(id: number): Order {
 }
 
 /** Trois propositions de commandes. */
-export function generateChoices(seed: number, level: number, discovered: Set<string>, startId: number, canEquip = false): Order[] {
+export function generateChoices(seed: number, level: number, discovered: Set<string>, startId: number, canEquip = false, hasMachine: (id: string) => boolean = () => true): Order[] {
   const rand = rng(seed);
-  const pool = [...producibleItems(level, discovered)].filter((id) => ITEMS[id] && item(id).tier < 7);
+  const pool = [...producibleItems(hasMachine, discovered)].filter((id) => ITEMS[id] && item(id).tier < 7);
   if (pool.length === 0) pool.push('fer');
   const pick = (exclude: Set<string>, minTier = 0): string => {
     const cands = pool.filter((p) => !exclude.has(p) && item(p).tier >= minTier);
