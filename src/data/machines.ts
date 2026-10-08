@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions';
 
 export interface MachineDef {
   id: string;
@@ -20,8 +20,10 @@ export interface MachineDef {
   w: number;
   h: number;
   cost: number;
-  /** Niveau à partir duquel la machine se débloque. */
+  /** (Ancien système de niveaux, plus utilisé.) */
   unlock: number;
+  /** Bâtiment unique (un seul exemplaire). */
+  unique?: boolean;
   recipes: Recipe[];
   /** Fonctionne au charbon (case carburant). */
   coal: boolean;
@@ -136,6 +138,14 @@ export const MACHINES: Record<string, MachineDef> = {
   coffre: {
     id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 100 objets · les drones y prennent le charbon',
+  },
+  laboratoire: {
+    id: 'laboratoire', name: 'Laboratoire', kind: 'lab', coal: false, unique: true, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde les objets qui servent à débloquer l’arbre',
+  },
+  comptoir: {
+    id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
+    hint: 'Des commandes au choix, payées en pièces',
   },
   noyau: {
     id: 'noyau', name: 'Noyau', kind: 'core', coal: false, w: 4, h: 4, cost: 0, unlock: 1, recipes: [], buildable: false,

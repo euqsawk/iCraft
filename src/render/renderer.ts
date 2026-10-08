@@ -9,7 +9,6 @@ import { machineDef } from '../data/machines.ts';
 import type { Belt, Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
 import { DX, DY } from '../sim/geom.ts';
-import { orderProgress } from '../sim/orders.ts';
 import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
@@ -128,7 +127,7 @@ export class GameRenderer {
     this.buildLoupe();
     game.on((e) => {
       if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
-      if (e.type === 'deliver' && this.noyauView) this.noyauView.pulse = 1;
+      if (e.type === 'deliver' && e.at === 'noyau' && this.noyauView) this.noyauView.pulse = 1;
     });
     const r = game.robot;
     this.camera.x = ((r.x + 2) / 2) * CELL;
@@ -469,11 +468,10 @@ export class GameRenderer {
     for (const [id, v] of this.machineViews) {
       if (!seen.has(id)) { v.root.destroy({ children: true }); this.machineViews.delete(id); }
     }
-    // Noyau : anneau de progression de la commande.
+    // Noyau : anneau de progression de la mission du palier.
     const nv = this.noyauView;
     if (nv) {
-      const o = this.game.order;
-      const prog = o ? orderProgress(o) : 0;
+      const prog = this.game.palierProgress();
       if (Math.abs(prog - nv.progress) > 0.001) {
         nv.progress = prog;
         nv.ring.clear();
@@ -490,11 +488,17 @@ export class GameRenderer {
       }
       nv.pulse = Math.max(0, nv.pulse - dt * 3);
       nv.root.scale.set(1 + nv.pulse * 0.04);
-      nv.badge.clear();
-      if (!o) {
-        const b = 1 + Math.sin(this.time * 5) * 0.12;
-        nv.badge.circle(42, -42, 11 * b).fill(PALETTE.yellow).stroke({ width: 2.5, color: PALETTE.ink });
-        nv.badge.roundRect(40.5, -49, 3, 9, 1.5).fill(PALETTE.ink).circle(42, -36, 1.8).fill(PALETTE.ink);
+    }
+    // Comptoir : un « ! » quand il attend qu'on choisisse une commande.
+    for (const m of this.game.factory.machines.values()) {
+      if (m.type !== 'comptoir') continue;
+      const v = this.machineViews.get(m.id);
+      if (!v) continue;
+      v.badge.clear();
+      if (m.built && !this.game.order) {
+        const b = 1 + Math.sin(this.time * 5) * 0.12, x = CELL - 4, y = -CELL + 4;
+        v.badge.circle(x, y, 10 * b).fill(PALETTE.yellow).stroke({ width: 2.5, color: PALETTE.ink });
+        v.badge.roundRect(x - 1.5, y - 6.5, 3, 8, 1.5).fill(PALETTE.ink).circle(x, y + 4, 1.7).fill(PALETTE.ink);
       }
     }
   }

@@ -353,3 +353,35 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .lv-ready small { font-size: 11px; font-weight: 800; }
 .lv-tile { width: 54px; height: 54px; box-sizing: border-box; border-radius: 16px; background: #FFFBEF; border: 2.5px dashed var(--coin-edge); display: flex; align-items: center; justify-content: center; }
 .lv-tile svg { width: 32px; height: 32px; }
+
+.nb-cost img { width: 14px; height: 14px; }
+.nb-cost.ready { background: #CFEBD9; }
+.ts-costs { display: flex; flex-direction: column; gap: 6px; }
+.ts-cost { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 2px 8px; font-size: 12px; font-weight: 800; }
+.ts-cost img { width: 18px; height: 18px; }
+.ts-cost b { font-variant-numeric: tabular-nums; }
+.ts-cost .ts-bar { grid-column: 2 / 4; height: 6px; border-radius: 3px; background: #EEF2F0; overflow: hidden; }
+.ts-cost .ts-bar > span { display: block; height: 100%; background: var(--ink); border-radius: 3px; }
+.ts-cost.done .ts-bar > span { background: var(--green); }
+.tree-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.tree-tab { font-size: 11px; }
+
+/* Paliers, Laboratoire, Comptoir, priorités des drones */
+.tag.noyau { background: #FDE3DC; color: #C4553F; }
+.prio-head { display: flex; flex-direction: column; gap: 1px; margin-top: 4px !important; }
+.prio-head small { font-size: 10px; font-weight: 700; color: var(--ink2); }
+.prio-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 800; margin: 4px 0; }
+.prio-row select { flex: 1; min-width: 0; max-width: 150px; font: inherit; font-size: 12px; font-weight: 800; color: var(--ink); background: #F4F8F6; border: 2px solid #E2E9E5; border-radius: 10px; padding: 5px 6px; }
+.lab-node { display: flex; flex-direction: column; gap: 8px; }
+.lab-title { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.lab-ico { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border-radius: 11px; background: #FFFBEF; border: 2px dashed var(--coin-edge); }
+.lab-ico svg { width: 26px; height: 26px; }
+.lv-tile.soon { opacity: .5; }
+.lv-tile svg { width: 36px; height: 36px; }
+.tips { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.tips li { font-size: 12px; font-weight: 700; color: var(--ink2); padding-left: 22px; position: relative; line-height: 1.35; }
+.tips li::before { content: ''; position: absolute; left: 0; top: 1px; width: 14px; height: 14px; border-radius: 5px; border: 2px solid #D5DDE6; box-sizing: border-box; }
+.tips li.done { text-decoration: line-through; opacity: .6; }
+.tips li.done::before { background: var(--green); border-color: var(--green); }
+.sheet .card .row { display: flex; gap: 8px; }
+.sheet .card .row .btn { flex: 1 1 0; }

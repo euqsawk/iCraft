@@ -185,6 +185,20 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.rect(-7.5, -1.5, 15, 1.6).fill(0x8a5a2b);
       g.roundRect(-1.8, -2.6, 3.6, 3.8, 1).fill(PALETTE.yellow).stroke({ width: 1, color: ink });
       break;
+    case 'laboratoire':
+      // Fiole : col étroit, panse triangulaire, liquide menthe.
+      g.poly([-4, -14, 4, -14, 4, -5, 13, 11, -13, 11, -4, -5]).fill(0xffffff).stroke({ ...st, join: 'round' });
+      g.poly([-8.5, 3, 8.5, 3, 11.2, 9, -11.2, 9]).fill(0x8fd3b6);
+      g.moveTo(-6, -14).lineTo(6, -14).stroke({ ...st, cap: 'round' });
+      g.circle(-2, 0, 1.6).fill(ink).circle(3, -3, 1.2).fill(ink);
+      break;
+    case 'comptoir':
+      // Petite échoppe : auvent rayé et une pièce.
+      g.roundRect(-12, -3, 24, 15, 3).fill(0xffffff).stroke(st);
+      for (let i = 0; i < 4; i++) g.rect(-13 + i * 6.5, -12, 6.5, 9).fill(i % 2 ? 0xffffff : coral);
+      g.roundRect(-13, -12, 26, 9, 2).stroke(st);
+      g.circle(0, 5, 4.5).fill(PALETTE.yellow).stroke({ width: 1.6, color: ink });
+      break;
     default:
       g.roundRect(-10, -10, 20, 20, 5).stroke(st);
   }

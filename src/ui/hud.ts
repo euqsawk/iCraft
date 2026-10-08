@@ -1,17 +1,18 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
-import { BIOME_COLORS, CELL, PALETTE, RULES, xpForLevel } from '../config.ts';
-import { item, ITEM_LIST } from '../data/items.ts';
+import { BIOME_COLORS, CELL, PALETTE, RULES } from '../config.ts';
+import { item, itemLabel, ITEM_LIST } from '../data/items.ts';
 import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import type { Machine } from '../sim/factory.ts';
-import { Game, type GameEvent, type OfflineReport } from '../sim/game.ts';
-import { orderProgress, RARITY_LABEL, type Order } from '../sim/orders.ts';
+import { DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
+import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
 import { ICONS } from './icons.ts';
 import { TreeScreen } from './tree.ts';
-import { ALL_NODES } from '../data/unlocks.ts';
+import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
+import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'move';
@@ -71,6 +72,12 @@ export class Hud implements GestureHandlers {
   private overlay: HTMLElement | null = null;
   private popTimer = 0;
   private miniTimer = 0;
+  /** Contenu de la feuille ouverte, pour la rafraîchir quand l'état change. */
+  private sheetBuild: ((sheet: HTMLElement, close: () => void) => void) | null = null;
+  private sheetDirty = false;
+  private treeDirty = false;
+  private refreshTimer = 0;
+  private pressing = false;
 
   constructor(root: HTMLElement, game: Game, renderer: GameRenderer, cb: HudCallbacks) {
     this.root = root;
@@ -91,12 +98,12 @@ export class Hud implements GestureHandlers {
   private build(): void {
     const top = h('div', 'top');
     const lvl = h('button', 'lvl lvl-btn');
-    lvl.setAttribute('aria-label', 'Arbre de déblocages');
+    lvl.setAttribute('aria-label', 'Palier du Noyau et arbre de déblocages');
     lvl.onclick = () => this.openTree();
     this.lvlDot = h('span', 'lvl-dot hidden');
     this.lvlBadge = h('div', 'lvl-badge', '1');
     const info = h('div', 'lvl-info');
-    this.lvlTitle = h('b', '', 'Niveau 1');
+    this.lvlTitle = h('b', '', 'Palier 1');
     const bar = h('span', 'bar');
     this.xpBar = h('span');
     bar.append(this.xpBar);
@@ -113,7 +120,7 @@ export class Hud implements GestureHandlers {
 
     const row = h('div', 'order-row');
     this.orderCard = h('button', 'order-card');
-    this.orderCard.onclick = () => this.openOrders();
+    this.orderCard.onclick = () => this.openNoyau();
     const mm = h('button', 'minimap');
     mm.setAttribute('aria-label', 'Recentrer sur le robot');
     this.minimap = h('canvas');
@@ -144,7 +151,12 @@ export class Hud implements GestureHandlers {
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
     this.root.append(top, row, this.palette, toolbar, this.bubble, this.popover, this.toasts);
-    this.tree = new TreeScreen(this.root, this.game, () => { this.renderPalette(); this.refreshLevel(); });
+    this.tree = new TreeScreen(this.root, this.game, this.itemIcons, () => { this.renderPalette(); this.refreshLevel(); });
+    // On ne reconstruit pas une feuille pendant qu'un doigt appuie dessus (le bouton serait perdu).
+    const press = (on: boolean) => () => { this.pressing = on; };
+    this.root.addEventListener('pointerdown', press(true), true);
+    window.addEventListener('pointerup', press(false), true);
+    window.addEventListener('pointercancel', press(false), true);
   }
 
   /** Ouvre l'arbre de déblocages. */
@@ -155,15 +167,23 @@ export class Hud implements GestureHandlers {
     this.tree.open(tab, select);
   }
 
-  /** Passage de niveau : un point de déblocage à dépenser. */
-  private levelUp(level: number): void {
+  /** Tuiles des nœuds de l'arbre (pour les feuilles du Noyau et du passage de palier). */
+  private nodeTiles(nodes: UnlockNode[]): string {
+    if (!nodes.length) return '';
+    return `<div class="lv-ready">${nodes.map((x) => `<div><span class="lv-tile${x.effect.kind === 'soon' ? ' soon' : ''}">${NODE_ICONS[x.icon] ?? ''}</span><small>${esc(x.name)}</small></div>`).join('')}</div>`;
+  }
+
+  /** Passage de palier : une partie de l'arbre s'ouvre. */
+  private palierUp(p: number): void {
     this.root.querySelector('.celebrate.level')?.remove();
-    const g = this.game;
-    const ready = ALL_NODES.filter((x) => g.nodeState(x) === 'available').slice(0, 3);
+    this.closePopover();
+    const opened = ALL_NODES.filter((x) => x.palier === p && x.effect.kind !== 'soon').slice(0, 6);
+    const next = palierMission(p);
     const box = h('div', 'celebrate level');
-    box.innerHTML = `<div class="lv-badge">${level}</div><h2>Niveau ${level} !</h2>
-      <p>Tu gagnes <b>1 point de déblocage</b>. Tu en as ${g.points}.</p>
-      ${ready.length ? `<div class="lv-ready">${ready.map((x) => `<div><span class="lv-tile">${NODE_ICONS[x.icon] ?? ''}</span><small>${esc(x.name)}</small></div>`).join('')}</div>` : ''}`;
+    box.innerHTML = `<div class="lv-badge">${p}</div><h2>Palier ${p} !</h2>
+      <p>${opened.length ? 'Le Noyau ouvre de nouveaux déblocages. Apporte au Laboratoire les objets qu’ils demandent.' : 'Le Noyau grandit.'}</p>
+      ${this.nodeTiles(opened)}
+      ${next ? `<p class="muted-small">Prochaine mission : ${esc(next.pitch)}</p>` : '<p class="muted-small">C’était la dernière mission du Noyau.</p>'}`;
     const open = h('button', 'btn primary', 'Ouvrir l’arbre');
     open.style.width = '100%';
     open.onclick = () => { box.remove(); this.openTree(); };
@@ -179,19 +199,24 @@ export class Hud implements GestureHandlers {
   private onEvent(e: GameEvent): void {
     switch (e.type) {
       case 'money': this.refreshMoney(true); break;
-      case 'xp': this.refreshLevel(); break;
-      case 'level': {
+      case 'palier': {
         this.refreshLevel();
+        this.refreshOrder();
+        this.renderPalette();
         this.lvlBadge.classList.add('bump');
         setTimeout(() => this.lvlBadge.classList.remove('bump'), 400);
-        this.levelUp(e.level);
+        this.closeSheet();
+        this.palierUp(e.palier);
+        this.treeDirty = true;
         break;
       }
-      case 'unlock': this.renderPalette(); this.refreshLevel(); break;
-      case 'order': this.refreshOrder(); break;
+      case 'lab': this.refreshLevel(); this.treeDirty = true; this.sheetDirty = true; break;
+      case 'unlock': this.renderPalette(); this.refreshLevel(); this.sheetDirty = true; break;
+      case 'order': this.refreshOrder(); this.sheetDirty = true; break;
+      case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
-      case 'drones': this.toast(`Module de drones : ${this.game.droneCount} drone${this.game.droneCount > 1 ? 's' : ''} construisent avec ton robot`, 'good'); break;
+      case 'drones': this.toast(`${this.game.droneCount} drones travaillent avec ton robot`, 'good'); break;
       default: break;
     }
   }
@@ -213,37 +238,44 @@ export class Hud implements GestureHandlers {
   }
 
   private refreshLevel(): void {
-    const g = this.game, need = xpForLevel(g.level);
-    this.lvlBadge.textContent = String(g.level);
-    this.lvlTitle.textContent = `Niveau ${g.level}`;
-    this.xpBar.style.width = `${Math.min(100, (g.xp / need) * 100)}%`;
-    this.xpText.textContent = `${fmt(g.xp)} / ${fmt(need)} XP`;
+    const g = this.game;
+    const pct = Math.floor(g.palierProgress() * 100);
+    this.lvlBadge.textContent = String(g.palier);
+    this.lvlTitle.textContent = `Palier ${g.palier}`;
+    this.xpBar.style.width = `${pct}%`;
+    this.xpText.textContent = g.finalPalier ? 'Le Noyau est complet' : `${pct} % vers le palier ${g.palier + 1}`;
     this.lvlDot.classList.toggle('hidden', g.unlockableCount() === 0);
   }
 
+  /** La carte sous la barre du haut : la mission du Noyau. */
   private refreshOrder(): void {
-    const o = this.game.order;
+    const g = this.game;
     const c = this.orderCard;
-    if (!o) {
-      c.classList.add('choose');
-      c.innerHTML = `<div class="main"><span class="tag" style="background:#fff">Noyau</span><b>Choisis une commande</b></div><div class="side"><b>3 choix</b></div>`;
+    const mission = palierMission(g.palier);
+    c.classList.remove('choose');
+    if (!mission) {
+      c.innerHTML = `<div class="main"><span class="tag noyau">Noyau</span><b>Toutes les missions sont faites</b></div>`;
       return;
     }
-    c.classList.remove('choose');
-    const done = o.lines.reduce((s, l) => s + Math.min(l.done, l.qty), 0);
-    const total = o.lines.reduce((s, l) => s + l.qty, 0);
-    c.innerHTML = `<div class="main"><span class="tag ${o.rarity}">${RARITY_LABEL[o.rarity]}</span><b>${esc(Game.orderTitle(o))}</b></div>
-      <div class="side"><b>${done} / ${total}</b><span class="mini-bar"><span style="width:${orderProgress(o) * 100}%"></span></span><small>+${o.xp} XP</small></div>`;
+    const needs = Object.entries(g.noyauNeeds());
+    const total = Object.values(mission.lines).reduce((a, b) => a + b, 0);
+    const done = total - needs.reduce((a, [, n]) => a + n, 0);
+    const what = needs.map(([k, n]) => itemLabel(k, n)).join(' · ');
+    c.innerHTML = `<div class="main"><span class="tag noyau">Mission du Noyau</span><b>${esc(what || 'Mission terminée')}</b></div>
+      <div class="side"><b>${fmt(done)} / ${fmt(total)}</b><span class="mini-bar"><span style="width:${g.palierProgress() * 100}%"></span></span><small>Palier ${mission.to}</small></div>`;
   }
 
   private renderPalette(): void {
     const p = this.palette;
     p.innerHTML = '';
+    const placed = new Set([...this.game.factory.machines.values()].map((x) => x.type));
     for (const m of BUILDABLE) {
       if (!this.game.hasMachine(m.id)) continue;
-      const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}`);
-      b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${ICONS.coinSm}${m.cost}</small>`;
+      const done = !!m.unique && placed.has(m.id);
+      const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}${done ? ' locked' : ''}`);
+      b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${done ? 'Déjà posé' : `${ICONS.coinSm}${m.cost}`}</small>`;
       b.onclick = () => {
+        if (done) { this.toast(`Un seul ${m.name.toLowerCase()} par partie : touche-le sur la carte pour l’ouvrir`, 'info'); return; }
         this.machineType = m.id;
         this.renderPalette();
         this.toast(`${m.name} : touche la carte pour la poser`, 'info');
@@ -251,7 +283,8 @@ export class Hud implements GestureHandlers {
       p.append(b);
     }
     // Dernière carte : l'arbre, pour débloquer d'autres machines.
-    const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${NODE_ICONS.assembleur}</span>Débloquer<small>${this.game.points} point${this.game.points > 1 ? 's' : ''}</small>`);
+    const ready = this.game.unlockableCount();
+    const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${NODE_ICONS.assembleur}</span>Débloquer<small>${ready ? `${ready} prêt${ready > 1 ? 's' : ''}` : `Palier ${this.game.palier}`}</small>`);
     more.onclick = () => this.openTree('production');
     p.append(more);
   }
@@ -304,7 +337,9 @@ export class Hud implements GestureHandlers {
     const m = f.machineAt(cx, cy);
     const rb = this.game.robot;
     if (Math.hypot(w.x - rb.x, w.y - (rb.y - 0.6)) < 0.9) { this.select({ kind: 'robot' }); return; }
-    if (m?.type === 'noyau') { this.closePopover(); this.openOrders(); return; }
+    if (m?.type === 'noyau') { this.closePopover(); this.openNoyau(); return; }
+    if (m?.built && m.type === 'comptoir') { this.closePopover(); this.openOrders(); return; }
+    if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -451,7 +486,7 @@ export class Hud implements GestureHandlers {
 
   private chips(buf: Record<string, number>): string {
     return Object.entries(buf).filter(([, n]) => n > 0)
-      .map(([id, n]) => `<span class="chip"><img src="${this.itemIcons.get(id)}" alt="">${n} ${esc(item(id).name.toLowerCase())}</span>`).join('');
+      .map(([id, n]) => `<span class="chip"><img src="${this.itemIcons.get(id)}" alt="">${fmt(n)} ${esc(n > 1 ? item(id).plural : item(id).name.toLowerCase())}</span>`).join('');
   }
 
   private renderPopover(): void {
@@ -565,7 +600,17 @@ export class Hud implements GestureHandlers {
     const info = `<h3>Robot</h3><p>${esc(status)}</p>${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}
       <p>Inventaire</p>${this.slotsHtml(r.inv.slots)}
       ${g.drones.length ? `<p>Drones</p>${drones}` : '<p>Pas encore de drone.</p>'}`;
-    this.setPopover('robot', info, '');
+    // Priorité de chaque drone : il fait d'abord cette tâche, puis le reste.
+    const prio = g.drones.length
+      ? `<p class="prio-head">Priorité des drones <small>d’abord ça, puis le reste</small></p>${g.drones.map((d, i) => `<label class="prio-row"><span>Drone ${i + 1}</span><select data-drone="${i}">${DRONE_PRIORITIES.map((p) => `<option value="${p.id}"${p.id === d.priority ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>`).join('')}`
+      : '';
+    if (!this.setPopover('robot', info, prio)) return;
+    this.popover.querySelectorAll<HTMLSelectElement>('select[data-drone]').forEach((sel) => {
+      sel.onchange = () => {
+        g.setDronePriority(Number(sel.dataset.drone), sel.value as DronePriority);
+        this.toast(`Drone ${Number(sel.dataset.drone) + 1} : ${(DRONE_PRIORITIES.find((p) => p.id === sel.value)?.label ?? '').replace(/^./, (c) => c.toLowerCase())} d’abord`, 'good');
+      };
+    });
   }
 
   private popKey = '';
@@ -614,52 +659,166 @@ export class Hud implements GestureHandlers {
 
   // ---------- Feuilles : commandes et menu ----------
 
-  private openSheet(build: (sheet: HTMLElement, close: () => void) => void): void {
+  private openSheet(build: (sheet: HTMLElement, close: () => void) => void, live = false): void {
     this.closeSheet();
     const back = h('div', 'backdrop');
     const sheet = h('div', 'sheet');
     back.append(sheet);
     const close = () => this.closeSheet();
-    back.onclick = (e) => { if (e.target === back) close(); };
+    // Le « clic » qui suit le toucher d'ouverture tombe sur le fond : on l'ignore.
+    const opened = performance.now();
+    back.onclick = (e) => { if (e.target === back && performance.now() - opened > 450) close(); };
     build(sheet, close);
     this.root.append(back);
     this.overlay = back;
+    this.sheetBuild = live ? build : null;
+    this.sheetDirty = false;
+  }
+
+  /** Reconstruit la feuille ouverte (livraisons en cours), en gardant le défilement. */
+  private refreshSheet(): void {
+    const back = this.overlay, build = this.sheetBuild;
+    if (!back || !build) return;
+    const sheet = back.firstElementChild as HTMLElement;
+    const top = sheet.scrollTop;
+    sheet.innerHTML = '';
+    build(sheet, () => this.closeSheet());
+    sheet.scrollTop = top;
   }
 
   private closeSheet(): void {
     this.overlay?.remove();
     this.overlay = null;
+    this.sheetBuild = null;
+  }
+
+  private sheetHead(title: string, sub: string, close: () => void): HTMLElement {
+    const head = h('div', 'sheet-head');
+    head.innerHTML = `<div><h2>${esc(title)}</h2>${sub ? `<p>${sub}</p>` : ''}</div>`;
+    const x = h('button', 'round', ICONS.close);
+    x.setAttribute('aria-label', 'Fermer');
+    x.onclick = close;
+    head.append(x);
+    return head;
+  }
+
+  /** Lignes « objet : x / y » avec barre de progression. */
+  private costRows(lines: [string, number, number][]): string {
+    return `<div class="ts-costs">${lines.map(([k, have, need]) => {
+      const v = Math.min(have, need);
+      return `<div class="ts-cost${v >= need ? ' done' : ''}"><img src="${this.itemIcons.get(k)}" alt=""><span>${esc(item(k).name)}</span><b>${fmt(v)} / ${fmt(need)}</b><span class="ts-bar"><span style="width:${(v / need) * 100}%"></span></span></div>`;
+    }).join('')}</div>`;
+  }
+
+  /** Boutons Déplacer et Supprimer d'un bâtiment ouvert en feuille (Laboratoire, Comptoir). */
+  private buildingActions(type: string, close: () => void, note: string): HTMLElement | null {
+    const m = [...this.game.factory.machines.values()].find((x) => x.type === type);
+    if (!m) return null;
+    const def = machineDef(type);
+    const row = h('div', 'row');
+    const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+    mv.onclick = () => { close(); this.setTool('move'); this.moving = m; this.toast('Glisse le bâtiment à sa nouvelle place', 'info'); };
+    const del = h('button', 'btn danger', `${ICONS.trash}Supprimer`);
+    let armed = false;
+    del.onclick = () => {
+      if (!armed) { armed = true; del.textContent = 'Toucher encore'; return; }
+      this.game.removeMachine(m);
+      close();
+    };
+    row.append(mv, del);
+    const wrap = h('div', 'card');
+    wrap.innerHTML = `<p class="muted">${def.name} · supprimer rend ${def.cost} pièces. ${note}</p>`;
+    wrap.append(row);
+    return wrap;
+  }
+
+  /** La mission du Noyau : ce qu'il demande pour passer au palier suivant. */
+  openNoyau(): void {
+    this.closePopover();
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      const mission = palierMission(g.palier);
+      if (!mission) {
+        sheet.append(this.sheetHead('Le Noyau est complet', `Palier ${g.palier} atteint : toutes les missions sont faites.`, close));
+        return;
+      }
+      sheet.append(this.sheetHead(`Mission du Noyau`, `Palier ${g.palier} → palier ${mission.to}`, close));
+      const card = h('div', 'card');
+      card.innerHTML = `<p><b>${esc(mission.pitch)}</b></p>${this.costRows(Object.entries(mission.lines).map(([k, v]) => [k, g.palierDone[k] ?? 0, v]))}
+        <p class="muted">Relie un tapis au Noyau, ou range ces objets dans un coffre : les drones les y apportent.</p>`;
+      sheet.append(card);
+      if (g.palier === 1) {
+        const placed = new Set([...g.factory.machines.values()].map((m) => m.type));
+        const tip = (done: boolean, html: string) => `<li class="${done ? 'done' : ''}">${html}</li>`;
+        sheet.insertAdjacentHTML('beforeend', `<div class="card"><p class="muted">Pour bien démarrer</p><ul class="tips">
+          ${tip(placed.has('comptoir'), '<b>Comptoir</b> : ses commandes rapportent les pièces pour construire.')}
+          ${tip(placed.has('laboratoire'), '<b>Laboratoire</b> : il garde les objets qui débloquent l’arbre (la Presse, par exemple).')}
+          ${tip(placed.has('coffre'), '<b>Coffre</b> : les drones y prennent le charbon et ce que demandent ces bâtiments.')}
+        </ul></div>`);
+      }
+      const opens = ALL_NODES.filter((x) => x.palier === mission.to);
+      if (opens.length) {
+        const c2 = h('div', 'card');
+        c2.innerHTML = `<p class="muted">Le palier ${mission.to} ouvre</p>${this.nodeTiles(opens)}`;
+        sheet.append(c2);
+      }
+      const tree = h('button', 'btn', 'Ouvrir l’arbre de déblocages');
+      tree.onclick = () => { close(); this.openTree(); };
+      sheet.append(tree);
+    }, true);
+  }
+
+  /** Le Laboratoire : son stock et les déblocages qu'il peut payer. */
+  openLab(): void {
+    this.closePopover();
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      sheet.append(this.sheetHead('Laboratoire', `Il garde les objets qui servent à débloquer l’arbre (${RULES.labCap} de chaque au plus).`, close));
+      const open = ALL_NODES.filter((x) => g.nodeState(x) === 'available')
+        .sort((a, b) => Number(g.canAfford(b)) - Number(g.canAfford(a)) || a.palier - b.palier);
+      if (open.length === 0) {
+        sheet.insertAdjacentHTML('beforeend', '<div class="card"><p class="muted">Rien à débloquer pour l’instant : termine la mission du Noyau pour ouvrir la suite de l’arbre.</p></div>');
+      }
+      for (const x of open) {
+        const c = h('div', 'card lab-node');
+        c.innerHTML = `<div class="lab-title"><span class="lab-ico">${NODE_ICONS[x.icon] ?? ''}</span><b>${esc(x.name)}</b></div>
+          ${this.costRows(Object.entries(x.cost).map(([k, v]) => [k, g.lab[k] ?? 0, v]))}`;
+        if (g.canAfford(x)) {
+          const b = h('button', 'btn primary', 'Débloquer');
+          b.onclick = () => { if (g.unlock(x.id)) this.toast(`${x.name} débloqué`, 'good'); this.refreshSheet(); };
+          c.append(b);
+        }
+        sheet.append(c);
+      }
+      const stock = Object.entries(g.lab).filter(([, n]) => n > 0);
+      const st = h('div', 'card');
+      st.innerHTML = `<p class="muted">En stock</p>${stock.length ? `<div class="chips">${this.chips(Object.fromEntries(stock))}</div>` : '<p class="muted">Vide. Relie-lui un tapis, ou range les objets dans un coffre : les drones les y apportent.</p>'}`;
+      sheet.append(st);
+      const tree = h('button', 'btn', 'Ouvrir l’arbre de déblocages');
+      tree.onclick = () => { close(); this.openTree(); };
+      sheet.append(tree);
+      const act = this.buildingActions('laboratoire', close, 'Son stock reste gardé.');
+      if (act) sheet.append(act);
+    }, true);
   }
 
   private orderCardHtml(o: Order, withProgress: boolean): string {
     const lines = o.lines.map((l) => `<div class="line"><img src="${this.itemIcons.get(l.item)}" alt="">${esc(item(l.item).name)}<span class="count">${withProgress ? `${Math.min(l.done, l.qty)} / ` : ''}${l.qty}</span></div>`).join('');
     return `<span class="tag ${o.rarity}">${RARITY_LABEL[o.rarity]}</span>${lines}
-      <div class="rewards"><span class="reward">${ICONS.xp}+${o.xp} XP</span><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span>${o.equip === 'drone' ? `<span class="reward equip">${ICONS.drone}+1 drone</span>` : ''}</div>`;
+      <div class="rewards"><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span></div>`;
   }
 
+  /** Le Comptoir : des commandes au choix, payées en pièces. */
   openOrders(): void {
     this.closePopover();
     const g = this.game;
     if (!g.order && g.choices.length === 0) g.refreshChoices();
     this.openSheet((sheet, close) => {
-      const head = h('div', 'sheet-head');
-      const x = h('button', 'round', ICONS.close);
-      x.setAttribute('aria-label', 'Fermer');
-      x.onclick = close;
-      const stock = Object.entries(g.stock).filter(([, n]) => n > 0);
-      const stockHtml = stock.length
-        ? `<div class="card"><p class="muted">Au Noyau, hors commande</p><div class="chips">${this.chips(Object.fromEntries(stock))}</div><p class="muted">Ce stock compte dès qu’une commande en a besoin.</p></div>`
-        : '';
       if (g.order) {
-        head.innerHTML = `<div><h2>Commande en cours</h2><p>Relie tes tapis au Noyau pour livrer.</p></div>`;
-        head.append(x);
-        const card = h('div', 'card', this.orderCardHtml(g.order, true));
-        sheet.append(head, card);
-        if (stockHtml) sheet.insertAdjacentHTML('beforeend', stockHtml);
+        sheet.append(this.sheetHead('Comptoir', 'Commande en cours : relie un tapis au Comptoir, ou laisse les drones y apporter le contenu de tes coffres.', close));
+        sheet.append(h('div', 'card', this.orderCardHtml(g.order, true)));
       } else {
-        head.innerHTML = `<div><h2>Choisis une commande</h2><p>Pas de chrono, pas de pénalité : prends celle qui te tente.</p></div>`;
-        head.append(x);
-        sheet.append(head);
+        sheet.append(this.sheetHead('Comptoir', 'Choisis une commande. Pas de chrono, pas de pénalité : elle se paie en pièces.', close));
         for (const o of g.choices) {
           const card = h('div', 'card', this.orderCardHtml(o, false));
           const pick = h('button', 'btn primary', 'Choisir');
@@ -668,18 +827,19 @@ export class Hud implements GestureHandlers {
           sheet.append(card);
         }
         const re = h('button', 'btn yellow', `${ICONS.reroll}Relancer les 3 choix · ${ICONS.coinSm}${g.rerollCost()}`);
-        re.onclick = () => { g.reroll(); close(); this.openOrders(); };
+        re.onclick = () => { g.reroll(); this.refreshSheet(); };
         sheet.append(re);
-        if (stockHtml) sheet.insertAdjacentHTML('beforeend', stockHtml);
       }
-    });
+      const act = this.buildingActions('comptoir', close, '');
+      if (act) sheet.append(act);
+    }, true);
   }
 
   private celebrate(o: Order): void {
     this.closeSheet();
     const box = h('div', 'celebrate');
     box.innerHTML = `<h2>Commande livrée !</h2><p>${esc(Game.orderTitle(o))}</p>
-      <div class="rewards" style="justify-content:center;margin-bottom:14px"><span class="reward">${ICONS.xp}+${o.xp} XP</span><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span>${o.equip === 'drone' ? `<span class="reward equip">${ICONS.drone}+1 drone</span>` : ''}</div>`;
+      <div class="rewards" style="justify-content:center;margin-bottom:14px"><span class="reward">${ICONS.coinSm}+${fmt(o.money)}</span></div>`;
     const next = h('button', 'btn primary', 'Choisir la suivante');
     next.style.width = '100%';
     next.onclick = () => { box.remove(); this.openOrders(); };
@@ -732,7 +892,7 @@ export class Hud implements GestureHandlers {
       tips.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer le robot. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
         ${standalone ? '' : '<p class="muted"><b>Installer</b> · Dans Safari : Partager, puis « Sur l’écran d’accueil ». Le jeu s’ouvre alors en plein écran et ta sauvegarde est mieux protégée.</p>'}`;
 
-      const treeBtn = h('button', 'btn', `Arbre de déblocages · ${this.game.points} point${this.game.points > 1 ? 's' : ''}`);
+      const treeBtn = h('button', 'btn', `Arbre de déblocages · palier ${this.game.palier}`);
       treeBtn.onclick = () => { close(); this.openTree(); };
       sheet.append(head, upd, treeBtn, seedCard, center, newCard, tips);
     });
@@ -779,19 +939,12 @@ export class Hud implements GestureHandlers {
     const box = h('div', 'celebrate away');
     const list = gained.length
       ? `<div class="chips gained">${gained.map(([id, n]) => `<span class="chip"><img src="${this.itemIcons.get(id)}" alt="">+${fmt(n)} ${esc(n > 1 ? item(id).plural : item(id).name.toLowerCase())}</span>`).join('')}</div>`
-      : '<p>Ton usine n’a rien envoyé au Noyau. Relie une chaîne au Noyau pour qu’elle produise pendant ton absence.</p>';
-    box.innerHTML = `<h2>Pendant ton absence</h2><p>${dur(r.away)}${capped ? ` · ${dur(r.counted)} comptées` : ''}</p>${list}
-      <p class="muted-small">Quand le jeu est fermé, l’usine tourne au ralenti (10 %, ${RULES.offlineMaxSeconds / 3600} h au plus). Tout attend au Noyau.</p>`;
-    const usable = this.game.stockUsable();
-    const btn = h('button', 'btn primary', usable > 0 ? `Livrer au Noyau · ${usable} pour la commande` : 'Reprendre');
+      : '<p>Rien n’a été livré. Relie une chaîne au Noyau, au Laboratoire ou au Comptoir pour qu’elle travaille pendant ton absence.</p>';
+    box.innerHTML = `<h2>Pendant ton absence</h2><p>${dur(r.away)}${capped ? ` · ${dur(r.counted)} comptées` : ''}</p>${gained.length ? '<p>Livré par tes tapis :</p>' : ''}${list}
+      <p class="muted-small">Quand le jeu est fermé, l’usine tourne au ralenti (10 %, ${RULES.offlineMaxSeconds / 3600} h au plus).</p>`;
+    const btn = h('button', 'btn primary', 'Reprendre');
     btn.style.width = '100%';
-    btn.onclick = () => {
-      box.remove();
-      if (usable > 0) {
-        const n = this.game.deliverStock();
-        if (n > 0 && this.game.order) this.toast(`${n} objets livrés`, 'good');
-      }
-    };
+    btn.onclick = () => box.remove();
     box.append(btn);
     this.root.append(box);
   }
@@ -853,6 +1006,12 @@ export class Hud implements GestureHandlers {
     if (this.miniTimer > 0.5) {
       this.miniTimer = 0;
       this.drawMinimap();
+    }
+    this.refreshTimer += dt;
+    if (this.refreshTimer > 0.8 && !this.pressing) {
+      this.refreshTimer = 0;
+      if (this.sheetDirty && this.overlay) { this.sheetDirty = false; this.refreshSheet(); }
+      if (this.treeDirty && this.tree.isOpen) { this.treeDirty = false; this.tree.render(); }
     }
   }
 }

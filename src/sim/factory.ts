@@ -90,10 +90,10 @@ export class Factory {
   speedMult = 1;
   /** Cases d'un coffre (déblocage Grand coffre). */
   chestSlots = RULES.chestSlots;
-  /** Le Noyau accepte-t-il cet objet ? (Limité pendant l'absence du joueur.) */
-  coreAccepts: (item: string) => boolean = () => true;
-  /** Appelé quand un objet entre dans le Noyau. */
-  onDeliver: (item: string) => void = () => {};
+  /** Les bâtiments spéciaux (Noyau, Laboratoire, Comptoir) acceptent-ils cet objet ? */
+  buildingAccepts: (m: Machine, item: string) => boolean = () => true;
+  /** Appelé quand un objet entre dans un bâtiment spécial. */
+  onDeliver: (m: Machine, item: string) => void = () => {};
 
   readonly world: World;
 
@@ -395,7 +395,7 @@ export class Factory {
   canAccept(m: Machine, item: string): boolean {
     if (!m.built) return false;
     const def = machineDef(m.type);
-    if (def.kind === 'core') return this.coreAccepts(item);
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
     if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) return true;
     if (def.kind !== 'crafter') return false;
@@ -410,7 +410,7 @@ export class Factory {
 
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
-    if (def.kind === 'core') { this.onDeliver(item); return; }
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') { this.onDeliver(m, item); return; }
     if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) {
       // Le carburant d'abord ; un haut-fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = this.coalIngredient(def) && m.fuel >= 3 && (m.inBuf.charbon ?? 0) < RULES.machineBuffer;
@@ -527,7 +527,7 @@ export class Factory {
       const def = machineDef(m.type);
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
-      if (def.kind !== 'core') this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
+      if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
     }
   }
 

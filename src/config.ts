@@ -88,8 +88,8 @@ export const RULES = {
   /** Production hors ligne : 10 % de la vitesse, sur 8 h au plus. */
   offlineRate: 0.1,
   offlineMaxSeconds: 8 * 3600,
-  /** Stock maximum par objet au Noyau pendant l'absence. */
-  offlineStockCap: 500,
+  /** Stock maximum par objet au Laboratoire. */
+  labCap: 500,
   revealRobot: 7,
   revealBuilding: 4,
   revealStart: 19,
