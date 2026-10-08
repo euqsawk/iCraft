@@ -36,7 +36,9 @@ const options = {
 function writeStatic() {
   copyDir(path.join(root, 'public'), dist);
   // Les fichiers portent la version dans leur adresse : une mise à jour ne lit jamais un vieux fichier en cache.
+  const guard = fs.readFileSync(path.join(root, 'src/boot-guard.js'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8')
+    .replace('/*BOOT-GUARD*/', guard)
     .replace('src="app.js"', `src="app.js?v=${version}"`)
     .replace('href="styles.css"', `href="styles.css?v=${version}"`);
   fs.writeFileSync(path.join(dist, 'index.html'), html);
@@ -49,8 +51,10 @@ function writeInline() {
   // Fragment de page autonome (sans <html>/<head>/<body>) : pour un lien de test hébergé.
   const css = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
   const js = fs.readFileSync(path.join(dist, 'app.js'), 'utf8').replace(/<\/script/g, '<\\/script');
+  const guard = fs.readFileSync(path.join(root, 'src/boot-guard.js'), 'utf8');
   const out = [
     '<title>Usine fractale</title>',
+    `<script>\n${guard}\n</script>`,
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">',
     `<style>\n${css}\n</style>`,
     '<div id="game"></div>',

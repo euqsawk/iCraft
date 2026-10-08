@@ -83,6 +83,7 @@ async function boot(): Promise<void> {
   });
   window.addEventListener('pagehide', save);
   loading.remove();
+  (window as unknown as { __gameStarted?: boolean }).__gameStarted = true;
   requestPersistence();
 
   if (__DEV__ || new URLSearchParams(location.search).has('debug')) {
@@ -98,13 +99,16 @@ async function boot(): Promise<void> {
   }
 }
 
-if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  const hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) location.reload();
-  });
-}
+// Hors ligne : pas sur une page intégrée dans un cadre (où Safari interdit même d'y toucher).
+try {
+  if (window.top === window.self && 'serviceWorker' in navigator && location.protocol === 'https:') {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController) location.reload();
+    });
+  }
+} catch { /* service worker indisponible */ }
 
 boot().catch((e) => {
   // On garde la feuille de style : seul le message remplace le jeu.
@@ -115,4 +119,5 @@ boot().catch((e) => {
   box.querySelector('small')!.textContent = String(e?.message ?? e);
   document.body.append(box);
   console.error(e);
+  (window as unknown as { __bootFailed?: (m: string) => void }).__bootFailed?.(String(e?.message ?? e));
 });
