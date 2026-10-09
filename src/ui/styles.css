@@ -547,3 +547,73 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .prio-list.demo .prio-item { min-height: 38px; padding: 4px 10px; }
 .prio-list.demo .prio-item b { font-size: 13px; }
 .prio-item.rise { animation: rise .45s cubic-bezier(.2, 1.3, .4, 1); }
+
+/* ---------- Inventaires en grand ---------- */
+.sheet.inv-sheet { max-height: 90%; }
+.inv-grid { display: grid; gap: 6px; }
+.inv-cell {
+  position: relative; aspect-ratio: 1; border-radius: 14px; background: #F0F5F2; display: flex; align-items: center; justify-content: center;
+  box-shadow: inset 0 -3px 0 #DCE7E1; transition: transform .12s;
+}
+.inv-cell img { width: 30px; height: 30px; }
+.inv-cell b { position: absolute; right: 6px; bottom: 3px; font-size: 13px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.inv-cell.empty { background: #F7FAF8; box-shadow: inset 0 0 0 1.5px #E3ECE7; }
+.inv-cell.on { background: var(--yellow); box-shadow: inset 0 -3px 0 var(--coin-edge), 0 0 0 3px var(--ink); transform: translateY(-2px); }
+.inv-swap { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; font-weight: 800; color: var(--ink2); margin: -4px 0; }
+.inv-bar { display: flex; flex-direction: column; gap: 8px; background: #fff; border-radius: 18px; padding: 12px; box-shadow: 0 4px 0 var(--shadow), 0 0 0 2px var(--ink) inset; }
+.card .inv-bar { box-shadow: 0 0 0 2px var(--ink) inset; }
+.inv-bar.floating { position: sticky; bottom: 0; z-index: 2; box-shadow: 0 -6px 18px rgba(46, 58, 75, .15), 0 0 0 2px var(--ink) inset; }
+.ib-head { display: flex; align-items: center; gap: 8px; }
+.ib-head img { width: 26px; height: 26px; }
+.ib-head b { font-size: 15px; font-weight: 900; }
+.ib-head small { margin-left: auto; font-size: 11.5px; font-weight: 700; color: var(--ink2); }
+.ib-qty { display: flex; align-items: center; gap: 8px; }
+.ib-qty .btn { flex: 0 0 40px; font-size: 20px; padding: 0; }
+.ib-range { flex: 1; accent-color: var(--ink); height: 28px; }
+.ib-n { min-width: 30px; text-align: center; font-size: 18px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.ib-quick { display: flex; gap: 6px; }
+.ib-quick .btn { flex: 1 1 0; min-width: 0; }
+.ib-acts { display: flex; gap: 8px; }
+.ib-acts .btn { flex: 1 1 0; min-height: 44px; }
+.sheet .muted.small, .muted.small { font-size: 11.5px; }
+.round.small { width: 32px; height: 32px; min-width: 32px; }
+.round.small svg { width: 14px; height: 14px; }
+.craft-job { display: flex; align-items: center; gap: 10px; background: #F4F8F6; border-radius: 14px; padding: 8px 8px 8px 10px; }
+.craft-job img { width: 28px; height: 28px; }
+.cj-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cj-info b { font-size: 13px; font-weight: 900; }
+.cj-info small { font-size: 11px; font-weight: 700; color: var(--ink2); }
+.cj-bar { height: 6px; border-radius: 3px; background: #E2EAE5; overflow: hidden; }
+.cj-bar > span { display: block; height: 100%; background: var(--green); border-radius: 3px; transition: width .2s linear; }
+.craft-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.craft-opt { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 4px 6px; border-radius: 14px; background: #F4F8F6; color: var(--ink); }
+.craft-opt img { width: 28px; height: 28px; }
+.craft-opt small { font-size: 10.5px; font-weight: 800; text-align: center; line-height: 1.15; }
+.craft-opt b { position: absolute; top: 4px; right: 6px; font-size: 10.5px; font-weight: 900; color: var(--ink2); }
+.craft-opt.on { background: var(--ink); color: #fff; }
+.craft-opt.on b { color: #D5DDE6; }
+.craft-detail { display: flex; flex-direction: column; gap: 8px; border-top: 2px dashed #E2EAE5; padding-top: 10px; }
+.craft-detail .recipe { flex-wrap: wrap; }
+.prio-btn.big { padding: 9px 10px; gap: 6px; }
+.prio-btn.big .gauge { flex: 0 0 70px; }
+.prio-btn.big .gauge .g-label { display: none; }
+.prio-btn.big .gauge b { display: none; }
+.prio-btn.big .chip { flex: none; }
+
+/* ---------- Cadeau du Noyau ---------- */
+.gift-card {
+  position: absolute; left: 12px; right: 12px; bottom: calc(var(--bottom) + 92px); max-width: 480px; margin: 0 auto; z-index: 3;
+  background: #fff; border-radius: 24px; padding: 14px 16px; box-shadow: 0 6px 0 var(--shadow), 0 10px 30px rgba(46, 58, 75, .18);
+  display: flex; flex-direction: column; gap: 6px; animation: tipIn .5s cubic-bezier(.2, 1.3, .4, 1) .7s both;
+}
+.gc-head { display: flex; align-items: center; gap: 12px; }
+.gc-head img { width: 48px; height: 48px; border-radius: 14px; background: #F4F8F6; padding: 4px; }
+.gc-head div { display: flex; flex-direction: column; gap: 2px; }
+.gc-tag { align-self: flex-start; font-size: 10.5px; font-weight: 900; text-transform: uppercase; letter-spacing: .4px; color: #C4553F; background: #FDE3DC; border-radius: 7px; padding: 2px 7px; }
+.gc-head b { font-size: 19px; font-weight: 900; }
+.gift-card p { margin: 0; font-size: 13.5px; font-weight: 700; color: var(--ink2); line-height: 1.4; }
+.gift-card .gc-note { font-size: 11.5px; }
+.gift-card .row { display: flex; gap: 8px; margin-top: 4px; }
+.gift-card .row .btn { flex: 1 1 0; min-height: 44px; }
+.sheet > .row { display: flex; gap: 8px; }
+.sheet > .row .btn { flex: 1 1 0; }

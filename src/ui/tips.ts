@@ -18,53 +18,38 @@ interface Tip {
 }
 
 const machines = (g: Game) => [...g.factory.machines.values()];
-const has = (g: Game, type: string, built = false) => machines(g).some((m) => m.type === type && (!built || m.built));
+const has = (g: Game, type: string) => machines(g).some((m) => m.type === type);
 
 export const TIPS: Tip[] = [
   {
     id: 'charbon', title: 'Tout marche au charbon',
-    text: (g) => `Tes machines, ${g.look.name} et ses drones brûlent du charbon. Envoie ${g.look.name} sur le filon gris foncé : à l’arrêt, il mine tout seul.`,
+    text: (g) => `Envoie ${g.look.name} sur le filon gris foncé : à l’arrêt, il mine tout seul.`,
     goal: (g) => g.robot.inv.count('charbon') > 0 || machines(g).some((m) => m.ore === 'charbon'),
   },
   {
     id: 'foreuse', title: 'Une foreuse sur le charbon',
-    text: () => 'Outil Machine, puis Foreuse : pose-la sur le filon de charbon. Ton drone lui apporte les 10 charbons de sa soute pour la lancer.',
+    text: () => 'Outil Machine, puis Foreuse : pose-la sur le charbon. Ton drone lui apporte ses 10 charbons.',
     goal: (g) => machines(g).some((m) => m.type === 'foreuse' && m.ore === 'charbon'),
   },
   {
-    id: 'coffre', title: 'Un coffre à charbon',
-    text: () => 'Pose un Coffre et relie-y la foreuse avec l’outil Tapis. Les drones y prennent le charbon pour les machines dont le voyant clignote.',
+    id: 'coffre', title: 'Un coffre au bout du tapis',
+    text: () => 'Pose un Coffre et relie-y la foreuse avec l’outil Tapis : les drones y prendront le charbon.',
     goal: (g) => has(g, 'coffre'),
   },
   {
     id: 'fer', title: 'Du fer pour le Noyau',
-    text: () => 'Une foreuse sur le fer (gris-bleu), un Four, puis un tapis du four jusqu’au Noyau. Touche le Noyau pour voir ce que demande sa mission.',
+    text: () => 'Une foreuse sur le fer (gris-bleu), un Four, puis un tapis jusqu’au Noyau.',
     goal: (g) => (g.palierDone.lingot_fer ?? 0) > 0 || g.palier > 1,
   },
   {
-    id: 'comptoir', title: 'Gagner des pièces',
-    text: () => 'Pose un Comptoir : ses commandes rapportent les pièces qui paient tes constructions. Touche-le pour en choisir une.',
-    goal: (g) => has(g, 'comptoir'),
-  },
-  {
-    id: 'labo', title: 'Débloquer la Presse',
-    text: () => 'Pose un Laboratoire et apporte-lui 20 lingots de fer. Ensuite, touche ton palier en haut à gauche pour ouvrir l’arbre et débloquer la Presse.',
-    goal: (g) => g.isUnlocked('presse'),
-  },
-  {
-    id: 'drones', title: 'Le travail des drones',
-    text: (g) => `Touche ${g.look.name} : tu vois son inventaire et son charbon. Touche un drone pour ranger ses tâches, de la plus importante à la moins importante.`,
+    id: 'atelier', title: 'Fabriquer à la main',
+    text: (g) => `Touche ${g.look.name} : son inventaire s’ouvre, et il sait fabriquer lui-même, lentement.`,
+    when: (g) => g.gifts.comptoir !== undefined,
     goal: (_g, c) => c.robotOpened,
   },
   {
-    id: 'separateur', title: 'Séparer un tapis',
-    text: () => 'Avec l’outil Tapis, glisse depuis le milieu d’un tapis : un objet sur deux part de côté.',
-    when: (g) => g.isUnlocked('separateur'),
-    goal: (g) => [...g.factory.belts.values()].some((b) => b.split !== undefined),
-  },
-  {
     id: 'palier2', title: 'Palier 2 !',
-    text: () => 'Le Noyau a grandi : la suite de l’arbre est ouverte, et sa nouvelle mission demande des pièces plus travaillées. Un deuxième drone t’attend dans la branche Robot.',
+    text: () => 'La suite de l’arbre est ouverte. Un deuxième drone t’attend dans la branche Robot.',
     when: (g) => g.palier >= 2,
   },
 ];
@@ -127,7 +112,7 @@ export class Tips {
     this.current = tip;
     const n = TIPS.indexOf(tip) + 1;
     this.el.className = `tip${this.hidden ? ' away' : ''}`;
-    this.el.innerHTML = `<div class="tip-head"><span class="tip-badge">Conseil ${n}/${TIPS.length}</span><button class="tip-x" aria-label="Compris">Compris</button></div>
+    this.el.innerHTML = `<div class="tip-head"><span class="tip-badge">Conseil ${n}</span><button class="tip-x" aria-label="Compris">Compris</button></div>
       <b>${tip.title}</b><p>${tip.text(this.game)}</p>
       <button class="tip-off">Plus de conseils sur cette partie</button>`;
     this.el.querySelector<HTMLButtonElement>('.tip-x')!.onclick = () => this.dismiss(false);

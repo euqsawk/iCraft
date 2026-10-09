@@ -7,6 +7,7 @@ import { item, ITEM_LIST } from '../src/data/items.ts';
 import { PALIERS } from '../src/data/paliers.ts';
 import { NODE } from '../src/data/unlocks.ts';
 import { decodeSave, encodeSave } from '../src/save/code.ts';
+import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { MACHINES } from '../src/data/machines.ts';
 
 let failed = 0, passed = 0;
@@ -391,9 +392,9 @@ test('le Noyau ne prend que ce que demande sa mission, puis passe au palier 2', 
 test('Laboratoire : il garde les objets, débloquer les consomme', () => {
   const g = new Game('TEST-41');
   g.money = 10000; g.world.reveal(6, 6, 20);
-  const lab = g.placeMachine('laboratoire', 7, 8)!;
+  const lab = g.giveBuilding('laboratoire')!;
   assert(lab, 'laboratoire posé');
-  assert(!g.placeMachine('laboratoire', 7, 12), 'un seul laboratoire');
+  assert(!g.giveBuilding('laboratoire') && !g.placeMachine('laboratoire', 7, 12), 'un seul laboratoire');
   run(g, 30);
   assert(lab.built && g.hasLab(), 'laboratoire construit');
   assert(g.receive(lab, 'fer', 5) === 0, 'le minerai ne sert à rien au labo');
@@ -407,7 +408,7 @@ test('Laboratoire : il garde les objets, débloquer les consomme', () => {
 test('Comptoir : la commande se livre et se paie en pièces', () => {
   const g = new Game('TEST-42');
   g.money = 10000; g.world.reveal(6, 6, 20);
-  const c = g.placeMachine('comptoir', 7, 8)!;
+  const c = g.giveBuilding('comptoir')!;
   run(g, 30);
   const m0 = g.money;
   assert(g.order?.lines[0].item === 'lingot_fer', 'première commande');
@@ -419,7 +420,7 @@ test('les drones vident les coffres vers le Noyau et le Laboratoire, selon leur 
   const g = new Game('TEST-43');
   g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
   const chest = g.placeMachine('coffre', 6, 8)!;
-  const lab = g.placeMachine('laboratoire', 8, 4)!;
+  const lab = g.giveBuilding('laboratoire')!;
   run(g, 40);
   assert(chest.built && lab.built, 'construits');
   g.factory.putInStorage(chest, 'lingot_fer', 60);
@@ -465,7 +466,7 @@ test('priorités : une liste ordonnée par drone, appliquée dans l’ordre', ()
   const g = new Game('TEST-44');
   g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
   const chest = g.placeMachine('coffre', 6, 8)!;
-  const lab = g.placeMachine('laboratoire', 8, 4)!;
+  const lab = g.giveBuilding('laboratoire')!;
   run(g, 40);
   assert(chest.built && lab.built, 'construits');
   // Le Noyau avant le Laboratoire : tout le fer part au Noyau d'abord.
@@ -504,6 +505,76 @@ test('Revente : le gros drone passe toutes les 5 minutes et paie peu', () => {
   assert(g.pickups.length === 0 && g.receive(bin, 'fer', 5) === 5, 'la benne rouvre');
   // Bien moins rentable que le Comptoir : 10 lingots y rapportent 80 pièces, 6 à la revente.
   assert(Math.floor(10 * 3 * 0.2) * 10 < 80, 'revente trop rentable');
+});
+
+console.log('Inventaire et fabrication');
+test('fabrication : du minerai de fer aux vis, fondu puis tourné, lentement', () => {
+  const g = new Game('TEST-60');
+  g.unlocks.add('presse'); g.unlocks.add('tour');
+  g.robot.inv.add('fer', 4);
+  const res = g.craftPlan('vis', 3);
+  assert('plan' in res, 'plan impossible');
+  const plan = (res as { plan: { steps: { item: string }[]; time: number; consume: Record<string, number> } }).plan;
+  assert(plan.steps.map((x) => x.item).join() === 'lingot_fer,vis' && plan.consume.fer === 3, JSON.stringify(plan));
+  assert(plan.time === (1.6 * 3 + 1.2 * 3) * HAND_FACTOR, `durée ${plan.time}`);
+  assert(g.startCraft('vis', 3) === null && g.robot.inv.count('fer') === 1, 'ingrédients pris tout de suite');
+  assert(g.startCraft('vis', 5) !== null, 'pas assez de fer : refusé');
+  run(g, plan.time - 1);
+  assert(g.robot.inv.count('vis') === 0, 'trop rapide');
+  run(g, 2);
+  assert(g.robot.inv.count('vis') === 3 && g.craftQueue.length === 0, `vis : ${g.robot.inv.count('vis')}`);
+  assert(maxCraftable('lingot_fer', { fer: 7 }, () => true) === 7 && !('plan' in g.craftPlan('vis', 2)), 'max');
+});
+test('fabrication : les composants déjà faits passent avant ; annuler rend tout', () => {
+  const g = new Game('TEST-61');
+  for (const id of ['presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'fabricant']) g.unlocks.add(id);
+  g.robot.inv.add('rotor', 1); g.robot.inv.add('stator', 1); g.robot.inv.add('vis', 1);
+  const direct = g.craftPlan('moteur', 1) as { plan: { steps: unknown[]; consume: Record<string, number> } };
+  assert(direct.plan.steps.length === 1 && direct.plan.consume.rotor === 1, 'le moteur devrait se faire en une étape');
+  // Sans composants : le robot remonte jusqu'aux matières premières.
+  const g2 = new Game('TEST-62');
+  for (const id of ['presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'fabricant']) g2.unlocks.add(id);
+  g2.robot.inv.add('fer', 10); g2.robot.inv.add('cuivre', 10); g2.robot.inv.add('charbon', 10); g2.robot.inv.add('vis', 2);
+  const full = g2.craftPlan('moteur', 1) as { plan: { steps: { item: string }[]; consume: Record<string, number> } };
+  assert('plan' in full && full.plan.steps.length >= 6 && full.plan.consume.vis === 2 && !full.plan.steps.some((x) => x.item === 'vis'), JSON.stringify(full));
+  const before = JSON.stringify(g2.robot.inv.save());
+  assert(g2.startCraft('moteur', 1) === null, 'moteur lancé');
+  g2.cancelCraft(0);
+  assert(JSON.stringify(g2.robot.inv.kinds().sort()) === JSON.stringify(JSON.parse(before).filter(Boolean).map((x: { t: string }) => x.t).filter((t: string, i: number, a: string[]) => a.indexOf(t) === i).sort()), 'annuler rend les ingrédients');
+});
+test('coffre ↔ robot : prendre, déposer, séparer une pile', () => {
+  const g = new Game('TEST-63');
+  g.money = 1000; g.world.reveal(6, 6, 20);
+  const chest = g.placeMachine('coffre', 6, 9)!;
+  run(g, 20);
+  g.factory.putInStorage(chest, 'lingot_fer', 25);
+  assert(g.chestToRobot(chest, 'lingot_fer', 12) === 12 && chest.inBuf.lingot_fer === 13 && g.robot.inv.count('lingot_fer') === 12, 'prendre');
+  const slot = g.robot.inv.slots.findIndex((x) => x?.t === 'lingot_fer' && x.n === 10);
+  assert(g.splitRobotSlot(slot, 4) && g.robot.inv.slots[slot]!.n === 6, 'séparer');
+  assert(g.robotToChest(chest, slot, 6) === 6 && chest.inBuf.lingot_fer === 19 && g.robot.inv.count('lingot_fer') === 6, 'déposer');
+  g.robot.inv.add('fer', 50);
+  assert(g.chestToRobot(chest, 'lingot_fer', 19) <= g.robot.inv.room('lingot_fer') + 19, 'pas plus que la place');
+});
+test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais déplaçables', () => {
+  const g = new Game('TEST-64');
+  const gifts: string[] = [];
+  g.on((e) => { if (e.type === 'gift') gifts.push(e.building); });
+  assert(!g.placeMachine('comptoir', 6, 6), 'le Comptoir ne se pose pas à la main');
+  run(g, 100);
+  assert(gifts.length === 0, 'trop tôt');
+  run(g, 150);
+  assert(gifts.join() === 'comptoir', `cadeaux : ${gifts}`);
+  const c = [...g.factory.machines.values()].find((m) => m.type === 'comptoir')!;
+  assert(c.built && !g.world.patchAt(c.x, c.y), 'Comptoir construit, hors filon');
+  assert(!g.removeMachine(c) && !g.removeAt(c.x, c.y) && g.factory.machines.has(c.id), 'indestructible');
+  g.world.reveal(c.x + 6, c.y, 6);
+  assert(g.moveMachine(c, c.x + 5, c.y), 'déplaçable');
+  run(g, 310);
+  assert(gifts.join() === 'comptoir,laboratoire' && g.hasLab(), `cadeaux : ${gifts}`);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  run(g2, 5);
+  assert(g2.gifts.comptoir !== undefined && [...g2.factory.machines.values()].filter((m) => m.type === 'comptoir').length === 1, 'pas de second cadeau');
 });
 
 console.log('Sauvegardes');

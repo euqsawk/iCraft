@@ -70,6 +70,33 @@ export class Inventory {
     return n - left;
   }
 
+  /** Retire jusqu'à n objets d'une case précise ; renvoie le nombre retiré. */
+  takeAt(i: number, n: number): number {
+    const s = this.slots[i];
+    if (!s) return 0;
+    const k = Math.min(n, s.n);
+    s.n -= k;
+    if (s.n <= 0) this.slots[i] = null;
+    return k;
+  }
+
+  /** Sépare n objets d'une case vers une case vide ; renvoie l'index de la nouvelle case (ou -1). */
+  split(i: number, n: number): number {
+    const s = this.slots[i];
+    const free = this.slots.indexOf(null);
+    if (!s || free < 0 || n <= 0 || n >= s.n) return -1;
+    s.n -= n;
+    this.slots[free] = { t: s.t, n };
+    return free;
+  }
+
+  /** Une copie, pour essayer un changement sans toucher à l'inventaire. */
+  clone(): Inventory {
+    const c = new Inventory(this.slots.length, this.stack);
+    c.load(this.save());
+    return c;
+  }
+
   /** Types présents, du plus abondant au moins abondant. */
   kinds(): string[] {
     const m = new Map<string, number>();

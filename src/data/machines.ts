@@ -22,6 +22,8 @@ export interface MachineDef {
   cost: number;
   /** (Ancien système de niveaux, plus utilisé.) */
   unlock: number;
+  /** Offert par le Noyau : il n'est pas dans la palette et ne se supprime pas. */
+  gift?: boolean;
   /** Bâtiment unique (un seul exemplaire). */
   unique?: boolean;
   recipes: Recipe[];
@@ -144,11 +146,11 @@ export const MACHINES: Record<string, MachineDef> = {
     hint: 'Un gros drone passe toutes les 5 minutes et revend tout, à bas prix',
   },
   laboratoire: {
-    id: 'laboratoire', name: 'Laboratoire', kind: 'lab', coal: false, unique: true, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
+    id: 'laboratoire', name: 'Laboratoire', kind: 'lab', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde les objets qui servent à débloquer l’arbre',
   },
   comptoir: {
-    id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
+    id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
     hint: 'Des commandes au choix, payées en pièces',
   },
   noyau: {
@@ -157,12 +159,7 @@ export const MACHINES: Record<string, MachineDef> = {
   },
 };
 
-/** Ordre de la palette : le Laboratoire et le Comptoir d'abord. */
-const FIRST = ['laboratoire', 'comptoir'];
-export const BUILDABLE: MachineDef[] = [
-  ...FIRST.map((id) => MACHINES[id]),
-  ...Object.values(MACHINES).filter((m) => m.buildable && !FIRST.includes(m.id)),
-];
+export const BUILDABLE: MachineDef[] = Object.values(MACHINES).filter((m) => m.buildable);
 
 export function machineDef(id: string): MachineDef {
   const d = MACHINES[id];

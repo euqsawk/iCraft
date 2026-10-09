@@ -15,7 +15,7 @@ Ce dépôt contient le **premier prototype jouable** : la carte, le robot et ses
 
 Une nouvelle partie commence par une courte présentation : « Ça, c'est toi », la personnalisation du robot (couleur, accessoire, nom), puis les drones et leurs priorités. Ensuite la caméra montre la carte de loin, plonge vers le robot, et le brouillard se referme autour de la zone de départ (toucher l'écran passe l'animation).
 
-Pendant la partie, des **conseils** expliquent les débuts (charbon, foreuse, coffre, fer, Comptoir, Laboratoire, drones…). Chacun se valide tout seul quand on l'a fait, ou avec « Compris ». « Plus de conseils sur cette partie » les coupe pour cette partie ; le menu du jeu permet de les réactiver.
+Pendant la partie, quelques **conseils** courts expliquent les débuts (charbon, foreuse, coffre, fer, fabrication à la main). Chacun se valide tout seul quand on l'a fait, ou avec « Compris ». « Plus de conseils sur cette partie » les coupe pour cette partie ; le menu du jeu permet de les réactiver.
 
 ### Les gestes
 
@@ -39,7 +39,7 @@ Pour poser une machine, elle apparaît un peu au-dessus du doigt pour rester vis
 3. **Machine → Foreuse** sur le fer (gris-bleu), puis un **Four**.
 4. **Tapis** : du fer jusqu'au four, puis du four jusqu'au Noyau.
 5. Le robot construit chaque fantôme à son tour. Le drone va chercher le charbon dans le coffre et recharge les machines dont le voyant clignote. Le Noyau reçoit les lingots : sa mission avance.
-6. Pose un **Comptoir** (ses commandes rapportent des pièces) et un **Laboratoire** (il garde les objets qui débloquent l'arbre, la Presse en premier).
+6. Après quelques minutes, le Noyau t'offre un **Comptoir** (ses commandes rapportent des pièces), puis un peu plus tard un **Laboratoire** (il garde les objets qui débloquent l'arbre, la Presse en premier). La caméra va les voir et une carte explique leur rôle.
 
 ## Règles déjà en place
 
@@ -51,10 +51,12 @@ Pour poser une machine, elle apparaît un peu au-dessus du doigt pour rester vis
 - **Construction** : chaque pose coûte des pièces et apparaît en fantôme. Le robot construit à courte portée, en allant de chantier en chantier ; les drones l'aident autour de lui.
 - **Séparateur** (à débloquer dans l'arbre) : un objet sur deux part dans la dérivation ; si une sortie est pleine, tout passe par l'autre. Pour fusionner deux tapis, il suffit d'en faire arriver un sur le côté de l'autre.
 - **Noyau et paliers** : le Noyau, carré, reçoit les tapis par n'importe quelle case de son bord. Il donne des missions fixes, les mêmes dans toutes les parties (palier 1 → 2 : 150 lingots de fer, 80 lingots de cuivre, 40 plaques de fer, environ 15 minutes ; les suivantes sont de plus en plus longues). Chaque mission terminée fait passer au palier suivant, qui ouvre une partie de l'arbre. Il prend seulement ce que demande sa mission.
-- **Laboratoire** (unique) : il garde jusqu'à 500 de chaque objet qui sert à un déblocage. Débloquer un nœud consomme les objets demandés (par exemple 20 lingots de fer pour la Presse).
+- **Inventaire en grand** : toucher le robot ouvre son inventaire (charbon, 5 cases), la fabrication à la main et ses drones. Toucher un coffre ouvre son contenu avec l'inventaire du robot dessous : on choisit une pile, une quantité (1, moitié, tout, ou au curseur), puis on la donne au robot ou on la dépose dans le coffre. Une pile du robot peut aussi être séparée en deux.
+- **Fabrication à la main** : le robot fabrique tout ce que font les machines débloquées, trois fois plus lentement, en brûlant son charbon. Il remonte les recettes tout seul (du minerai de fer aux vis : fonte, puis tournage) et prend d'abord les composants déjà fabriqués qu'il a sur lui. Jusqu'à 5 fabrications en file ; annuler rend les ingrédients.
+- **Laboratoire** (unique, offert) : il garde jusqu'à 500 de chaque objet qui sert à un déblocage. Débloquer un nœud consomme les objets demandés (par exemple 20 lingots de fer pour la Presse).
 - **Revente** (2 × 2, 20 pièces) : une benne où les tapis déposent ce dont on ne veut plus (400 objets au plus). Toutes les 5 minutes, un gros drone vient la vider et revend tout d'un coup, à bas prix (0,2 pièce par point de valeur : 10 lingots de fer rapportent 6 pièces, contre 80 au Comptoir). C'est une poubelle et un filet de sécurité quand on n'a plus de pièces. Pendant une absence, la benne est vendue au retour.
-- **Palette** : le Laboratoire et le Comptoir viennent en tête ; une fois posés, ils disparaissent de la liste.
-- **Comptoir** (unique) : il reprend les commandes au choix (3 propositions, relance contre des pièces) ; une commande livrée rapporte des pièces, c'est la source d'argent.
+- **Bâtiments offerts** : le Comptoir et le Laboratoire ne sont pas dans la palette. Le Noyau les pose près de lui (Comptoir après la première livraison au Noyau ou 4 minutes de jeu, Laboratoire 2 à 5 minutes plus tard). On peut les déplacer, pas les supprimer.
+- **Comptoir** (unique, offert) : il reprend les commandes au choix (3 propositions, relance contre des pièces) ; une commande livrée rapporte des pièces, c'est la source d'argent.
 - **Priorités des drones** : dans la bulle du robot, touche un drone pour ranger ses six tâches (recharger le charbon, construire, livrer le Noyau, le Laboratoire ou le Comptoir, distribuer le minerai du robot), de la plus importante à la moins importante. Il fait la première tâche utile de sa liste ; son propre charbon passe toujours avant. « Même ordre pour tous » copie la liste sur les autres drones. Pour livrer, les drones se servent dans les coffres et dans l'inventaire du robot.
 - **Supprimer** rembourse 100 % (bulle ou gomme).
 - **Arbre de déblocages** : cinq branches, Production (machines), Logistique (séparateur, tapis rapide et express, grand coffre…), Robot (deuxième et troisième drones…), Énergie et Modules. Chaque nœud s'ouvre à un palier et se paie en objets déposés au Laboratoire. Touche ton palier en haut à gauche pour l'ouvrir ; un point rouge signale qu'un nœud est prêt. Ceux marqués « Bientôt » arriveront avec les prochaines étapes.

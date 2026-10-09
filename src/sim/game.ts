@@ -8,6 +8,7 @@ import { key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
 import { Inventory, type Slot } from './inventory.ts';
+import { planCraft, type CraftStep } from './craft.ts';
 import { RICHNESS_RATE } from '../world/world.ts';
 import { ALL_NODES, BASE_UNLOCKS, LAB_ITEMS, NODE, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 import { MAX_PALIER, palierMission } from '../data/paliers.ts';
@@ -35,6 +36,24 @@ export function cleanOrder(list: unknown): DronePriority[] {
 /** Passage du gros drone de revente : il arrive, ramasse (à mi-parcours), repart. */
 export interface SellPickup { id: number; t: number; x: number; y: number; done: boolean }
 export const PICKUP_TIME = 6;
+
+/** Une fabrication à la main en cours (les ingrédients sont déjà pris dans l'inventaire). */
+export interface CraftJob {
+  target: string;
+  n: number;
+  consume: Record<string, number>;
+  extra: Record<string, number>;
+  steps: CraftStep[];
+  total: number;
+  t: number;
+  /** Fini, mais l'inventaire est plein. */
+  blocked?: boolean;
+}
+export const CRAFT_QUEUE = 5;
+
+/** Bâtiments offerts par le Noyau, dans l'ordre. */
+export const GIFTS = ['comptoir', 'laboratoire'] as const;
+export type GiftType = typeof GIFTS[number];
 
 export type Job = { kind: 'belt'; k: number } | { kind: 'machine'; id: number };
 
@@ -103,6 +122,9 @@ export type GameEvent =
   | { type: 'factory' }
   | { type: 'drones' }
   | { type: 'sold'; money: number; count: number }
+  | { type: 'inventory' }
+  | { type: 'crafted'; item: string; n: number }
+  | { type: 'gift'; building: GiftType; id: number }
   | { type: 'unlock'; id: string };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
@@ -149,10 +171,12 @@ export interface GameSave {
   look?: RobotLook;
   tips?: TipState;
   played?: number;
+  gifts?: Record<string, number>;
+  ordersDone?: number;
   sellT?: number;
   /** Charbon et inventaires du robot et des drones (depuis la version 2). */
   crew?: {
-    robot: { fuel: number; burn: number; inv: (Slot | null)[] };
+    robot: { fuel: number; burn: number; inv: (Slot | null)[]; craft?: CraftJob[] };
     drones: { fuel: number; burn: number; cargo: Slot | null; priority?: DronePriority; priorities?: DronePriority[] }[];
   };
 }
@@ -185,6 +209,11 @@ export class Game {
   tips: TipState = { done: [], off: false };
   /** Temps de jeu, en secondes. */
   played = 0;
+  /** Fabrications à la main, dans l'ordre. */
+  craftQueue: CraftJob[] = [];
+  /** Bâtiments offerts : type → temps de jeu au moment du cadeau. */
+  gifts: Record<string, number> = {};
+  ordersDone = 0;
   /** Revente : temps depuis le dernier passage, et passages en cours. */
   sellT = 0;
   pickups: SellPickup[] = [];
@@ -416,6 +445,7 @@ export class Game {
   private completeOrder(): void {
     const o = this.order!;
     this.order = null;
+    this.ordersDone++;
     this.earn(o.money);
     this.emit({ type: 'orderDone', order: o });
     this.refreshChoices();
@@ -542,6 +572,10 @@ export class Game {
 
   placeMachine(type: string, x: number, y: number): Machine | null {
     const def = machineDef(type);
+    if (def.gift) {
+      this.emit({ type: 'toast', text: `${def.name} : le Noyau te l’offre bientôt`, tone: 'info' });
+      return null;
+    }
     if (!this.hasMachine(type)) {
       this.emit({ type: 'toast', text: `${def.name} : à débloquer dans l’arbre`, tone: 'warn' });
       return null;
@@ -609,6 +643,10 @@ export class Game {
     const def = machineDef(m.type);
     if (!def.buildable) {
       this.emit({ type: 'toast', text: 'Le Noyau reste en place', tone: 'warn' });
+      return false;
+    }
+    if (def.gift) {
+      this.emit({ type: 'toast', text: `${def.name} : un cadeau du Noyau. On peut le déplacer, pas le supprimer.`, tone: 'info' });
       return false;
     }
     this.factory.removeMachine(m);
@@ -763,9 +801,171 @@ export class Game {
           r.mineT -= 1;
           r.inv.add(p.type, 1);
           r.mined++;
+          this.emit({ type: 'inventory' });
         }
       }
     }
+    // Fabrication à la main : en même temps que le reste, et au charbon elle aussi.
+    const job = this.craftQueue[0];
+    if (job) {
+      r.active = true;
+      job.t = Math.min(job.total, job.t + dt * power);
+      if (job.t >= job.total) this.finishCraft(job);
+    }
+  }
+
+  // ---------- Inventaire du robot : coffres et fabrication ----------
+
+  private have(): Record<string, number> {
+    const h: Record<string, number> = {};
+    for (const sl of this.robot.inv.slots) if (sl) h[sl.t] = (h[sl.t] ?? 0) + sl.n;
+    return h;
+  }
+
+  /** Ce que le robot peut fabriquer avec son inventaire (ou ce qui manque). */
+  craftPlan(target: string, n: number) {
+    return planCraft(target, n, this.have(), (id) => this.hasMachine(id));
+  }
+
+  /** Lance une fabrication : les ingrédients sont pris tout de suite. Renvoie un message d'erreur, ou null. */
+  startCraft(target: string, n: number): string | null {
+    if (this.craftQueue.length >= CRAFT_QUEUE) return 'Trop de fabrications en attente';
+    const res = this.craftPlan(target, n);
+    if (!('plan' in res)) return 'Il manque des matières';
+    const { plan } = res;
+    // Il faut la place pour le résultat, une fois les ingrédients pris.
+    const test = this.robot.inv.clone();
+    for (const [k, v] of Object.entries(plan.consume)) test.take(k, v);
+    let fits = test.add(target, n) === n;
+    for (const [k, v] of Object.entries(plan.extra)) fits = fits && test.add(k, v) === v;
+    for (const j of this.craftQueue) {
+      fits = fits && test.add(j.target, j.n) === j.n;
+      for (const [k, v] of Object.entries(j.extra)) fits = fits && test.add(k, v) === v;
+    }
+    if (!fits) return 'Pas assez de place dans l’inventaire';
+    for (const [k, v] of Object.entries(plan.consume)) this.robot.inv.take(k, v);
+    this.craftQueue.push({ target, n, consume: plan.consume, extra: plan.extra, steps: plan.steps, total: Math.max(0.5, plan.time), t: 0 });
+    this.emit({ type: 'inventory' });
+    return null;
+  }
+
+  private finishCraft(job: CraftJob): void {
+    const test = this.robot.inv.clone();
+    let fits = test.add(job.target, job.n) === job.n;
+    for (const [k, v] of Object.entries(job.extra)) fits = fits && test.add(k, v) === v;
+    if (!fits) { job.blocked = true; return; }
+    job.blocked = false;
+    this.robot.inv.add(job.target, job.n);
+    for (const [k, v] of Object.entries(job.extra)) this.robot.inv.add(k, v);
+    this.craftQueue.shift();
+    this.emit({ type: 'crafted', item: job.target, n: job.n });
+    this.emit({ type: 'inventory' });
+  }
+
+  /** Annule une fabrication : les ingrédients reviennent (ce qui ne rentre pas est perdu). */
+  cancelCraft(i: number): void {
+    const job = this.craftQueue[i];
+    if (!job) return;
+    this.craftQueue.splice(i, 1);
+    for (const [k, v] of Object.entries(job.consume)) this.robot.inv.add(k, v);
+    this.emit({ type: 'inventory' });
+  }
+
+  /** L'étape en cours d'une fabrication (pour l'afficher). */
+  static craftStep(job: CraftJob): CraftStep | null {
+    let acc = 0;
+    for (const st of job.steps) {
+      acc += st.time;
+      if (job.t < acc) return st;
+    }
+    return job.steps[job.steps.length - 1] ?? null;
+  }
+
+  /** Du coffre vers le robot ; renvoie la quantité déplacée. */
+  chestToRobot(m: Machine, item: string, n: number): number {
+    const k = Math.min(n, m.inBuf[item] ?? 0, this.robot.inv.room(item));
+    if (k <= 0) return 0;
+    this.factory.takeFromStorage(m, item, k);
+    this.robot.inv.add(item, k);
+    this.emit({ type: 'inventory' });
+    return k;
+  }
+
+  /** D'une case du robot vers le coffre ; renvoie la quantité déplacée. */
+  robotToChest(m: Machine, slot: number, n: number): number {
+    const sl = this.robot.inv.slots[slot];
+    if (!sl) return 0;
+    const k = Math.min(n, sl.n, this.factory.storageRoom(m, sl.t));
+    if (k <= 0) return 0;
+    const t = sl.t;
+    this.robot.inv.takeAt(slot, k);
+    this.factory.putInStorage(m, t, k);
+    this.emit({ type: 'inventory' });
+    return k;
+  }
+
+  /** Sépare une pile du robot en deux. */
+  splitRobotSlot(slot: number, n: number): boolean {
+    const ok = this.robot.inv.split(slot, n) >= 0;
+    if (ok) this.emit({ type: 'inventory' });
+    return ok;
+  }
+
+  // ---------- Bâtiments offerts par le Noyau ----------
+
+  /** Le Comptoir arrive après les premiers pas, le Laboratoire un peu plus tard. */
+  private tickGifts(): void {
+    const t = this.played;
+    if (this.gifts.comptoir === undefined) {
+      const delivered = Object.values(this.palierDone).some((v) => v > 0) || this.palier > 1;
+      if (t >= 90 && (delivered || t >= 240)) this.giveBuilding('comptoir');
+      return;
+    }
+    if (this.gifts.laboratoire === undefined) {
+      const since = t - this.gifts.comptoir;
+      if (since >= 120 && (this.ordersDone >= 1 || since >= 300)) this.giveBuilding('laboratoire');
+    }
+  }
+
+  /** Une place libre près du Noyau, hors des filons, avec une case de marge. */
+  findGiftSpot(type: string): { x: number; y: number } | null {
+    const def = machineDef(type);
+    const n = this.noyau;
+    const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+    const cands: { x: number; y: number; d: number }[] = [];
+    for (let y = cy - 14; y <= cy + 14; y++) {
+      for (let x = cx - 14; x <= cx + 14; x++) {
+        const px = Math.floor(x - def.w / 2), py = Math.floor(y - def.h / 2);
+        const d = Math.hypot(x - cx, y - cy);
+        if (d < 6.5) continue;
+        cands.push({ x: px, y: py, d: d + Math.hypot(x - this.robot.x, y - this.robot.y) * 0.15 });
+      }
+    }
+    cands.sort((a, b) => a.d - b.d);
+    for (const c of cands) {
+      let ok = true;
+      for (let j = -1; j <= def.h && ok; j++) {
+        for (let i = -1; i <= def.w && ok; i++) {
+          const x = c.x + i, y = c.y + j;
+          if (!this.world.isRevealed(x, y) || this.world.patchAt(x, y) || this.factory.machineAt(x, y) || this.factory.beltAt(x, y)) ok = false;
+        }
+      }
+      if (ok) return { x: c.x, y: c.y };
+    }
+    return null;
+  }
+
+  giveBuilding(type: GiftType): Machine | null {
+    if (this.gifts[type] !== undefined) return null;
+    const spot = this.findGiftSpot(type);
+    if (!spot) return null;
+    const m = this.factory.addMachine(type, spot.x, spot.y, true);
+    this.factory.markBuilt();
+    this.gifts[type] = this.played;
+    this.world.reveal(spot.x + 1, spot.y + 1, RULES.revealBuilding);
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'gift', building: type, id: m.id });
+    return m;
   }
 
   // ---------- Drones ----------
@@ -1035,6 +1235,7 @@ export class Game {
     this.tickDrones(dt);
     this.factory.tick(dt);
     this.tickSell(dt);
+    this.tickGifts();
   }
 
   // ---------- Sauvegarde ----------
@@ -1052,8 +1253,9 @@ export class Game {
       unlocks: [...this.unlocks],
       palier: this.palier, palierDone: this.palierDone, lab: this.lab, extraDrones: this.extraDrones,
       look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
+      gifts: this.gifts, ordersDone: this.ordersDone,
       crew: {
-        robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save() },
+        robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
         drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priorities: [...d.priorities] })),
       },
     };
@@ -1073,6 +1275,10 @@ export class Game {
     this.tips = s.tips ? { done: [...(s.tips.done ?? [])], off: !!s.tips.off } : { done: [], off: true };
     this.played = s.played ?? 0;
     this.sellT = s.sellT ?? 0;
+    this.ordersDone = s.ordersDone ?? 0;
+    this.gifts = { ...(s.gifts ?? {}) };
+    // Déjà posés avant les cadeaux : ils comptent comme offerts.
+    for (const m of this.factory.machines.values()) if ((m.type === 'comptoir' || m.type === 'laboratoire') && this.gifts[m.type] === undefined) this.gifts[m.type] = 0;
     if (s.v >= 4) {
       this.palier = s.palier ?? 1;
       this.palierDone = s.palierDone ?? {};
@@ -1096,6 +1302,7 @@ export class Game {
     if (s.crew) {
       const r = this.robot;
       r.fuel = s.crew.robot.fuel; r.burn = s.crew.robot.burn; r.inv.load(s.crew.robot.inv);
+      this.craftQueue = (s.crew.robot.craft ?? []).filter((j) => j && typeof j.target === 'string').map((j) => ({ ...j }));
       s.crew.drones.forEach((sd, i) => {
         const d = this.drones[i];
         if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }

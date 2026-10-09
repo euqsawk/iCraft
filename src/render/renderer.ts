@@ -926,9 +926,57 @@ export class GameRenderer {
     it.done();
   }
 
+  // ---------- Caméra guidée et bâtiment mis en avant ----------
+
+  private focus: { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number } | null = null;
+  private highlight: { id: number; t: number } | null = null;
+  private highlightG = new Graphics();
+
+  /** Glisse la caméra vers un point du monde (en cases), avec un zoom. */
+  focusOn(x: number, y: number, zoom: number, dur = 1.3): void {
+    const c = this.camera;
+    this.focus = { fx: c.x, fy: c.y, fz: c.zoom, tx: x * CELL, ty: y * CELL, tz: zoom, t: 0, dur };
+  }
+
+  /** Un anneau pulse quelques secondes autour d'une machine. */
+  highlightMachine(id: number): void {
+    this.highlight = { id, t: 0 };
+    if (!this.highlightG.parent) this.worldLayer.addChildAt(this.highlightG, this.worldLayer.getChildIndex(this.fogLayer));
+  }
+
+  /** Le joueur reprend la main : la caméra guidée s'arrête. */
+  stopFocus(): void {
+    this.focus = null;
+  }
+
+  private stepFocus(dt: number): void {
+    const f = this.focus;
+    if (f) {
+      f.t = Math.min(f.dur, f.t + dt);
+      const u = f.t / f.dur, e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+      const c = this.camera;
+      c.x = f.fx + (f.tx - f.fx) * e;
+      c.y = f.fy + (f.ty - f.fy) * e;
+      c.zoom = Math.exp(Math.log(f.fz) + (Math.log(f.tz) - Math.log(f.fz)) * e);
+      if (f.t >= f.dur) this.focus = null;
+    }
+    const h = this.highlight, g = this.highlightG;
+    g.clear();
+    if (h) {
+      h.t += dt;
+      const m = this.game.factory.machines.get(h.id);
+      if (!m || h.t > 7) { this.highlight = null; return; }
+      const pulse = 0.5 + 0.5 * Math.sin(h.t * 5);
+      const pad = 6 + pulse * 5, a = Math.min(1, (7 - h.t) / 1.5);
+      g.roundRect(m.x * CELL - pad, m.y * CELL - pad, m.w * CELL + pad * 2, m.h * CELL + pad * 2, 16 + pad)
+        .stroke({ width: 4, color: PALETTE.coral, alpha: a * (0.5 + 0.5 * pulse) });
+    }
+  }
+
   render(dt: number): void {
     this.time += dt;
     if (this.intro) this.stepIntro(dt);
+    this.stepFocus(dt);
     const cam = this.camera;
     cam.setSize(this.app.screen.width, this.app.screen.height);
     this.worldLayer.scale.set(cam.zoom);
