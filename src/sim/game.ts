@@ -4,7 +4,7 @@ import { MACHINES, machineDef } from '../data/machines.ts';
 import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
 import { addTo, burnOne, moveFuel } from './fuel.ts';
 import { World } from '../world/world.ts';
-import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
+import { Factory, type Belt, type FactorySave, type Machine, type VehicleKind } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
@@ -723,6 +723,33 @@ export class Game {
     return false;
   }
 
+  /** Prix d'une ligne : la route (ou les rails) et le véhicule. */
+  routePrice(kind: VehicleKind, cells: number): number {
+    return kind === 'train' ? (cells + 1) * RULES.railCost + RULES.trainCost : (cells + 1) * RULES.roadCost + RULES.truckCost;
+  }
+
+  /** Une ligne de camion ou de train entre deux coffres ou machines. */
+  placeRoute(kind: VehicleKind, from: Machine, to: Machine, cells: { x: number; y: number }[]): boolean {
+    if (!this.isUnlocked(kind)) {
+      this.emit({ type: 'toast', text: kind === 'train' ? 'Trains : à débloquer dans l’arbre (Logistique, palier 5)' : 'Camions : à débloquer dans l’arbre (Logistique, palier 4)', tone: 'warn' });
+      return false;
+    }
+    if (from === to || !this.canSendUnder(from)) return false;
+    if (!this.spend(this.routePrice(kind, cells.length))) return false;
+    this.factory.addRoute(kind, from, to, cells);
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `${kind === 'train' ? 'Train' : 'Camion'} : ${machineDef(from.type).name.toLowerCase()} → ${machineDef(to.type).name.toLowerCase()}`, tone: 'good' });
+    return true;
+  }
+
+  /** Retire une ligne (remboursée ; ce que transporte le véhicule est perdu). */
+  removeRoute(id: number): void {
+    const r = this.factory.removeRoute(id);
+    if (!r) return;
+    this.earn(this.routePrice(r.kind, r.cells.length));
+    this.emit({ type: 'factory' });
+  }
+
   /** Prix d'un tapis souterrain : par case de trajet. */
   tunnelPrice(cells: number): number {
     return (cells + 1) * RULES.tunnelCost;
@@ -786,6 +813,7 @@ export class Game {
     }
     // Ses tapis souterrains partent avec elle (remboursés).
     for (const t of this.factory.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
+    for (const r of this.factory.routesOf(m)) this.earn(this.routePrice(r.kind, r.cells.length));
     this.factory.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
     this.earn(def.cost);

@@ -98,6 +98,23 @@ export interface Tunnel {
   items: { t: string; p: number }[];
 }
 
+export type VehicleKind = 'camion' | 'train';
+
+/** Une ligne de transport : une route (camion) ou des rails (train) entre deux coffres ou machines, et son véhicule. */
+export interface Route {
+  id: number;
+  kind: VehicleKind;
+  from: number;
+  to: number;
+  cells: number[];
+  /** Le véhicule : sa position sur le trajet (en cases), ce qu'il fait, ce qu'il transporte. */
+  pos: number;
+  state: 'load' | 'go' | 'unload' | 'back';
+  /** Temps passé à charger ou décharger. */
+  t: number;
+  cargo: Record<string, number>;
+}
+
 /** Un réseau électrique : les câbles reliés entre eux et les machines qui les touchent. */
 export interface PowerNet {
   id: number;
@@ -131,6 +148,9 @@ const DRILL_BASE_RATE = 0.5;
 export class Factory {
   readonly belts = new Map<number, Belt>();
   readonly machines = new Map<number, Machine>();
+  /** Lignes de camions et de trains. */
+  readonly routes = new Map<number, Route>();
+  private nextRoute = 1;
   /** Tapis souterrains (sous tout le reste). */
   readonly tunnels = new Map<number, Tunnel>();
   private nextTunnel = 1;
@@ -360,6 +380,7 @@ export class Factory {
     this.unindexMachine(m);
     this.machines.delete(m.id);
     for (const t of [...this.tunnels.values()]) if (t.from === m.id || t.to === m.id) this.tunnels.delete(t.id);
+    for (const r of [...this.routes.values()]) if (r.from === m.id || r.to === m.id) this.routes.delete(r.id);
     this.dirty = true;
   }
 
@@ -408,6 +429,81 @@ export class Factory {
 
   markBuilt(): void {
     this.dirty = true;
+  }
+
+  // ---------- Véhicules ----------
+
+  routeLength(r: Route): number {
+    return r.cells.length + 1;
+  }
+
+  addRoute(kind: VehicleKind, from: Machine, to: Machine, cells: { x: number; y: number }[], id?: number): Route {
+    const r: Route = { id: id ?? this.nextRoute++, kind, from: from.id, to: to.id, cells: cells.map((c) => key(c.x, c.y)), pos: 0, state: 'load', t: 0, cargo: {} };
+    this.nextRoute = Math.max(this.nextRoute, r.id + 1);
+    this.routes.set(r.id, r);
+    return r;
+  }
+
+  removeRoute(id: number): Route | null {
+    const r = this.routes.get(id);
+    if (r) this.routes.delete(id);
+    return r ?? null;
+  }
+
+  routesOf(m: Machine): Route[] {
+    return [...this.routes.values()].filter((r) => r.from === m.id || r.to === m.id);
+  }
+
+  /** Ce que contient le véhicule. */
+  cargoCount(r: Route): number {
+    let n = 0;
+    for (const v of Object.values(r.cargo)) n += v;
+    return n;
+  }
+
+  /** Les véhicules : chargent au départ, roulent, déchargent à l'arrivée, reviennent. */
+  private tickRoutes(dt: number): void {
+    for (const r of this.routes.values()) {
+      const a = this.machines.get(r.from), b = this.machines.get(r.to);
+      if (!a || !b || !a.built || !b.built) continue;
+      const cap = r.kind === 'train' ? RULES.trainLoad : RULES.truckLoad;
+      const speed = r.kind === 'train' ? RULES.trainSpeed : RULES.truckSpeed;
+      const L = this.routeLength(r);
+      if (r.state === 'load') {
+        r.t += dt;
+        // Il prend dans le départ ce que l'arrivée accepte, un objet tous les dixièmes de seconde.
+        const buf = machineDef(a.type).kind === 'storage' ? a.inBuf : a.outBuf;
+        while (this.cargoCount(r) < cap && r.t >= 0.1) {
+          const k = Object.keys(buf).find((x) => buf[x] > 0 && this.canAccept(b, x));
+          if (!k) break;
+          buf[k]--;
+          if (buf[k] === 0 && buf === a.inBuf) delete buf[k];
+          r.cargo[k] = (r.cargo[k] ?? 0) + 1;
+          r.t -= 0.1;
+        }
+        const n = this.cargoCount(r);
+        if (n >= cap || (n > 0 && r.t >= RULES.vehicleWait)) { r.state = 'go'; r.t = 0; }
+        if (n === 0) r.t = Math.min(r.t, 0.1);
+      } else if (r.state === 'go') {
+        r.pos = Math.min(L, r.pos + speed * dt);
+        if (r.pos >= L) { r.state = 'unload'; r.t = 0; }
+      } else if (r.state === 'unload') {
+        r.t += dt;
+        let k = Object.keys(r.cargo).find((x) => r.cargo[x] > 0 && this.canAccept(b, x));
+        while (k && r.t >= 0.1) {
+          r.cargo[k]--;
+          if (!r.cargo[k]) delete r.cargo[k];
+          this.give(b, k);
+          r.t -= 0.1;
+          k = Object.keys(r.cargo).find((x) => r.cargo[x] > 0 && this.canAccept(b, x));
+        }
+        // Vide, ou plus rien n'entre depuis un moment : il repart (ce qui reste fait l'aller-retour).
+        if (this.cargoCount(r) === 0 || (!k && r.t >= RULES.vehicleWait)) { r.state = 'back'; r.t = 0; }
+      } else {
+        r.pos = Math.max(0, r.pos - speed * dt);
+        if (r.pos <= 0) { r.state = 'load'; r.t = 0; }
+      }
+    }
   }
 
   // ---------- Tapis souterrains ----------
@@ -939,6 +1035,7 @@ export class Factory {
       }
     }
     if (this.tunnels.size) this.tickTunnels(dt);
+    if (this.routes.size) this.tickRoutes(dt);
   }
 
   private outCount(m: Machine): number {
@@ -1078,6 +1175,7 @@ export class Factory {
     return {
       nextId: this.nextId,
       cables: [...this.cables],
+      routes: [...this.routes.values()].map((r) => ({ ...r, cells: [...r.cells], cargo: { ...r.cargo } })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0]),
       machines: [...this.machines.values()].map((m) => ({
@@ -1113,6 +1211,13 @@ export class Factory {
       if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);
+    this.routes.clear();
+    this.nextRoute = 1;
+    for (const sr of s.routes ?? []) {
+      if (!this.machines.has(sr.from) || !this.machines.has(sr.to)) continue;
+      this.routes.set(sr.id, { ...sr, cells: [...sr.cells], cargo: { ...sr.cargo } });
+      this.nextRoute = Math.max(this.nextRoute, sr.id + 1);
+    }
     this.tunnels.clear();
     this.nextTunnel = 1;
     for (const st of s.tunnels ?? []) {
@@ -1128,6 +1233,7 @@ export class Factory {
 export interface FactorySave {
   nextId: number;
   cables?: number[];
+  routes?: Route[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?][];
   machines: {

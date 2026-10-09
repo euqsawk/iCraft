@@ -7,6 +7,7 @@ export type UnlockEffect =
   | { kind: 'splitter' }
   | { kind: 'bridge' }
   | { kind: 'tunnel' }
+  | { kind: 'vehicle'; id: 'camion' | 'train' }
   | { kind: 'beltSpeed'; mult: number }
   | { kind: 'chestSlots'; slots: number }
   | { kind: 'drone' }
@@ -74,10 +75,10 @@ export const BRANCHES: Branch[] = [
       n('pont', 'Ponts', 'pont', 1, 2, 3, { acier: 40 }, ['tapis'], 'En traçant un tapis, continue tout droit par-delà un autre tapis : il passe par-dessus (jusqu’à 4 cases).', { kind: 'bridge' }),
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 0, 2, { plaque_fer: 60 }, ['separateur'], 'Un coffre de 2 × 2 qui garde 300 objets (un coffre simple en garde 100).', m('grand_coffre')),
       n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tous les tapis vont trois fois plus vite qu’au départ.', { kind: 'beltSpeed', mult: 3 }),
-      n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Une route tracée au doigt, des allers-retours entre deux points.', soon),
+      n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Outil Transport : trace une route au doigt d’un coffre ou d’une machine à un autre ; un camion y fait les allers-retours (20 objets à la fois).', { kind: 'vehicle', id: 'camion' }),
       n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Un séparateur qui choisit : un seul objet part de côté.', soon),
       n('souterrain', 'Tapis souterrains', 'souterrain', 3, 1, 5, { acier: 60, engrenage: 40 }, ['express'], 'Outil Sous-sol : depuis un coffre ou une machine, trace un tapis sous le sol jusqu’à un autre coffre ou une machine. Il passe sous tout.', { kind: 'tunnel' }),
-      n('train', 'Trains', 'train', 3, 2, 5, { moteur: 40 }, ['camion'], 'Rails et gares pour aller chercher l’or et l’uranium au loin.', soon),
+      n('train', 'Trains', 'train', 3, 2, 5, { moteur: 40 }, ['camion'], 'Dans l’outil Transport : des rails et un train, plus rapide, qui emporte 80 objets à la fois. Pour aller chercher l’or et l’uranium au loin.', { kind: 'vehicle', id: 'train' }),
     ],
   },
   {

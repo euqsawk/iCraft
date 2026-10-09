@@ -705,3 +705,12 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .map-head p { margin: 2px 0 0; font-size: 13px; font-weight: 700; color: var(--ink2); }
 .map-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; border-radius: 18px; background: #fff; box-shadow: 0 5px 0 var(--shadow); }
 .map-wrap canvas { border-radius: 10px; touch-action: manipulation; }
+
+/* Options d'un outil (Tapis / Sous-sol, Camion / Train), juste au-dessus de la barre d'outils. */
+.tool-opts { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 6px; padding: 6px; border-radius: 18px; background: #fff; box-shadow: 0 4px 0 var(--shadow); white-space: nowrap; }
+.topt { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 13px; background: #F4F8F6; font-size: 13px; font-weight: 800; color: var(--ink2); }
+.topt svg { width: 18px; height: 18px; }
+.topt svg.lock { width: 10px; height: 10px; }
+.topt.on { background: var(--ink); color: #fff; }
+.topt.locked { opacity: .5; }
+.topt-hint { padding: 0 6px; font-size: 11px; font-weight: 800; color: var(--ink2); }

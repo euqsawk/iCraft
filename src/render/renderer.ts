@@ -53,6 +53,7 @@ export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
   | { kind: 'cable'; tracer: CableTracer }
   | { kind: 'tunnel'; tracer: TunnelTracer }
+  | { kind: 'route'; tracer: TunnelTracer; vehicle: 'camion' | 'train' }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
   | null;
@@ -98,6 +99,10 @@ export class GameRenderer {
   private meterLabels = new Container();
   private meterViews = new Map<Belt, { box: Graphics; text: Text; icon: Sprite; sig: string }>();
   private meterT = 0;
+  /** Routes et rails (au sol, sous les tapis), et les véhicules qui y roulent. */
+  private routeG = new Graphics();
+  private routeSig = '';
+  private vehicleViews = new Map<number, { root: Container; parts: Container[]; cargo: Sprite; kind: string }>();
   /** Vue du sous-sol (outil Sous-sol) : la surface pâlit, on voit les tapis souterrains et ce qu'ils transportent. */
   underground = false;
   private undergroundOn = false;
@@ -161,7 +166,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -498,6 +503,144 @@ export class GameRenderer {
     }
   }
 
+  /** Le trajet d'une ligne (ou d'un tapis souterrain) : centre de départ, ses cases, centre d'arrivée. */
+  private linePath(fromId: number, toId: number, cells: number[]): { x: number; y: number }[] | null {
+    const f = this.game.factory;
+    const a = f.machines.get(fromId), b = f.machines.get(toId);
+    if (!a || !b) return null;
+    const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
+    return [c(a), ...cells.map((k) => { const [x, y] = unkey(k); return { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL }; }), c(b)];
+  }
+
+  /** Un point (et l'angle) à la fraction k d'un trajet. */
+  private alongPath(pts: { x: number; y: number }[], k: number): { x: number; y: number; a: number } {
+    const seg: number[] = [];
+    let total = 0;
+    for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); seg.push(d); total += d; }
+    let dist = Math.max(0, Math.min(1, k)) * total, i = 0;
+    while (i < seg.length - 1 && dist > seg[i]) { dist -= seg[i]; i++; }
+    const u = seg[i] ? Math.min(1, dist / seg[i]) : 0;
+    const p0 = pts[i], p1 = pts[i + 1] ?? pts[i];
+    return { x: p0.x + (p1.x - p0.x) * u, y: p0.y + (p1.y - p0.y) * u, a: Math.atan2(p1.y - p0.y, p1.x - p0.x) };
+  }
+
+  private drawRoutes(): void {
+    const g = this.routeG, f = this.game.factory;
+    g.clear();
+    for (const r of f.routes.values()) {
+      const pts = this.linePath(r.from, r.to, r.cells);
+      if (!pts) continue;
+      const line = () => { g.moveTo(pts[0].x, pts[0].y); for (const p of pts.slice(1)) g.lineTo(p.x, p.y); };
+      if (r.kind === 'camion') {
+        // Route : bande grise et pointillés blancs au milieu.
+        line(); g.stroke({ width: 18, color: 0x8f9aa6, cap: 'round', join: 'round' });
+        line(); g.stroke({ width: 15, color: 0xa9b3bd, cap: 'round', join: 'round' });
+        dashedPolyline(g, pts, 5, 6);
+        g.stroke({ width: 1.8, color: 0xffffff, alpha: 0.9 });
+      } else {
+        // Rails : traverses en bois, puis deux rails.
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1], b = pts[i], d = Math.hypot(b.x - a.x, b.y - a.y);
+          const ux = (b.x - a.x) / (d || 1), uy = (b.y - a.y) / (d || 1), px = -uy, py = ux;
+          for (let s = 0; s < d; s += 8) {
+            const x = a.x + ux * s, y = a.y + uy * s;
+            g.moveTo(x + px * 9, y + py * 9).lineTo(x - px * 9, y - py * 9);
+          }
+        }
+        g.stroke({ width: 3.5, color: 0x9b7653, cap: 'round' });
+        for (const o of [-5, 5]) {
+          g.moveTo(pts[0].x, pts[0].y);
+          for (let i = 1; i < pts.length; i++) {
+            const a = pts[i - 1], b = pts[i], d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+            const px = -(b.y - a.y) / d, py = (b.x - a.x) / d;
+            if (i === 1) g.moveTo(a.x + px * o, a.y + py * o);
+            g.lineTo(b.x + px * o, b.y + py * o);
+          }
+          g.stroke({ width: 2.2, color: 0x56606b, join: 'round' });
+        }
+      }
+    }
+  }
+
+  /** Un camion (cabine et benne) ou un train (locomotive et deux wagons), vus de dessus. */
+  private makeVehicle(kind: string): { root: Container; parts: Container[]; cargo: Sprite; kind: string } {
+    const root = new Container();
+    const ink = PALETTE.ink;
+    const parts: Container[] = [];
+    if (kind === 'camion') {
+      const c = new Container();
+      const g = new Graphics();
+      g.roundRect(-11, -7, 14, 14, 3).fill(0xc98a4b).stroke({ width: 2, color: ink });
+      g.roundRect(3, -6.5, 9, 13, 3.5).fill(PALETTE.yellow).stroke({ width: 2, color: ink });
+      g.roundRect(8, -4.5, 3, 9, 1.5).fill(0xbfe3f2);
+      c.addChild(g);
+      parts.push(c);
+    } else {
+      for (let i = 0; i < 3; i++) {
+        const c = new Container();
+        const g = new Graphics();
+        if (i === 0) {
+          g.roundRect(-9, -7, 18, 14, 4).fill(PALETTE.coral).stroke({ width: 2, color: ink });
+          g.circle(3, 0, 3.4).fill(ink);
+          g.roundRect(-7, -4, 5, 8, 1.5).fill(0xbfe3f2);
+        } else {
+          g.roundRect(-9, -7, 18, 14, 3).fill(0x6b7c8f).stroke({ width: 2, color: ink });
+          g.moveTo(-5, -7).lineTo(-5, 7).moveTo(0, -7).lineTo(0, 7).moveTo(5, -7).lineTo(5, 7).stroke({ width: 1.2, color: ink, alpha: 0.5 });
+        }
+        c.addChild(g);
+        parts.push(c);
+      }
+    }
+    for (const p of parts) root.addChild(p);
+    const cargo = new Sprite();
+    cargo.anchor.set(0.5);
+    cargo.scale.set(0.75);
+    root.addChild(cargo);
+    this.actorLayer.addChildAt(root, 0);
+    return { root, parts, cargo, kind };
+  }
+
+  private updateRoutes(): void {
+    const f = this.game.factory;
+    let sig = '';
+    for (const r of f.routes.values()) {
+      const a = f.machines.get(r.from), b = f.machines.get(r.to);
+      sig += `|${r.id}:${a?.x},${a?.y}:${b?.x},${b?.y}`;
+    }
+    if (sig !== this.routeSig) { this.routeSig = sig; this.drawRoutes(); }
+    const seen = new Set<number>();
+    for (const r of f.routes.values()) {
+      seen.add(r.id);
+      const pts = this.linePath(r.from, r.to, r.cells);
+      if (!pts) continue;
+      let v = this.vehicleViews.get(r.id);
+      if (!v || v.kind !== r.kind) { v?.root.destroy({ children: true }); v = this.makeVehicle(r.kind); this.vehicleViews.set(r.id, v); }
+      const L = f.routeLength(r);
+      const back = r.state === 'back' || r.state === 'load';
+      // Chaque partie suit la précédente sur le trajet (le train fait 3 wagons).
+      const gap = 19 / Math.max(1, (L - 0) * CELL);
+      v.parts.forEach((part, i) => {
+        const k = r.pos / L + (back ? i : -i) * gap;
+        const p = this.alongPath(pts, k);
+        part.position.set(p.x, p.y);
+        part.rotation = p.a + (back ? Math.PI : 0);
+      });
+      const head = v.parts[0];
+      const n = f.cargoCount(r);
+      const main = Object.entries(r.cargo).sort((a2, b2) => b2[1] - a2[1])[0]?.[0];
+      v.cargo.visible = n > 0 && !!main;
+      if (main) v.cargo.texture = this.itemTextures.get(main)!;
+      const carrier = v.parts[v.parts.length > 1 ? 1 : 0];
+      v.cargo.position.set(carrier.x, carrier.y - (v.parts.length > 1 ? 0 : 0));
+      v.root.visible = this.inView(head.x, head.y, CELL * 3);
+    }
+    for (const [id, v] of this.vehicleViews) {
+      if (seen.has(id)) continue;
+      v.root.destroy({ children: true });
+      this.vehicleViews.delete(id);
+    }
+  }
+
   /** Le trajet d'un tapis souterrain : du centre de la machine de départ à celui de l'arrivée, par ses cases. */
   private tunnelPath(t: Tunnel): { x: number; y: number }[] | null {
     const f = this.game.factory;
@@ -514,7 +657,7 @@ export class GameRenderer {
     if (on !== this.undergroundOn) {
       this.undergroundOn = on;
       const a = on ? 0.22 : 1;
-      for (const l of [this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
+      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
       this.actorLayer.alpha = on ? 0.45 : 1;
       this.undergroundTint.visible = on;
       this.tunnelG.visible = on;
@@ -1311,7 +1454,24 @@ export class GameRenderer {
     const g = this.overlay;
     g.clear();
     const pv = this.preview;
-    if (pv?.kind === 'tunnel') {
+    if (pv?.kind === 'route') {
+      const t = pv.tracer;
+      if (t.source) {
+        const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
+        const pts = [c(t.source), ...t.cells.map((p) => ({ x: (p.x + 0.5) * CELL, y: (p.y + 0.5) * CELL })), ...(t.target ? [c(t.target)] : [])];
+        if (t.target) {
+          const m = t.target;
+          g.roundRect(m.x * CELL + 1, m.y * CELL + 1, m.w * CELL - 2, m.h * CELL - 2, m.w === 1 ? 8 : 15).fill({ color: 0x6cc7a0, alpha: 0.45 }).stroke({ width: 3, color: PALETTE.green });
+        }
+        if (pts.length > 1) {
+          g.moveTo(pts[0].x, pts[0].y);
+          for (const p of pts.slice(1)) g.lineTo(p.x, p.y);
+          g.stroke({ width: 16, color: pv.vehicle === 'train' ? 0x9b7653 : 0xa9b3bd, alpha: 0.9, cap: 'round', join: 'round' });
+          dashedPolyline(g, pts, 5, 5);
+          g.stroke({ width: 2.5, color: t.blocked ? PALETTE.coral : 0xffffff, cap: 'round' });
+        }
+      }
+    } else if (pv?.kind === 'tunnel') {
       const t = pv.tracer;
       if (t.source) {
         const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
@@ -1699,6 +1859,7 @@ export class GameRenderer {
     if (cablesChanged || (this.cableCount > 0 && this.cableT > 0.5)) this.drawCables();
     this.view = cam.bounds(CELL * 3);
     this.updateUnderground();
+    this.updateRoutes();
     this.meterT += dt;
     if (this.meterT > 0.5) { this.meterT = 0; this.updateMeterLabels(); }
     this.meterLabels.visible = cam.zoom > 0.55 && !this.underground;

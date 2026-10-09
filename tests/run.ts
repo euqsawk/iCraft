@@ -741,6 +741,41 @@ test('compteur : posé sur un tapis, il donne le débit des 20 dernières second
   assert(g.removeAt(6, 5) && !g.factory.beltAt(6, 5)!.meter && g.removeAt(6, 5) && !g.factory.beltAt(6, 5), 'gomme : le compteur, puis le tapis');
 });
 
+test('camion et train : chargent au départ, roulent, déchargent à l’arrivée', () => {
+  const g = new Game('TEST-V1');
+  g.money = 100000; g.world.reveal(12, 8, 26); g.drones[0].cargo = null;
+  const a = g.placeMachine('coffre', 3, 8)!, b = g.placeMachine('coffre', 22, 8)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const t = new TunnelTracer(g.factory, g.world, 3.5, 8.5);
+  for (let i = 1; i <= 80; i++) t.move(3.5 + i * 0.25, 8.5);
+  assert(t.target === b, `route jusqu’au coffre : ${t.cells.length} cases`);
+  assert(!g.placeRoute('camion', a, b, t.cells), 'camions à débloquer');
+  g.unlocks.add('camion');
+  const m0 = g.money;
+  assert(g.placeRoute('camion', a, b, t.cells) && m0 - g.money === g.routePrice('camion', t.cells.length), 'ligne posée');
+  g.factory.putInStorage(a, 'fer', 50);
+  run(g, 3);
+  const r = [...g.factory.routes.values()][0];
+  assert(r.state === 'go' && g.factory.cargoCount(r) === RULES.truckLoad, `chargé : ${r.state} ${g.factory.cargoCount(r)}`);
+  run(g, 30);
+  assert((b.inBuf.fer ?? 0) >= RULES.truckLoad, `livré : ${b.inBuf.fer}`);
+  // Train : plus gros, plus rapide.
+  g.unlocks.add('train');
+  const c = g.placeMachine('coffre', 3, 12)!, d = g.placeMachine('coffre', 22, 12)!;
+  c.built = true; d.built = true; g.factory.markBuilt();
+  assert(g.placeRoute('train', c, d, [...Array(18)].map((_, i) => ({ x: 4 + i, y: 12 }))), 'train posé');
+  g.factory.putInStorage(c, 'cuivre', 100);
+  run(g, 20);
+  assert((d.inBuf.cuivre ?? 0) >= RULES.trainLoad, `train livré : ${d.inBuf.cuivre}`);
+  // Sauvegarde, puis suppression : remboursé avec la machine.
+  const g2 = new Game('TEST-V1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.routes.size === 2, 'lignes rechargées');
+  const m1 = g.money;
+  g.removeMachine(d);
+  assert(g.factory.routes.size === 1 && g.money - m1 === MACHINES.coffre.cost + g.routePrice('train', 18), 'retirée avec la machine');
+});
+
 console.log('Électricité');
 test('générateur, câbles et machines électriques', () => {
   const g = new Game('TEST-E1');

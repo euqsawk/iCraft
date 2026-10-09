@@ -54,6 +54,17 @@ export const RULES = {
   cableCost: 2,
   /** Le carburant dure 5 fois plus longtemps qu'un charbon (et brûle en premier). */
   carburantMult: 5,
+  /** Véhicules : prix d'une case de route ou de rail, prix du véhicule, charge, vitesse (cases par seconde). */
+  roadCost: 2,
+  railCost: 5,
+  truckCost: 150,
+  trainCost: 400,
+  truckLoad: 20,
+  trainLoad: 80,
+  truckSpeed: 4,
+  trainSpeed: 7,
+  /** Un véhicule attend au plus ce temps (s) au départ pour se remplir, et à l'arrivée pour se vider. */
+  vehicleWait: 4,
   /** Tapis souterrain : prix par case de trajet. */
   tunnelCost: 4,
   genCoalSeconds: 10,
