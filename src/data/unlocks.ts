@@ -58,7 +58,6 @@ function n(id: string, name: string, icon: string, row: number, col: number, pal
 const m = (id: string): UnlockEffect => ({ kind: 'machine', id });
 const elec = (id: string): UnlockEffect => ({ kind: 'electric', id });
 const base: UnlockEffect = { kind: 'base' };
-const soon: UnlockEffect = { kind: 'soon' };
 
 export const BRANCHES: Branch[] = [
   {
@@ -104,6 +103,8 @@ export const BRANCHES: Branch[] = [
       n('antenne2', 'Antenne II', 'antenne', 2, 2, 3, { fil_cuivre: 80, acier: 30 }, ['antenne'], 'Les drones du robot vont 2 fois plus loin qu’au départ.', { kind: 'droneRange', mult: 2 }),
       n('chenilles2', 'Chenilles II', 'chenilles', 3, 1, 3, { engrenage: 30, acier: 20 }, ['chenilles'], 'Le robot roule 1,5 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 1.5 }),
       n('antenne3', 'Antenne III', 'antenne', 3, 2, 5, { circuit: 30, cable: 30 }, ['antenne2'], 'Les drones du robot vont 2,5 fois plus loin qu’au départ.', { kind: 'droneRange', mult: 2.5 }),
+      n('hangar', 'Hangar', 'station', 3, 0, 4, { moteur: 10, acier: 60 }, ['drone3'], 'Le Hangar (3 × 3) : une station à trois drones, qui construisent, rechargent et livrent autour de lui.', m('hangar')),
+      n('recharge', 'Recharge des drones', 'drone', 4, 2, 5, { batterie: 10, circuit: 20 }, ['antenne3'], 'La Recharge : reliée au courant (80 kW), les drones autour d’elle viennent s’y recharger au lieu de brûler du charbon.', m('recharge')),
       n('chenilles3', 'Chenilles III', 'chenilles', 4, 1, 5, { moteur: 10, engrenage: 40 }, ['chenilles2'], 'Le robot roule 2 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 2 }),
     ],
   },
@@ -125,9 +126,10 @@ export const BRANCHES: Branch[] = [
       n('assembleur_elec', 'Assembleur électrique', 'assembleur_elec', 5, 0, 4, { cable: 40, engrenage: 40 }, ['tour_elec'], 'Tes assembleurs marchent au courant quand un câble les relie à un générateur : plus de charbon à livrer. Chacune consomme 150 kW quand elle travaille.', elec('assembleur')),
       n('fabricant_elec', 'Fabricant électrique', 'fabricant_elec', 5, 1, 4, { cable: 60, moteur: 10 }, ['haut_fourneau_elec'], 'Tes fabricants marchent au courant quand un câble les relie à un générateur : plus de charbon à livrer. Chacune consomme 300 kW quand elle travaille.', elec('fabricant')),
       n('centrifugeuse_elec', 'Centrifugeuse électrique', 'centrifugeuse_elec', 5, 2, 6, { cable: 80, processeur: 20 }, ['raffinerie_elec'], 'Tes centrifugeuses marchent au courant quand un câble les relie à un générateur : plus de charbon à livrer. Chacune consomme 400 kW quand elle travaille.', elec('centrifugeuse')),
+      n('pompe', 'Pompe à eau', 'pompe', 6, 2, 5, { tuyau_acier: 40, moteur: 5 }, ['melangeur_elec'], 'La Pompe à eau : posée sur un lac, elle envoie 40 L/s dans les tuyaux (outil Câble → Tuyau). Un mélangeur arrosé travaille moitié plus vite ; le réacteur en a besoin pour refroidir.', m('pompe')),
       n('batterie', 'Batteries', 'batterie', 6, 0, 5, { batterie: 20 }, ['assembleur_elec'], 'La Batterie : elle garde le surplus des panneaux solaires (jusqu’à 10 kWh) et le rend quand le soleil se couche, avant de brûler du charbon.', m('batterie')),
       n('solaire', 'Solaire', 'solaire', 7, 0, 5, { panneau_solaire: 10 }, ['batterie'], 'Le Panneau solaire : 120 kW gratuits en plein jour, de moins en moins au crépuscule, rien la nuit. Les batteries gardent le surplus pour la nuit.', m('solaire')),
-      n('reacteur', 'Réacteur', 'reacteur', 8, 1, 7, { reacteur: 1 }, ['solaire'], 'Fonctionne à l’uranium enrichi. Fin de partie.', soon),
+      n('reacteur', 'Réacteur', 'reacteur', 8, 1, 7, { reacteur: 1 }, ['solaire'], 'Le Réacteur (3 × 3) : 2,4 MW avec des barreaux d’uranium enrichi (un barreau = 2 minutes à pleine charge), apportés par tapis. Il doit être refroidi : relie-le par un tuyau à une pompe (20 L/s), sinon il s’arrête.', m('centrale')),
     ],
   },
   {

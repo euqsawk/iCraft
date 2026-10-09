@@ -49,7 +49,7 @@ export function span(b: { jump?: number }): number {
   return 1 + (b.jump ?? 0);
 }
 
-export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore' | 'nopower';
+export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore' | 'nopower' | 'nowater';
 
 export interface Machine {
   id: number;
@@ -91,6 +91,8 @@ export interface Machine {
   power?: number;
   /** Batterie : énergie gardée, en kJ. */
   charge?: number;
+  /** Eau reçue par les tuyaux (0 à 1 : la part de ce qu'elle demande). Non sauvegardé. */
+  water?: number;
   /** Atelier (module) : l'usine rangée dedans, et le côté de son intérieur en cases. */
   inner?: Factory;
   size?: number;
@@ -151,6 +153,15 @@ export interface PowerNet {
   solar: number;
   stored: number;
   capacity: number;
+  demand: number;
+  ratio: number;
+}
+
+/** Un réseau d'eau : des tuyaux reliés, des pompes et les machines qui boivent (en L/s). */
+export interface WaterNet {
+  pumps: Machine[];
+  users: Machine[];
+  supply: number;
   demand: number;
   ratio: number;
 }
@@ -221,6 +232,7 @@ export class Factory {
 
   /** Puissance demandée par la machine quand elle travaille, en kW (0 : elle ne se branche pas). */
   powerUse(m: Machine): number {
+    if (machineDef(m.type).kind === 'charger') return RULES.chargerKw;
     if (m.inner) return this.electric.size ? this.innerKw(m) : 0;
     return this.electric.has(m.type) ? machineDef(m.type).kw ?? 100 : 0;
   }
@@ -418,9 +430,13 @@ export class Factory {
           if (!overBelts) return { ok: false, reason: 'Place occupée' };
           belts++;
         }
+        if (def.kind === 'pump') {
+          const p = this.world.patchAt(cx, cy);
+          if (p?.type === 'eau') { const e = oreCount.get('eau') ?? { n: 0, rate: 1 }; e.n++; oreCount.set('eau', e); }
+        }
         if (def.kind === 'drill') {
           const p = this.world.patchAt(cx, cy);
-          if (p) {
+          if (p && p.type !== 'eau') {
             const e = oreCount.get(p.type) ?? { n: 0, rate: RICHNESS_RATE[p.richness] };
             e.n++;
             e.rate = Math.max(e.rate, RICHNESS_RATE[p.richness]);
@@ -428,6 +444,10 @@ export class Factory {
           }
         }
       }
+    }
+    if (def.kind === 'pump') {
+      if ((oreCount.get('eau')?.n ?? 0) < 2) return { ok: false, reason: 'À poser sur de l’eau' };
+      return { ok: true, belts };
     }
     if (def.kind === 'drill') {
       let best: [string, { n: number; rate: number }] | null = null;
@@ -724,6 +744,90 @@ export class Factory {
     }
   }
 
+  // ---------- Eau ----------
+
+  /** Tuyaux : une couche à part, comme les câbles ; ils relient les machines qu'ils touchent (dessous ou à côté). */
+  readonly pipes = new Set<number>();
+  private waterNets: WaterNet[] = [];
+  private waterOfMachine = new Map<Machine, WaterNet>();
+
+  hasPipe(x: number, y: number): boolean {
+    return this.pipes.has(key(x, y));
+  }
+
+  addPipe(x: number, y: number): boolean {
+    const k = key(x, y);
+    if (this.pipes.has(k)) return false;
+    this.pipes.add(k);
+    this.dirty = true;
+    return true;
+  }
+
+  removePipe(x: number, y: number): boolean {
+    const ok = this.pipes.delete(key(x, y));
+    if (ok) this.dirty = true;
+    return ok;
+  }
+
+  /** Eau demandée par une machine quand elle travaille (L/s). */
+  waterUse(m: Machine): number {
+    const k = machineDef(m.type).kind;
+    if (k === 'reactor') return RULES.reactorWater;
+    if (m.type === 'melangeur') return RULES.mixerWater;
+    return 0;
+  }
+
+  /** Le réseau d'eau d'une machine (null sans tuyau qui la touche). */
+  waterNetOf(m: Machine): WaterNet | null {
+    this.refresh();
+    return this.waterOfMachine.get(m) ?? null;
+  }
+
+  private buildWaterNets(): void {
+    const parent = new Map<number, number>();
+    const find = (k: number): number => { let r = k; while (parent.get(r) !== r) r = parent.get(r)!; return r; };
+    for (const k of this.pipes) parent.set(k, k);
+    for (const k of this.pipes) {
+      const [x, y] = unkey(k);
+      for (const [dx, dy] of [[1, 0], [0, 1]]) {
+        const n = key(x + dx, y + dy);
+        if (this.pipes.has(n)) { const a = find(k), b = find(n); if (a !== b) parent.set(a, b); }
+      }
+    }
+    const nets = new Map<number, WaterNet>();
+    this.waterOfMachine.clear();
+    for (const m of this.machines.values()) {
+      const kind = machineDef(m.type).kind;
+      if (kind !== 'pump' && !this.waterUse(m)) continue;
+      let root = -1;
+      for (let y = m.y - 1; y <= m.y + m.h && root < 0; y++) {
+        for (let x = m.x - 1; x <= m.x + m.w && root < 0; x++) {
+          const corner = (x < m.x || x >= m.x + m.w) && (y < m.y || y >= m.y + m.h);
+          if (!corner && this.pipes.has(key(x, y))) root = find(key(x, y));
+        }
+      }
+      if (root < 0) continue;
+      let n = nets.get(root);
+      if (!n) { n = { pumps: [], users: [], supply: 0, demand: 0, ratio: 0 }; nets.set(root, n); }
+      if (kind === 'pump') n.pumps.push(m); else n.users.push(m);
+      this.waterOfMachine.set(m, n);
+    }
+    this.waterNets = [...nets.values()];
+  }
+
+  /** L'eau de chaque réseau : les pompes posées sur l'eau servent les machines qui en veulent. */
+  private stepWater(): void {
+    for (const m of this.machines.values()) m.water = 0;
+    for (const n of this.waterNets) {
+      let supply = 0, demand = 0;
+      for (const p of n.pumps) if (p.built) { supply += RULES.pumpWater; p.status = 'working'; }
+      for (const u of n.users) if (u.built) demand += this.waterUse(u);
+      const ratio = supply <= 0 ? 0 : demand <= 0 ? 1 : Math.min(1, supply / demand);
+      for (const u of n.users) u.water = ratio;
+      n.supply = supply; n.demand = demand; n.ratio = ratio;
+    }
+  }
+
   // ---------- Électricité ----------
 
   hasCable(x: number, y: number): boolean {
@@ -845,6 +949,7 @@ export class Factory {
         if (!g.built) continue;
         const d = machineDef(g.type);
         if (d.kind === 'solar') solar += d.supply! * this.daylight;
+        else if (d.kind === 'reactor') { if ((g.inBuf.uranium_enrichi ?? 0) > 0 || g.burn > 0) coal += d.supply! * (g.water ?? 0); }
         else if (g.fuel > 0 || g.burn > 0) coal += d.supply!;
       }
       for (const b of n.batteries) {
@@ -875,20 +980,38 @@ export class Factory {
       // Chaque générateur brûle selon ce qui lui reste à fournir.
       const load = coal > 0 ? Math.min(1, fromCoal / coal) : 0;
       for (const g of n.gens) {
-        if (machineDef(g.type).kind === 'solar') g.status = this.daylight > 0.05 ? 'working' : 'idle';
+        const gk = machineDef(g.type).kind;
+        if (gk === 'solar') g.status = this.daylight > 0.05 ? 'working' : 'idle';
+        else if (gk === 'reactor') this.tickReactor(g, load, dt);
         else this.tickGenerator(g, load, dt);
       }
     }
     for (const m of this.machines.values()) {
       const k = machineDef(m.type).kind;
       if (!m.built || this.netOfMachine.has(m)) continue;
-      if (k === 'solar') m.status = 'idle';
-      if (k === 'battery') m.status = 'idle';
+      if (k === 'solar' || k === 'battery' || k === 'charger') m.status = 'idle';
+      if (k === 'reactor') m.status = (m.water ?? 0) > 0 ? 'idle' : 'nowater';
     }
     // Un générateur sans câble ne sert à rien.
     for (const m of this.machines.values()) {
       if (machineDef(m.type).kind === 'generator' && m.built && !this.netOfMachine.has(m)) m.status = m.fuel > 0 ? 'idle' : 'nofuel';
     }
+  }
+
+  /** Réacteur : un barreau d'uranium enrichi dure 2 minutes à pleine charge ; sans eau, il s'arrête. */
+  private tickReactor(g: Machine, load: number, dt: number): void {
+    if (!g.built) return;
+    if ((g.water ?? 0) <= 0) { g.status = 'nowater'; return; }
+    if (load <= 0) { g.status = (g.inBuf.uranium_enrichi ?? 0) > 0 || g.burn > 0 ? 'idle' : 'nofuel'; return; }
+    if (g.burn <= 0) {
+      if (!((g.inBuf.uranium_enrichi ?? 0) > 0)) { g.status = 'nofuel'; return; }
+      g.inBuf.uranium_enrichi--;
+      if (!g.inBuf.uranium_enrichi) delete g.inBuf.uranium_enrichi;
+      g.burn += RULES.reactorRodSeconds;
+      this.flow(g, 'uranium_enrichi', 1, false);
+    }
+    g.burn -= dt * load;
+    g.status = 'working';
   }
 
   private tickGenerator(g: Machine, load: number, dt: number): void {
@@ -954,6 +1077,7 @@ export class Factory {
     }
 
     this.buildNets();
+    this.buildWaterNets();
 
     // Ordre de mise à jour : l'aval d'abord, pour que les objets avancent en file.
     const visited = new Set<Belt>();
@@ -1102,6 +1226,7 @@ export class Factory {
     if (def.kind === 'port_out') return !!this.host && this.bufCount(this.host.outBuf) < ATELIER_BUFFER;
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) return true;
     if (def.kind === 'atelier') return this.bufCount(m.inBuf) < ATELIER_BUFFER && this.atelierWants(m, item);
+    if (def.kind === 'reactor') return item === 'uranium_enrichi' && (m.inBuf[item] ?? 0) < RULES.fuelStack;
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
@@ -1276,11 +1401,13 @@ export class Factory {
       }
     }
 
+    this.stepWater();
     this.stepPower(dt);
     for (const m of this.machines.values()) {
       if (!m.built) continue;
       const def = machineDef(m.type);
-      m.want = false;
+      m.want = def.kind === 'charger';
+      if (def.kind === 'charger') m.status = (m.power ?? 0) > 0 ? 'working' : 'nopower';
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
       else if (def.kind === 'atelier') this.tickAtelier(m, def, dt);
@@ -1346,7 +1473,8 @@ export class Factory {
         // Une raffinerie à carburant démarre même à vide : elle brûlera ce qu'elle produit.
         if (k <= 0 && this.selfFed(m)) k = 1;
         if (k <= 0) { m.status = this.noEnergy(m); return; }
-        m.craft.t += dt * k;
+        // Un mélangeur arrosé (tuyau d'eau) travaille moitié plus vite.
+        m.craft.t += dt * k * (m.type === 'melangeur' && (m.water ?? 0) > 0 ? 1 + 0.5 * m.water! : 1);
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
       // Le carburant qu'elle produit remplit d'abord sa propre case carburant.
@@ -1535,6 +1663,7 @@ export class Factory {
     return {
       nextId: this.nextId,
       cables: [...this.cables],
+      pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '']),
@@ -1550,6 +1679,8 @@ export class Factory {
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
     for (const k of s.cables ?? []) this.cables.add(k);
+    this.pipes.clear();
+    for (const k of s.pipes ?? []) this.pipes.add(k);
     for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
@@ -1602,6 +1733,7 @@ export class Factory {
 export interface FactorySave {
   nextId: number;
   cables?: number[];
+  pipes?: number[];
   lines?: Line[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?][];

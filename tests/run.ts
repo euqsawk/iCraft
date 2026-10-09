@@ -47,8 +47,8 @@ function fuelAll(g: Game): void {
 }
 
 console.log('Données');
-test('46 objets (45 + fusée), recettes cohérentes', () => {
-  assert(ITEM_LIST.length === 46, `objets : ${ITEM_LIST.length}`);
+test('les objets (et l’eau), recettes cohérentes', () => {
+  assert(ITEM_LIST.length >= 47 && new Set(ITEM_LIST.map((i) => i.id)).size === ITEM_LIST.length, `objets : ${ITEM_LIST.length}`);
   const ids = new Set(ITEM_LIST.map((i) => i.id));
   for (const m of Object.values(MACHINES)) for (const r of m.recipes) {
     for (const k of [...Object.keys(r.in), ...Object.keys(r.out)]) assert(ids.has(k), `${m.id} : ${k} inconnu`);
@@ -964,6 +964,52 @@ test('tri : seul l’objet choisi part de côté ; entrepôt ; statistiques et s
   assert(g.ratePerMinute('lingot_fer', 60) > 0, 'débit par minute');
   const g3 = new Game('TEST-T1', JSON.parse(JSON.stringify(g.serialize())));
   assert(g3.achievements.has('lingot') && (g3.factory.stats.made.lingot_fer ?? 0) >= 3, 'stats et succès sauvegardés');
+});
+test('eau : pompe sur le lac, tuyaux, réacteur refroidi ; hangar à trois drones ; recharge', () => {
+  const g = new Game('TEST-W1');
+  const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  g.money = 1e6; g.world.reveal(8, -16, 30); g.drones[0].cargo = null;
+  for (const id of ['generateur', 'pompe', 'reacteur', 'presse', 'presse_elec', 'hangar', 'recharge', 'drone3']) g.unlocks.add(id);
+  apply();
+  assert(g.world.patchAt(8, -24)?.type === 'eau', 'un lac près du départ');
+  assert(!g.placeMachine('pompe', 20, -10), 'une pompe se pose sur l’eau');
+  assert(!g.placeMachine('foreuse', 7, -25), 'pas de foreuse sur l’eau');
+  const pump = g.placeMachine('pompe', 7, -25)!;
+  const reac = g.placeMachine('centrale', 14, -25)!;
+  const pr = g.placeMachine('presse', 19, -25)!;
+  assert(pump && reac && pr, 'posés');
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  reac.inBuf = { uranium_enrichi: 3 };
+  pr.inBuf = { lingot_fer: 10 }; pr.fuel = 0;
+  assert(g.placeCables([{ x: 17, y: -24 }]), 'câble réacteur → presse');
+  run(g, 3);
+  assert(reac.status === 'nowater' && !(pr.power ?? 0), `sans eau, le réacteur ne démarre pas : ${reac.status}`);
+  assert(g.placePipes([9, 10, 11, 12, 13].map((x) => ({ x, y: -24 }))), 'tuyaux');
+  run(g, 5);
+  const net = g.factory.waterNetOf(reac)!;
+  assert(net && net.supply === 40 && reac.water === 1, `eau : ${net?.supply} L/s, ${reac.water}`);
+  assert(reac.status === 'working' && (pr.power ?? 0) === 1, `le réacteur alimente la presse : ${reac.status}`);
+  assert((reac.inBuf.uranium_enrichi ?? 0) === 2, 'un barreau entamé');
+  const g2 = new Game('TEST-W1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.pipes.size === 5, 'tuyaux sauvegardés');
+  assert(g.removeAt(11, -24) && !g.factory.hasPipe(11, -24), 'la gomme retire un tuyau');
+  g.placePipes([{ x: 11, y: -24 }]);
+  // Hangar : trois drones.
+  const hg = g.placeMachine('hangar', 30, -10)!;
+  hg.built = true; g.pending = []; g.factory.markBuilt(); g.factory.addFuel(hg, 50);
+  run(g, 1);
+  assert([...g.stationDrones.values()].filter((d) => d.station === hg.id).length === 3, 'trois drones au hangar');
+  // Recharge : un drone presque vide se recharge au courant.
+  const ch = g.placeMachine('recharge', 10, -18)!;
+  ch.built = true; g.pending = []; g.factory.markBuilt();
+  g.placeCables([12, 13, 14].map((x) => ({ x, y: -20 })));
+  g.placeCables([{ x: 14, y: -21 }, { x: 14, y: -22 }, { x: 15, y: -22 }, { x: 16, y: -22 }, { x: 17, y: -22 }, { x: 17, y: -23 }]);
+  g.robot.x = 10; g.robot.y = -15;
+  const d = g.drones[0];
+  d.fuel = 1; d.carb = 0; d.task = null; d.state = 'home';
+  run(g, 15);
+  assert(d.fuel >= 9 || d.fuel === RULES.fuelStack, `drone rechargé : ${d.fuel} (recharge ${ch.status})`);
 });
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {

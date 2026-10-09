@@ -68,6 +68,8 @@ export type DroneTask =
 
   /** Recharger une machine en charbon. */
   | { kind: 'refuel'; id: number }
+  /** Le drone va se recharger à une station de recharge (au courant, sans charbon). */
+  | { kind: 'recharge'; id: number }
   /** Déposer la cargaison (minerai du robot) dans une machine ou un coffre. */
   | { kind: 'deliver'; id: number };
 
@@ -198,7 +200,7 @@ export interface GameSave {
 }
 
 /** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte, avec le robot et les drones). */
-const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie']);
+const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar']);
 
 export class Game {
   readonly world: World;
@@ -972,6 +974,7 @@ export class Game {
     }
     for (const m of machines) if (this.view.machines.has(m.id) && this.removeMachine(m)) n++;
     for (const c of cables) if (this.view.removeCable(c.x, c.y)) { this.earn(RULES.cableCost); n++; }
+    for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) if (this.view.removePipe(x, y)) { this.earn(RULES.pipeCost); n++; }
     if (n) this.emit({ type: 'factory' });
     return n;
   }
@@ -1004,9 +1007,14 @@ export class Game {
     }
     const m = this.view.machineAt(x, y);
     if (m) return this.removeMachine(m);
-    // Le câble en dernier (il passe sous le reste).
+    // Le câble et le tuyau en dernier (ils passent sous le reste).
     if (this.view.removeCable(x, y)) {
       this.earn(RULES.cableCost);
+      this.emit({ type: 'factory' });
+      return true;
+    }
+    if (this.view.removePipe(x, y)) {
+      this.earn(RULES.pipeCost);
       this.emit({ type: 'factory' });
       return true;
     }
@@ -1149,6 +1157,20 @@ export class Game {
     if (!fresh.length) return false;
     if (!this.spend(fresh.length * RULES.cableCost)) return false;
     for (const c of fresh) this.factory.addCable(c.x, c.y);
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Tuyaux d'eau : comme les câbles (3 pièces la case), ils relient les pompes aux machines qu'ils touchent. */
+  placePipes(cells: { x: number; y: number }[]): boolean {
+    if (!this.isUnlocked('pompe')) {
+      this.emit({ type: 'toast', text: 'Tuyaux : débloque la Pompe à eau dans l’arbre (Énergie)', tone: 'warn' });
+      return false;
+    }
+    const fresh = cells.filter((c) => !this.factory.hasPipe(c.x, c.y));
+    if (!fresh.length) return false;
+    if (!this.spend(fresh.length * RULES.pipeCost)) return false;
+    for (const c of fresh) this.factory.addPipe(c.x, c.y);
     this.emit({ type: 'factory' });
     return true;
   }
@@ -1396,7 +1418,7 @@ export class Game {
     r.mining = null;
     if (!r.target && !this.robotBuilding) {
       const p = this.world.patchAt(Math.floor(r.x), Math.floor(r.y));
-      if (p && r.inv.room(p.type) > 0) {
+      if (p && p.type !== 'eau' && r.inv.room(p.type) > 0) {
         r.mining = p.type;
         r.active = true;
         r.mineT += dt * power * RULES.robotMineRate * RICHNESS_RATE[p.richness];
@@ -1664,24 +1686,42 @@ export class Game {
   }
 
   /** Une station construite a son drone ; une station retirée l'emporte avec elle. */
+  /** Combien de drones a une station (trois pour un hangar). */
+  stationCapacity(m: Machine): number {
+    return m.type === 'hangar' ? RULES.hangarDrones : 1;
+  }
+
+  /** Clé d'un drone de station : le numéro de la station, puis + 1 000 000 par drone en plus (hangar). */
+  stationKey(id: number, k: number): number {
+    return id + k * 1_000_000;
+  }
+
   private syncStations(): void {
     for (const m of this.factory.machines.values()) {
-      if (m.type !== 'station' || !m.built || this.stationDrones.has(m.id)) continue;
-      const c = this.center(m);
-      this.stationDrones.set(m.id, { x: c.x, y: c.y - 1, station: m.id, state: 'home', task: null, t: 0, slot: 0, fuel: RULES.fuelStack, burn: 0, cargo: null, priorities: [...DEFAULT_ORDER] });
+      if (machineDef(m.type).kind !== 'station' || !m.built) continue;
+      const n = this.stationCapacity(m);
+      for (let k = 0; k < n; k++) {
+        const key = this.stationKey(m.id, k);
+        if (this.stationDrones.has(key)) continue;
+        const c = this.center(m);
+        this.stationDrones.set(key, { x: c.x + (k - (n - 1) / 2) * 0.8, y: c.y - 1, station: m.id, state: 'home', task: null, t: 0, slot: k, fuel: RULES.fuelStack, burn: 0, cargo: null, priorities: [...DEFAULT_ORDER] });
+      }
     }
-    for (const id of this.stationDrones.keys()) {
-      const m = this.factory.machines.get(id);
-      if (!m || m.type !== 'station' || !m.built) this.stationDrones.delete(id);
+    for (const [key, d] of this.stationDrones) {
+      const m = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
+      const k = Math.floor(key / 1_000_000);
+      if (!m || machineDef(m.type).kind !== 'station' || !m.built || k >= this.stationCapacity(m)) this.stationDrones.delete(key);
     }
   }
 
   setStationPriorities(id: number, list: DronePriority[]): void {
-    const d = this.stationDrones.get(id);
-    if (!d) return;
-    d.priorities = cleanOrder(list);
-    d.task = null;
-    if (d.state === 'fly') d.state = 'home';
+    // Tous les drones de la station (trois pour un hangar) prennent le même ordre.
+    for (const d of this.stationDrones.values()) {
+      if (d.station !== id) continue;
+      d.priorities = cleanOrder(list);
+      d.task = null;
+      if (d.state === 'fly') d.state = 'home';
+    }
   }
 
   private near(p: { x: number; y: number }, range = this.anchor.build): boolean {
@@ -1754,8 +1794,12 @@ export class Game {
     const others = this.allDrones().filter((o) => o !== d && o.task);
     const reservedFuel = new Set(others.map((o) => (o.task!.kind === 'refuel' ? o.task!.id : -1)));
 
-    // Son propre carburant d'abord, toujours.
+    // Son propre carburant d'abord, toujours : une recharge reliée au courant, à portée, sinon du charbon.
     if (d.fuel <= 3) {
+      const ch = [...this.factory.machines.values()]
+        .filter((m) => m.built && machineDef(m.type).kind === 'charger' && (m.power ?? 0) > 0 && this.near(this.center(m), this.anchor.supply))
+        .sort((a, b) => Math.hypot(this.center(a).x - d.x, this.center(a).y - d.y) - Math.hypot(this.center(b).x - d.x, this.center(b).y - d.y))[0];
+      if (ch) return { kind: 'recharge', id: ch.id };
       const fs = this.fuelSource(d);
       if (fs) return { kind: 'fetch', from: fs.src, item: fs.item, self: true };
     }
@@ -1858,6 +1902,9 @@ export class Game {
         }
       }
 
+    } else if (t.kind === 'recharge') {
+      const m = f.machines.get(t.id);
+      if (m && (m.power ?? 0) > 0) { d.fuel = RULES.fuelStack; d.carb = 0; d.burn = RULES.coalDroneSeconds; }
     } else if (t.kind === 'refuel' && d.cargo && isFuel(d.cargo.t)) {
       const m = f.machines.get(t.id);
       if (m) d.cargo.n -= f.addFuel(m, d.cargo.n);

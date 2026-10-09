@@ -125,6 +125,28 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
   const ink = PALETTE.ink, coral = PALETTE.coral;
   const st = { width: 3, color: ink, cap: 'round' as const, join: 'round' as const };
   switch (type) {
+    case 'pompe':
+      g.roundRect(-12, -6, 24, 16, 4).fill(0x7cc3f0).stroke({ width: 2.6, color: ink });
+      g.rect(-3, -14, 6, 9).fill(ink);
+      g.moveTo(-8, 3).quadraticCurveTo(-4, -1, 0, 3).quadraticCurveTo(4, 7, 8, 3).stroke({ width: 2, color: 0xffffff, cap: 'round' });
+      break;
+    case 'centrale': {
+      // Une tour de refroidissement et l'atome.
+      g.moveTo(-14, 18).quadraticCurveTo(-8, 0, -12, -16).lineTo(12, -16).quadraticCurveTo(8, 0, 14, 18).closePath().fill(0xdfe7ee).stroke({ width: 3, color: ink, join: 'round' });
+      g.circle(0, 2, 4).fill(0x7fa33b).stroke({ width: 1.8, color: ink });
+      g.ellipse(0, 2, 10, 4).stroke({ width: 1.6, color: ink });
+      break;
+    }
+    case 'recharge':
+      g.roundRect(-12, -9, 24, 18, 5).fill(0xffffff).stroke({ width: 2.6, color: ink });
+      g.moveTo(-6, -2).lineTo(6, -2).moveTo(0, -2).lineTo(0, -6).stroke({ width: 2, color: ink, cap: 'round' });
+      drawBolt(g, 0, 4, 0.5);
+      break;
+    case 'hangar':
+      g.moveTo(-20, 12).lineTo(-20, -2).quadraticCurveTo(0, -22, 20, -2).lineTo(20, 12).closePath().fill(0xdfe7ee).stroke({ width: 3, color: ink, join: 'round' });
+      g.rect(-9, 0, 18, 12).fill(0x8a99ad);
+      g.circle(0, -8, 4.5).fill(0xffffff).stroke({ width: 2, color: coral });
+      break;
     case 'lampadaire':
       g.moveTo(0, 9).lineTo(0, -5).stroke({ width: 2.4, color: ink, cap: 'round' });
       g.moveTo(-4, 9).lineTo(4, 9).stroke({ width: 2.4, color: ink, cap: 'round' });

@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger';
 
 export interface MachineDef {
   id: string;
@@ -180,6 +180,22 @@ export const MACHINES: Record<string, MachineDef> = {
   comptoir: {
     id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
     hint: 'Des commandes au choix, payées en pièces',
+  },
+  pompe: {
+    id: 'pompe', name: 'Pompe à eau', kind: 'pump', coal: false, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
+    hint: 'Posée sur de l’eau : 40 L/s dans les tuyaux qui la touchent',
+  },
+  centrale: {
+    id: 'centrale', name: 'Réacteur', kind: 'reactor', coal: false, w: 3, h: 3, cost: 1500, unlock: 1, recipes: [], buildable: true, supply: 2400,
+    hint: '2,4 MW à l’uranium enrichi ; il doit être refroidi par l’eau d’une pompe (20 L/s)',
+  },
+  recharge: {
+    id: 'recharge', name: 'Recharge des drones', kind: 'charger', coal: false, w: 2, h: 2, cost: 200, unlock: 1, recipes: [], buildable: true,
+    hint: 'Reliée au courant : les drones autour s’y rechargent au lieu de brûler du charbon',
+  },
+  hangar: {
+    id: 'hangar', name: 'Hangar', kind: 'station', coal: true, w: 3, h: 3, cost: 500, unlock: 1, recipes: [], buildable: true,
+    hint: 'Une station à trois drones',
   },
   entrepot: {
     id: 'entrepot', name: 'Entrepôt', kind: 'storage', coal: false, w: 3, h: 3, cost: 300, unlock: 1, recipes: [], buildable: true,

@@ -32,6 +32,7 @@ const RAW: ItemDef[] = [
   { id: 'petrole', name: 'Pétrole', plural: 'barils de pétrole', color: 0x2b2f38, patch: 0xa9adb6, shape: 'drop', tier: 0, value: 3, rarity: 'peu commune' },
   { id: 'or', name: "Minerai d'or", plural: "minerais d'or", color: 0xd4a72c, patch: 0xf1dc9c, shape: 'ore', tier: 0, value: 8, rarity: 'rare' },
   { id: 'uranium', name: 'Uranium', plural: "minerais d'uranium", color: 0x7fa33b, patch: 0xcbdcae, shape: 'ore', tier: 0, value: 10, rarity: 'rare' },
+  { id: 'eau', name: 'Eau', plural: 'eau', color: 0x3d8fd1, patch: 0xa9d6f2, shape: 'drop', tier: 0, value: 0 },
 ];
 
 const MADE: ItemDef[] = [
@@ -82,7 +83,9 @@ const MADE: ItemDef[] = [
 
 export const ITEMS: Record<string, ItemDef> = Object.fromEntries([...RAW, ...MADE].map((d) => [d.id, d]));
 export const ITEM_LIST: ItemDef[] = [...RAW, ...MADE];
-export const RAW_IDS: string[] = RAW.map((d) => d.id);
+/** L'eau : un liquide, pompé dans les tuyaux, jamais sur un tapis. */
+export const FLUIDS = new Set(['eau']);
+export const RAW_IDS: string[] = RAW.map((d) => d.id).filter((id) => !FLUIDS.has(id));
 
 export function item(id: string): ItemDef {
   const d = ITEMS[id];

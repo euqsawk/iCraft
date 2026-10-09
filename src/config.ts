@@ -61,6 +61,17 @@ export const RULES = {
   /** Batterie : ce qu'elle garde (kJ ; 36 000 kJ = 10 kWh) et ce qu'elle peut donner ou prendre à la fois (kW). */
   batteryKj: 36000,
   batteryKw: 200,
+  /** Eau : une pompe donne 40 L/s ; un réacteur en boit 20, un mélangeur 5 (il travaille alors moitié plus vite). */
+  pumpWater: 40,
+  reactorWater: 20,
+  mixerWater: 5,
+  pipeCost: 3,
+  /** Réacteur : un barreau d'uranium enrichi dure 2 minutes à pleine charge. */
+  reactorRodSeconds: 120,
+  /** Station de recharge : ce qu'elle tire du réseau. */
+  chargerKw: 80,
+  /** Hangar : nombre de drones. */
+  hangarDrones: 3,
   /** Le carburant dure 5 fois plus longtemps qu'un charbon (et brûle en premier). */
   carburantMult: 5,
   /** Véhicules : prix d'une case de route ou de rail, prix du véhicule, charge, vitesse (cases par seconde). */

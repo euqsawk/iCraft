@@ -52,6 +52,7 @@ const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
   | { kind: 'cable'; tracer: CableTracer }
+  | { kind: 'pipe'; tracer: CableTracer }
   | { kind: 'tunnel'; tracer: TunnelTracer }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
@@ -110,6 +111,10 @@ export class GameRenderer {
   electric = false;
   /** Câbles visibles hors du mode électricité (gomme) ; sinon ils restent cachés. */
   showCables = false;
+  /** Outil Tuyau : les tuyaux ressortent (le reste pâlit un peu). */
+  waterView = false;
+  /** Tuyaux d'eau : au sol, sous les tapis, toujours visibles. */
+  private pipeG = new Graphics();
   private electricOn = false;
   /** Câbles et machines du réseau, par-dessus le voile, en mode électricité. */
   private powerG = new Graphics();
@@ -194,7 +199,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -390,8 +395,35 @@ export class GameRenderer {
     ];
   }
 
+  /** Les tuyaux : un double trait bleu de case en case, avec un raccord rond aux bouts et aux croisements. */
+  private drawPipes(): void {
+    const g = this.pipeG, f = this.game.view;
+    g.clear();
+    if (!f.pipes.size) return;
+    const segs: [number, number, number, number][] = [];
+    const joints: [number, number][] = [];
+    for (const k of f.pipes) {
+      const [x, y] = unkey(k);
+      const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
+      let links = 0;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + DX[d], ny = y + DY[d];
+        const m = f.machineAt(nx, ny);
+        if (f.hasPipe(nx, ny)) { links++; if (d < 2) segs.push([cx, cy, cx + DX[d] * CELL, cy + DY[d] * CELL]); }
+        else if (m && (machineDef(m.type).kind === 'pump' || f.waterUse(m))) { links++; segs.push([cx, cy, cx + DX[d] * CELL * 0.6, cy + DY[d] * CELL * 0.6]); }
+      }
+      if (links !== 2) joints.push([cx, cy]);
+    }
+    for (const [a, b, c, d] of segs) g.moveTo(a, b).lineTo(c, d);
+    g.stroke({ width: 8, color: 0x2b5f8a, cap: 'round', join: 'round' });
+    for (const [a, b, c, d] of segs) g.moveTo(a, b).lineTo(c, d);
+    g.stroke({ width: 4.5, color: 0x7cc3f0, cap: 'round', join: 'round' });
+    for (const [x, y] of joints) g.circle(x, y, 5.5).fill(0x2b5f8a).circle(x, y, 3).fill(0xbfe4fb);
+  }
+
   private redrawBelts(): void {
     this.beltsDirty = false;
+    this.drawPipes();
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
     for (const b of this.game.view.belts.values()) {
       if (!b.filter || b.split === undefined) continue;
@@ -1552,7 +1584,7 @@ export class GameRenderer {
     const R = RULES.stationRange * CELL;
     // Les machines à portée du drone de la station se teintent en vert.
     for (const m of this.game.view.machines.values()) {
-      if (m.type === 'station') continue;
+      if (machineDef(m.type).kind === 'station') continue;
       const mx = (m.x + m.w / 2) * CELL, my = (m.y + m.h / 2) * CELL;
       if (Math.hypot(mx - cx, my - cy) > R) continue;
       const r = m.w === 1 ? 8 : m.type === 'noyau' ? 18 : 15;
@@ -1649,6 +1681,16 @@ export class GameRenderer {
         dashedPolyline(g, cells.map((c) => ({ x: (c.x + 0.5) * CELL, y: (c.y + 0.5) * CELL })), 5, 4);
         g.stroke({ width: 2.5, color: pv.tracer.blocked ? PALETTE.coral : PALETTE.yellow, cap: 'round' });
       }
+    } else if (pv?.kind === 'pipe') {
+      const cells = pv.tracer.cells;
+      if (cells.length) {
+        g.moveTo((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL);
+        for (const c of cells.slice(1)) g.lineTo((c.x + 0.5) * CELL, (c.y + 0.5) * CELL);
+        if (cells.length === 1) g.circle((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL, 3);
+        g.stroke({ width: 9, color: 0x2b5f8a, alpha: 0.75, cap: 'round', join: 'round' });
+        dashedPolyline(g, cells.map((c) => ({ x: (c.x + 0.5) * CELL, y: (c.y + 0.5) * CELL })), 5, 4);
+        g.stroke({ width: 3, color: 0xbfe4fb, cap: 'round' });
+      }
     } else if (pv?.kind === 'trace') {
       const cells = pv.tracer.result();
       const ok = pv.tracer.valid && !pv.tracer.blocked;
@@ -1678,7 +1720,7 @@ export class GameRenderer {
       }
       g.stroke({ width: 2, color: PALETTE.coral, alpha: 0.8 });
       // Une station : son rayon d'action, en pointillés, pendant qu'on la pose ou la déplace.
-      if (pv.type === 'station') this.drawRange(g, x + W / 2, y + H / 2);
+      if (pv.type === 'station' || pv.type === 'hangar') this.drawRange(g, x + W / 2, y + H / 2);
       g.roundRect(x + 1, y + 1, W - 2, H - 2, 15).fill({ color: pv.ok ? PALETTE.white : 0xffd9d0, alpha: 0.85 });
       dashedPolyline(g, roundRectPoints(x + 1, y + 1, W - 2, H - 2, 15), 6, 5, true);
       g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.6 });
@@ -1716,7 +1758,7 @@ export class GameRenderer {
           .moveTo(cx - t, cy - a + t).lineTo(cx, cy - a).lineTo(cx + t, cy - a + t)
           .moveTo(cx - t, cy + a - t).lineTo(cx, cy + a).lineTo(cx + t, cy + a - t)
           .stroke({ width: 2, color: 0xffffff, cap: 'round', join: 'round' });
-        if (m.type === 'station' && !(this.preview?.kind === 'place')) this.drawRange(g, (m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
+        if (machineDef(m.type).kind === 'station' && !(this.preview?.kind === 'place')) this.drawRange(g, (m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
       }
     }
     // Fenêtre d'une station ouverte : son rayon d'action.
@@ -2107,6 +2149,7 @@ export class GameRenderer {
       const busy = m.status === 'working' ? 1 : 0.8;
       const flick = 0.95 + 0.05 * Math.sin(this.time * 3 + m.id);
       if (m.type === 'lampadaire') { glow(cx, cy, CELL * 5.5, 0xffe7b8, 1); continue; }
+      if (m.type === 'centrale' && m.status === 'working') { glow(cx, cy, CELL * 5, 0xc8ffd8, 0.9); continue; }
       glow(cx, cy, r, m.type === 'noyau' ? 0xffa58a : 0xffcf8f, 0.9 * busy * flick);
     }
     const rb = this.game.robot;

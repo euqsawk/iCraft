@@ -792,3 +792,5 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .ach-row small { font-size: 11.5px; font-weight: 700; color: var(--ink2); }
 .ach-ico { width: 30px; height: 30px; border-radius: 15px; background: #F0F5F2; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #9AA6B2; flex: none; }
 .ach-row.done .ach-ico { background: var(--yellow); color: var(--ink); }
+.pill.money { white-space: nowrap; flex: none; }
+.lvl-info { min-width: 0; }

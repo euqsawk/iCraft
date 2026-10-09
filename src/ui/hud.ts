@@ -25,7 +25,7 @@ import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
 
-type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'souterrain' | 'transport';
+type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'souterrain' | 'transport';
 
 const STATUS_TEXT: Record<string, string> = {
   idle: 'En attente',
@@ -35,6 +35,7 @@ const STATUS_TEXT: Record<string, string> = {
   noinput: 'Il manque un ingrédient',
   noore: 'Pas de filon dessous',
   nopower: 'Pas de courant : il faut un câble à 5 cases au plus, relié à un générateur qui a du charbon',
+  nowater: 'Pas d’eau : relie-le par un tuyau à une pompe posée sur un lac',
 };
 
 /** Le verbe d'une étape de fabrication à la main, selon la machine qu'on imite. */
@@ -375,7 +376,7 @@ export class Hud implements GestureHandlers {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery') return 'electricite';
+    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor' || m.kind === 'charger') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
     if (m.kind === 'storage' || m.kind === 'sell') return 'stockage';
     return 'outils';
@@ -389,7 +390,7 @@ export class Hud implements GestureHandlers {
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const inside = !!this.game.inAtelier;
-    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie'];
+    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar'];
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id))
       // Dans un atelier : ni foreuse, ni station, ni générateur, ni dépôt ; les entrées et sorties, seulement là.
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
@@ -527,7 +528,7 @@ export class Hud implements GestureHandlers {
     if (id === 'transport') { this.setTool('none'); this.openLines(); return; }
     const t = id as Tool;
     // Le bouton Tapis couvre aussi le sous-sol : on rouvre toujours sur les tapis normaux.
-    const same = this.tool === t || (t === 'tapis' && this.tool === 'souterrain') || (t === 'gomme' && this.tool === 'zone');
+    const same = this.tool === t || (t === 'tapis' && this.tool === 'souterrain') || (t === 'gomme' && this.tool === 'zone') || (t === 'cable' && this.tool === 'tuyau');
     this.setTool(same ? 'none' : t);
   }
 
@@ -541,6 +542,12 @@ export class Hud implements GestureHandlers {
       opts = [
         { label: 'Tapis', icon: ICONS.tapis, on: this.tool === 'tapis', locked: false, pick: () => this.setTool('tapis'), why: '' },
         { label: 'Sous-sol', icon: ICONS.sousSol, on: this.tool === 'souterrain', locked: false, pick: () => this.setTool('souterrain'), why: '' },
+      ];
+    }
+    if ((this.tool === 'cable' || this.tool === 'tuyau') && g.isUnlocked('pompe')) {
+      opts = [
+        { label: 'Câble', icon: ICONS.cable, on: this.tool === 'cable', locked: false, pick: () => this.setTool('cable'), why: '' },
+        { label: 'Tuyau', icon: ICONS.pipe, on: this.tool === 'tuyau', locked: false, pick: () => this.setTool('tuyau'), why: '' },
       ];
     }
     if (this.tool === 'gomme' || this.tool === 'zone') {
@@ -588,9 +595,10 @@ export class Hud implements GestureHandlers {
     this.r.underground = t === 'souterrain';
     // Câble : mode électricité, on voit les câbles sous les blocs et les machines alimentées.
     this.r.electric = t === 'cable';
+    this.r.waterView = t === 'tuyau';
     // Hors du mode câble, les câbles sont cachés (sauf avec la gomme, pour voir ce qu'on efface).
     this.r.showCables = t === 'gomme' || t === 'zone';
-    for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t || (id === 'tapis' && t === 'souterrain') || (id === 'gomme' && t === 'zone'));
+    for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t || (id === 'tapis' && t === 'souterrain') || (id === 'gomme' && t === 'zone') || (id === 'cable' && t === 'tuyau'));
     this.renderToolOpts();
     this.palette.classList.toggle('hidden', t !== 'machine');
     if (t === 'machine' && !this.machineType) {
@@ -632,7 +640,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && machineDef(m.type).kind === 'storage') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
-    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
+    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -704,7 +712,7 @@ export class Hud implements GestureHandlers {
   private dragAt: { x: number; y: number } | null = null;
 
   private tracing(): boolean {
-    return this.tool === 'tapis' || this.tool === 'souterrain' || this.tool === 'cable' || ((this.tool === 'zone' || this.tool === 'module') && !!this.zone && !this.root.querySelector('.zone-banner')) || this.tool === 'move' || (this.tool === 'machine' && this.palette.classList.contains('dragging'));
+    return this.tool === 'tapis' || this.tool === 'souterrain' || this.tool === 'cable' || this.tool === 'tuyau' || ((this.tool === 'zone' || this.tool === 'module') && !!this.zone && !this.root.querySelector('.zone-banner')) || this.tool === 'move' || (this.tool === 'machine' && this.palette.classList.contains('dragging'));
   }
 
   /** Pendant un tracé, le doigt près du bord de l'écran fait défiler la carte, et le tracé suit. */
@@ -727,16 +735,16 @@ export class Hud implements GestureHandlers {
   toolStart(sx: number, sy: number): void {
     this.closePopover();
     this.dragAt = { x: sx, y: sy };
-    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain') this.updateLoupe(sx, sy);
+    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'tuyau' || this.tool === 'souterrain') this.updateLoupe(sx, sy);
     const w = this.worldAt(sx, sy);
     if (this.tool === 'souterrain') {
       this.tunnelTracer = new TunnelTracer(this.game.view, this.game.world, w.x, w.y);
       this.r.preview = { kind: 'tunnel', tracer: this.tunnelTracer };
       const src = this.tunnelTracer.source;
       if (!src || !this.game.canSendUnder(src)) this.showBubble(sx, sy - 56, 'Pars d’un coffre ou d’une machine', true);
-    } else if (this.tool === 'cable') {
+    } else if (this.tool === 'cable' || this.tool === 'tuyau') {
       this.cableTracer = new CableTracer(this.game.world, w.x, w.y);
-      this.r.preview = { kind: 'cable', tracer: this.cableTracer };
+      this.r.preview = { kind: this.tool === 'tuyau' ? 'pipe' : 'cable', tracer: this.cableTracer };
     } else if (this.tool === 'tapis') {
       this.tracer = new BeltTracer(this.game.view, w.x, w.y);
       this.tracer.bridges = this.game.isUnlocked('pont');
@@ -884,6 +892,14 @@ export class Hud implements GestureHandlers {
       this.showBubble(sx, sy - 56, label, t.blocked || (!!t.target && this.game.money < price));
       return;
     }
+    if (this.tool === 'tuyau' && this.cableTracer) {
+      const t = this.cableTracer;
+      t.move(w.x, w.y);
+      const fresh = t.cells.filter((c) => !this.game.view.hasPipe(c.x, c.y)).length;
+      const price = fresh * RULES.pipeCost;
+      this.showBubble(sx, sy - 56, fresh ? `${fresh} tuyau${fresh > 1 ? 'x' : ''} · ${ICONS.coinSm}${price}` : 'Glisse pour tracer un tuyau', this.game.money < price);
+      return;
+    }
     if (this.tool === 'cable' && this.cableTracer) {
       const t = this.cableTracer;
       t.move(w.x, w.y);
@@ -940,6 +956,8 @@ export class Hud implements GestureHandlers {
         this.game.placeTunnel(this.tunnelTracer.source, this.tunnelTracer.target, this.tunnelTracer.cells);
       } else if (this.tool === 'cable' && this.cableTracer) {
         this.game.placeCables(this.cableTracer.cells);
+      } else if (this.tool === 'tuyau' && this.cableTracer) {
+        this.game.placePipes(this.cableTracer.cells);
       } else if (this.tool === 'tapis' && this.tracer?.linkMachine && this.tracer.startMachine) {
         this.game.linkMachines(this.tracer.startMachine, this.tracer.linkMachine);
       } else if (this.tool === 'tapis' && this.tracer?.linkBelt && this.tracer.linkDir !== null) {
@@ -1148,7 +1166,7 @@ export class Hud implements GestureHandlers {
         const match = (ids: string[]) => !q || ids.some((id) => norm(item(id).name).includes(q));
         let html = '';
         // Extraction : les filons qu'on a vus.
-        const raws = [...g.world.discovered].filter((id) => match([id]));
+        const raws = [...g.world.discovered].filter((id) => id !== 'eau' && match([id]));
         if (raws.length) {
           html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get('foreuse')}" alt=""><b>Foreuse</b><small>sur un filon découvert</small></div><div class="recipes">${raws.map((id) => `<div class="recipe"><span class="it">Filon</span><span class="arrow">→</span>${it(id, 1)}</div>`).join('')}</div></div>`;
         }
@@ -1592,7 +1610,8 @@ export class Hud implements GestureHandlers {
         status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(mm.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
       }
       if (def.kind === 'station') {
-        sheet.append(this.sheetHead('Station', `Son drone construit, recharge et livre dans un rayon de ${RULES.stationRange} cases autour d’elle.`, close));
+        const nd = g.stationCapacity(mm);
+        sheet.append(this.sheetHead(def.name, nd > 1 ? `Ses ${nd} drones construisent, rechargent et livrent dans un rayon de ${RULES.stationRange} cases autour de lui.` : `Son drone construit, recharge et livre dans un rayon de ${RULES.stationRange} cases autour d’elle.`, close));
         this.r.rangeOf = mm.id;
         const d = g.stationDrones.get(mm.id);
         const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
@@ -1641,6 +1660,30 @@ export class Hud implements GestureHandlers {
         mv.onclick = () => { close(); this.startMove(mm); };
         const refund = def.cost + (inner ? g.contentValue(inner) : 0);
         acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${refund}`, 'Toucher encore : ce qu’il contient sera perdu', close));
+        sheet.append(acts);
+        return;
+      }
+      if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'charger') {
+        const wn = g.view.waterNetOf(mm);
+        const waterLine = wn ? `Réseau d’eau : ${fmtN(wn.demand)} L/s demandés pour ${fmtN(wn.supply)} L/s pompés.` : 'Aucun tuyau ne la touche.';
+        const sub = def.kind === 'pump' ? `${status} 40 L/s. ${waterLine}`
+          : def.kind === 'reactor' ? `${status} Eau : ${Math.round((mm.water ?? 0) * 100)} %. ${wn ? waterLine : 'Relie-le par un tuyau à une pompe, sinon il ne démarre pas.'}`
+          : `${status} Les drones autour (robot ou stations) viennent s’y recharger au lieu de brûler du charbon.`;
+        sheet.append(this.sheetHead(def.name, esc(sub), close));
+        const card = h('div', 'card');
+        if (def.kind === 'reactor') {
+          const rods = mm.inBuf.uranium_enrichi ?? 0;
+          card.innerHTML = `${this.gauge('Barreaux', rods, RULES.fuelStack, rods <= 1)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${(mm.water ?? 0) * 100}%"></span></span><b>${Math.round((mm.water ?? 0) * 100)} %</b></div>${this.powerCard(mm)}<p class="muted small">Un barreau d’uranium enrichi dure 2 minutes à pleine charge ; apporte-les par tapis.</p>`;
+        } else if (def.kind === 'charger') {
+          card.innerHTML = this.powerCard(mm);
+        } else {
+          card.innerHTML = `<p class="muted small">${esc(waterLine)}</p>`;
+        }
+        sheet.append(card);
+        const acts = h('div', 'row');
+        const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+        mv.onclick = () => { close(); this.startMove(mm); };
+        acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close));
         sheet.append(acts);
         return;
       }
@@ -2069,7 +2112,7 @@ export class Hud implements GestureHandlers {
       const onBelt = new Set<string>();
       for (const c of g.view.chainOf(b)) for (const it of c.items) onBelt.add(it.t);
       const known = Object.keys(g.factory.stats.made);
-      const order = [...new Set([...onBelt, ...known, ...ITEM_LIST.map((x) => x.id)])];
+      const order = [...new Set([...onBelt, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => id !== 'eau');
       const card = h('div', 'card');
       const grid = h('div', 'sort-grid');
       const none = h('button', `sort-cell${!b.filter ? ' on' : ''}`, '<span class="sc-none">½</span><small>Un sur deux</small>');

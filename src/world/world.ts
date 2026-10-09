@@ -45,10 +45,10 @@ export function patchContains(p: Patch, x: number, y: number): boolean {
 }
 
 const BIOME_ORES: Record<BiomeId, { type: string; w: number; rich?: boolean }[]> = {
-  plaine: [{ type: 'fer', w: 4 }, { type: 'cuivre', w: 3 }, { type: 'charbon', w: 3 }, { type: 'calcaire', w: 2 }],
+  plaine: [{ type: 'fer', w: 4 }, { type: 'cuivre', w: 3 }, { type: 'charbon', w: 3 }, { type: 'calcaire', w: 2 }, { type: 'eau', w: 2 }],
   desert: [{ type: 'sable', w: 4 }, { type: 'quartz', w: 2 }, { type: 'petrole', w: 2 }],
   terres: [{ type: 'bauxite', w: 3 }, { type: 'cuivre', w: 2, rich: true }],
-  marais: [{ type: 'petrole', w: 3 }, { type: 'charbon', w: 2, rich: true }],
+  marais: [{ type: 'petrole', w: 3 }, { type: 'charbon', w: 2, rich: true }, { type: 'eau', w: 4 }],
   montagnes: [{ type: 'fer', w: 3, rich: true }, { type: 'or', w: 2 }],
   crateres: [{ type: 'uranium', w: 3 }, { type: 'quartz', w: 2, rich: true }],
 };
@@ -60,6 +60,8 @@ const START_PATCHES: Omit<Patch, 'id' | 'p1' | 'p2'>[] = [
   { type: 'cuivre', cx: 16, cy: 12, r: 3.2, richness: 'normal' },
   { type: 'calcaire', cx: 16, cy: -10, r: 2.8, richness: 'pauvre' },
   { type: 'fer', cx: -26, cy: 24, r: 3.6, richness: 'riche' },
+  // Un lac près du départ (pour les pompes).
+  { type: 'eau', cx: 8, cy: -24, r: 3.4, richness: 'normal' },
 ];
 const START_RADIUS = 30;
 
