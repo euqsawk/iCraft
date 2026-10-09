@@ -617,3 +617,6 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .gift-card .row .btn { flex: 1 1 0; min-height: 44px; }
 .sheet > .row { display: flex; gap: 8px; }
 .sheet > .row .btn { flex: 1 1 0; }
+.inv-cell.no { opacity: .35; }
+.mcard { touch-action: pan-x; }
+.palette.dragging { opacity: .55; }

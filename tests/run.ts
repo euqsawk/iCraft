@@ -258,6 +258,22 @@ test('une ancienne sauvegarde (sans charbon, drones ni séparateurs) se charge',
   assert(g2.drones.length === 1 && g2.drones[0].cargo?.n === 10, 'un drone avec le cadeau de départ');
 });
 
+test('une machine posée sur un tapis se branche : entrée et sortie', () => {
+  const g = new Game('TEST-15');
+  g.money = 10000; g.world.reveal(-6, 2, 20);
+  g.placeMachine('foreuse', -13, -5);
+  const chest = g.placeMachine('coffre', -1, -5)!;
+  assert(g.placeBelts(trace(g, [[-11.5, -4.5], [-2.5, -4.5], [-1.5, -4.5]]).result()), 'tapis');
+  const belts0 = g.factory.belts.size, m0 = g.money;
+  const four = g.placeMachine('four', -7, -5)!;
+  assert(four, 'le four devrait se poser sur le tapis');
+  assert(g.factory.belts.size === belts0 - 2 && g.money === m0 - 40 + 2, `tapis ${g.factory.belts.size}/${belts0}, pièces ${m0 - g.money}`);
+  run(g, 120);
+  fuelAll(g);
+  run(g, 60);
+  assert(four.made > 0 && (chest.inBuf.lingot_fer ?? 0) > 0, `four ${four.made}, coffre ${JSON.stringify(chest.inBuf)}`);
+});
+
 console.log('Charbon');
 test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => {
   const g = new Game('TEST-20');

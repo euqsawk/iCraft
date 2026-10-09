@@ -585,12 +585,15 @@ export class Game {
       this.emit({ type: 'toast', text: `Un seul ${def.name.toLowerCase()} par partie`, tone: 'warn' });
       return null;
     }
-    const check = this.factory.checkMachine(type, x, y);
+    const check = this.factory.checkMachine(type, x, y, undefined, true);
     if (!check.ok) {
       this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' });
       return null;
     }
     if (!this.spend(def.cost)) return null;
+    // Posée sur un tapis : les cases de tapis dessous disparaissent (remboursées). Le tapis qui arrive
+    // devient l'entrée de la machine, celui qui repart devient sa sortie.
+    if (check.belts) this.earn(this.clearBeltsUnder(def.w, def.h, x, y));
     const m = this.factory.addMachine(type, x, y, false);
     this.pending.push({ kind: 'machine', id: m.id });
     this.emit({ type: 'factory' });
@@ -664,7 +667,21 @@ export class Game {
     this.emit({ type: 'factory' });
   }
 
+  /** Retire les tapis sous une zone ; renvoie le remboursement. */
+  private clearBeltsUnder(w: number, h: number, x: number, y: number): number {
+    let refund = 0;
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const b = this.factory.beltAt(x + i, y + j);
+        if (b) refund += this.refundBelt(b);
+      }
+    }
+    return refund;
+  }
+
   moveMachine(m: Machine, x: number, y: number): boolean {
+    const check = this.factory.checkMachine(m.type, x, y, m, true);
+    if (check.ok && check.belts) this.earn(this.clearBeltsUnder(m.w, m.h, x, y));
     const ok = this.factory.moveMachine(m, x, y);
     if (!ok) this.emit({ type: 'toast', text: 'Impossible ici', tone: 'warn' });
     else { this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
@@ -903,6 +920,20 @@ export class Game {
     this.factory.putInStorage(m, t, k);
     this.emit({ type: 'inventory' });
     return k;
+  }
+
+  /** D'une case du robot vers le Noyau, le Laboratoire, le Comptoir ou la Revente ; renvoie la quantité donnée. */
+  robotToBuilding(m: Machine, slot: number, n: number): number {
+    const sl = this.robot.inv.slots[slot];
+    if (!sl) return 0;
+    const t = sl.t;
+    const k = Math.min(n, sl.n, this.accepts(m, t));
+    if (k <= 0) return 0;
+    this.robot.inv.takeAt(slot, k);
+    const got = this.receive(m, t, k);
+    if (got < k) this.robot.inv.add(t, k - got);
+    this.emit({ type: 'inventory' });
+    return got;
   }
 
   /** Sépare une pile du robot en deux. */

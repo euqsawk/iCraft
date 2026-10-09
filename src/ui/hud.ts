@@ -315,10 +315,12 @@ export class Hud implements GestureHandlers {
       const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}`);
       b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${ICONS.coinSm}${m.cost}</small>`;
       b.onclick = () => {
+        if (this.dragEnded) return;
         this.machineType = m.id;
         this.renderPalette();
-        this.toast(`${m.name} : touche la carte pour la poser`, 'info');
+        this.toast(`${m.name} : glisse-la sur la carte, ou touche la carte pour la poser`, 'info');
       };
+      b.addEventListener('pointerdown', (e) => this.cardDown(e, m.id, b));
       p.append(b);
     }
     // Dernière carte : l'arbre, pour débloquer d'autres machines.
@@ -326,6 +328,58 @@ export class Hud implements GestureHandlers {
     const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${NODE_ICONS.assembleur}</span>Débloquer<small>${ready ? `${ready} prêt${ready > 1 ? 's' : ''}` : `Palier ${this.game.palier}`}</small>`);
     more.onclick = () => this.openTree('production');
     p.append(more);
+  }
+
+  // ---------- Glisser une machine depuis la palette ----------
+
+  private dragEnded = false;
+
+  /** Glisser une carte vers le haut : la machine suit le doigt, la lâcher sur la carte la pose. */
+  private cardDown(e: PointerEvent, type: string, card: HTMLElement): void {
+    const x0 = e.clientX, y0 = e.clientY;
+    let dragging = false;
+    const paletteTop = () => this.palette.getBoundingClientRect().top;
+    const move = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      const dx = ev.clientX - x0, dy = ev.clientY - y0;
+      if (!dragging) {
+        if (dy < -12 && Math.abs(dy) > Math.abs(dx)) {
+          dragging = true;
+          this.machineType = type;
+          this.palette.querySelectorAll('.mcard').forEach((c) => c.classList.toggle('selected', c === card));
+          this.palette.classList.add('dragging');
+          this.closePopover();
+        } else return;
+      }
+      ev.preventDefault();
+      if (ev.clientY > paletteTop() - 8) {
+        this.r.preview = null;
+        this.r.guides = [];
+        this.showBubble(ev.clientX, ev.clientY - 70, 'Lâche sur la carte pour poser', true);
+      } else {
+        this.updatePlacement(ev.clientX, ev.clientY);
+      }
+    };
+    const up = (ev: PointerEvent) => {
+      if (ev.pointerId !== e.pointerId) return;
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+      if (!dragging) return;
+      this.palette.classList.remove('dragging');
+      this.dragEnded = true;
+      setTimeout(() => { this.dragEnded = false; }, 350);
+      const pv = this.r.preview;
+      if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && ev.clientY < paletteTop() - 8) {
+        this.game.placeMachine(type, pv.x, pv.y);
+      }
+      this.r.preview = null;
+      this.r.guides = [];
+      this.bubble.classList.add('hidden');
+    };
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
   }
 
   // ---------- Outils ----------
@@ -386,6 +440,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'comptoir') { this.closePopover(); this.openOrders(); return; }
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && m.type === 'coffre') { this.openChest(m); return; }
+    if (m?.built && m.type === 'revente') { this.openSell(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -404,7 +459,7 @@ export class Hud implements GestureHandlers {
     const type = this.tool === 'move' ? this.moving!.type : this.machineType!;
     const p = this.placeAt(sx, sy, type);
     const def = machineDef(type);
-    const check = this.game.factory.checkMachine(type, p.x, p.y, this.moving ?? undefined);
+    const check = this.game.factory.checkMachine(type, p.x, p.y, this.moving ?? undefined, true);
     this.r.preview = { kind: 'place', type, x: p.x, y: p.y, ok: check.ok, ore: check.ore };
     // Guides d'alignement avec les machines voisines.
     const cx = (p.x + def.w / 2) * CELL, cy = (p.y + def.h / 2) * CELL;
@@ -417,7 +472,8 @@ export class Hud implements GestureHandlers {
     }
     this.r.guides = guides;
     const s = this.r.camera.worldToScreen(cx, p.y * CELL);
-    const label = this.tool === 'move' ? 'Déplacer ici' : check.ok ? `${def.name} · ${ICONS.coinSm}${def.cost}` : esc(check.reason ?? 'Impossible');
+    const onBelt = check.ok && check.belts ? ' · sur le tapis' : '';
+    const label = this.tool === 'move' ? `Déplacer ici${onBelt}` : check.ok ? `${def.name} · ${ICONS.coinSm}${def.cost}${onBelt}` : esc(check.reason ?? 'Impossible');
     this.showBubble(s.x, s.y - 8, label, !check.ok);
   }
 
@@ -641,7 +697,7 @@ export class Hud implements GestureHandlers {
   private craftSel: string | null = null;
   private craftQty = 1;
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
-  private sheetKind: 'robot' | 'chest' | '' = '';
+  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | '' = '';
   private chestId = -1;
   private liveTimer = 0;
 
@@ -656,12 +712,13 @@ export class Hud implements GestureHandlers {
   }
 
   /** Une grille de cases ; data-side et data-i (ou data-item) pour la sélection. */
-  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'robot', cols = 5): string {
+  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'robot', cols = 5, accept?: (t: string) => boolean): string {
     const sel = this.invSel;
     return `<div class="inv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.map((c, i) => {
       if (!c) return `<button class="inv-cell empty" data-side="${side}" data-i="${i}" aria-label="Case vide"></button>`;
       const on = sel && sel.side === side && (side === 'robot' ? (sel as { slot: number }).slot === i : (sel as { item: string }).item === c.t);
-      return `<button class="inv-cell${on ? ' on' : ''}" data-side="${side}" data-i="${i}" data-item="${c.t}" aria-label="${esc(item(c.t).name)} : ${c.n}"><img src="${this.itemIcons.get(c.t)}" alt=""><b>${c.n}</b></button>`;
+      const no = accept && !accept(c.t);
+      return `<button class="inv-cell${on ? ' on' : ''}${no ? ' no' : ''}" data-side="${side}" data-i="${i}" data-item="${c.t}" aria-label="${esc(item(c.t).name)} : ${c.n}"><img src="${this.itemIcons.get(c.t)}" alt=""><b>${c.n}</b></button>`;
     }).join('')}</div>`;
   }
 
@@ -677,7 +734,7 @@ export class Hud implements GestureHandlers {
   }
 
   /** Branche les cases : toucher une pile la choisit (ou la quitte). */
-  private wireGrid(root: HTMLElement, chest: Machine | null): void {
+  private wireGrid(root: HTMLElement, target: Machine | null): void {
     root.querySelectorAll<HTMLButtonElement>('.inv-cell').forEach((b) => {
       b.onclick = () => {
         const side = b.dataset.side as 'chest' | 'robot';
@@ -693,22 +750,30 @@ export class Hud implements GestureHandlers {
           this.invSel = same ? null : { side, item: it };
         }
         this.invQty = n;
-        if (!chest && this.invSel) this.invQty = Math.max(1, Math.floor(n / 2));
+        if (!target && this.invSel) this.invQty = Math.max(1, Math.floor(n / 2));
         this.refreshSheet();
       };
     });
   }
 
   /** La barre d'action d'une pile choisie : quantité, puis prendre, déposer ou séparer. */
-  private invBar(chest: Machine | null): HTMLElement | null {
+  private invBar(target: Machine | null): HTMLElement | null {
     const g = this.game, sel = this.invSel;
     if (!sel) return null;
+    const chest = target && machineDef(target.type).kind === 'storage' ? target : null;
+    const building = target && !chest ? target : null;
     let t: string, have: number, max: number, verb: string, why = '';
     if (sel.side === 'robot') {
       const sl = g.robot.inv.slots[sel.slot];
       if (!sl) { this.invSel = null; return null; }
       t = sl.t; have = sl.n;
       if (chest) { max = Math.min(sl.n, g.factory.storageRoom(chest, t)); verb = 'Déposer dans le coffre'; if (!max) why = 'Le coffre est plein'; }
+      else if (building) {
+        const name = machineDef(building.type).name;
+        max = Math.min(sl.n, g.accepts(building, t));
+        verb = `Donner ${building.type === 'revente' ? 'à la' : 'au'} ${name}`;
+        if (!max) why = building.type === 'revente' ? 'La Revente est pleine (ou le gros drone est là)' : `${name} n’en a pas besoin pour l’instant`;
+      }
       else { max = sl.n - 1; verb = ''; if (!max) why = 'Une seule unité : rien à séparer'; }
     } else {
       if (!chest || !(chest.inBuf[sel.item] > 0)) { this.invSel = null; return null; }
@@ -754,6 +819,17 @@ export class Hud implements GestureHandlers {
         const dep = h('button', 'btn primary', verb);
         dep.disabled = !max;
         dep.onclick = () => { g.robotToChest(chest, slot, this.invQty); this.invSel = null; this.refreshSheet(); };
+        acts.append(dep);
+      } else if (building) {
+        split.remove();
+        const dep = h('button', 'btn primary', verb);
+        dep.disabled = !max;
+        dep.onclick = () => {
+          const n = g.robotToBuilding(building, slot, this.invQty);
+          if (n) this.toast(`${itemLabel(sl.t, n)} donné${n > 1 ? 's' : ''}`, 'good');
+          this.invSel = null;
+          this.refreshSheet();
+        };
         acts.append(dep);
       }
     } else if (chest) {
@@ -859,6 +935,48 @@ export class Hud implements GestureHandlers {
       }
     }
     return card;
+  }
+
+  /** « Depuis ton inventaire » : donner directement au Noyau, au Laboratoire, au Comptoir ou à la Revente. */
+  private depositCard(m: Machine): HTMLElement {
+    const g = this.game;
+    const card = h('div', 'card');
+    card.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · touche une pile pour la donner</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.accepts(m, t) > 0)}`;
+    this.wireGrid(card, m);
+    const bar = this.invBar(m);
+    if (bar) card.append(bar);
+    return card;
+  }
+
+  /** La Revente en grand : contenu, passage du gros drone, et dépôt depuis l'inventaire. */
+  openSell(m: Machine): void {
+    this.closePopover();
+    this.invSel = null;
+    this.openSheet((sheet, close) => {
+      const g = this.game;
+      const bin = g.factory.machines.get(m.id);
+      if (!bin) { close(); return; }
+      const n = g.sellCount(bin);
+      const t = Math.ceil(g.nextPickup), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
+      const coming = g.pickups.some((x) => x.id === bin.id && !x.done);
+      sheet.append(this.sheetHead('Revente', coming ? 'Le gros drone est là !' : `Prochain passage du gros drone dans ${mm} min ${ss}`, close));
+      const info = h('div', 'card');
+      info.innerHTML = `<p class="muted">Tout ce qui arrive ici est revendu à bas prix : ${n} objet${n > 1 ? 's' : ''} sur ${RULES.sellCap}, environ ${g.sellValue(bin)} pièces.</p>${n ? `<div class="chips">${this.chips(bin.inBuf)}</div>` : ''}`;
+      sheet.append(info, this.depositCard(bin));
+      const acts = h('div', 'row');
+      const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+      mv.onclick = () => { close(); this.setTool('move'); this.moving = bin; this.toast('Glisse la Revente à sa nouvelle place', 'info'); };
+      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer`);
+      let armed = false;
+      del.onclick = () => {
+        if (!armed) { armed = true; del.textContent = n ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore'; return; }
+        g.removeMachine(bin);
+        close();
+      };
+      acts.append(mv, del);
+      sheet.append(acts);
+    }, true);
+    this.sheetKind = 'sell';
   }
 
   /** Un coffre en grand, avec l'inventaire du robot dessous. */
@@ -1102,6 +1220,7 @@ export class Hud implements GestureHandlers {
   /** La mission du Noyau : ce qu'il demande pour passer au palier suivant. */
   openNoyau(): void {
     this.closePopover();
+    this.invSel = null;
     const g = this.game;
     this.openSheet((sheet, close) => {
       const mission = palierMission(g.palier);
@@ -1114,15 +1233,7 @@ export class Hud implements GestureHandlers {
       card.innerHTML = `<p><b>${esc(mission.pitch)}</b></p>${this.costRows(Object.entries(mission.lines).map(([k, v]) => [k, g.palierDone[k] ?? 0, v]))}
         <p class="muted">Relie un tapis au Noyau, ou range ces objets dans un coffre : les drones les y apportent.</p>`;
       sheet.append(card);
-      if (g.palier === 1) {
-        const placed = new Set([...g.factory.machines.values()].map((m) => m.type));
-        const tip = (done: boolean, html: string) => `<li class="${done ? 'done' : ''}">${html}</li>`;
-        sheet.insertAdjacentHTML('beforeend', `<div class="card"><p class="muted">Pour bien démarrer</p><ul class="tips">
-          ${tip(placed.has('comptoir'), '<b>Comptoir</b> : ses commandes rapportent les pièces pour construire.')}
-          ${tip(placed.has('laboratoire'), '<b>Laboratoire</b> : il garde les objets qui débloquent l’arbre (la Presse, par exemple).')}
-          ${tip(placed.has('coffre'), '<b>Coffre</b> : les drones y prennent le charbon et ce que demandent ces bâtiments.')}
-        </ul></div>`);
-      }
+      sheet.append(this.depositCard(g.noyau));
       const opens = ALL_NODES.filter((x) => x.palier === mission.to);
       if (opens.length) {
         const c2 = h('div', 'card');
@@ -1133,11 +1244,13 @@ export class Hud implements GestureHandlers {
       tree.onclick = () => { close(); this.openTree(); };
       sheet.append(tree);
     }, true);
+    this.sheetKind = 'building';
   }
 
   /** Le Laboratoire : son stock et les déblocages qu'il peut payer. */
   openLab(): void {
     this.closePopover();
+    this.invSel = null;
     const g = this.game;
     this.openSheet((sheet, close) => {
       sheet.append(this.sheetHead('Laboratoire', `Il garde les objets qui servent à débloquer l’arbre (${RULES.labCap} de chaque au plus).`, close));
@@ -1161,12 +1274,15 @@ export class Hud implements GestureHandlers {
       const st = h('div', 'card');
       st.innerHTML = `<p class="muted">En stock</p>${stock.length ? `<div class="chips">${this.chips(Object.fromEntries(stock))}</div>` : '<p class="muted">Vide. Relie-lui un tapis, ou range les objets dans un coffre : les drones les y apportent.</p>'}`;
       sheet.append(st);
+      const lab = [...g.factory.machines.values()].find((x) => x.type === 'laboratoire');
+      if (lab) sheet.append(this.depositCard(lab));
       const tree = h('button', 'btn', 'Ouvrir l’arbre de déblocages');
       tree.onclick = () => { close(); this.openTree(); };
       sheet.append(tree);
       const act = this.buildingActions('laboratoire', close, 'Son stock reste gardé.');
       if (act) sheet.append(act);
     }, true);
+    this.sheetKind = 'building';
   }
 
   private orderCardHtml(o: Order, withProgress: boolean): string {
@@ -1178,12 +1294,15 @@ export class Hud implements GestureHandlers {
   /** Le Comptoir : des commandes au choix, payées en pièces. */
   openOrders(): void {
     this.closePopover();
+    this.invSel = null;
     const g = this.game;
     if (!g.order && g.choices.length === 0) g.refreshChoices();
     this.openSheet((sheet, close) => {
       if (g.order) {
         sheet.append(this.sheetHead('Comptoir', 'Commande en cours : relie un tapis au Comptoir, ou laisse les drones y apporter le contenu de tes coffres.', close));
         sheet.append(h('div', 'card', this.orderCardHtml(g.order, true)));
+        const comptoir = [...g.factory.machines.values()].find((x) => x.type === 'comptoir');
+        if (comptoir) sheet.append(this.depositCard(comptoir));
       } else {
         sheet.append(this.sheetHead('Comptoir', 'Choisis une commande. Pas de chrono, pas de pénalité : elle se paie en pièces.', close));
         for (const o of g.choices) {
@@ -1200,6 +1319,7 @@ export class Hud implements GestureHandlers {
       const act = this.buildingActions('comptoir', close, '');
       if (act) sheet.append(act);
     }, true);
+    this.sheetKind = 'building';
   }
 
   private celebrate(o: Order): void {
@@ -1365,7 +1485,7 @@ export class Hud implements GestureHandlers {
         if (job && bar) bar.style.width = `${(job.t / job.total) * 100}%`;
       });
       this.liveTimer += dt;
-      if (this.liveTimer > 1 && this.sheetKind === 'robot') { this.liveTimer = 0; this.sheetDirty = true; }
+      if (this.liveTimer > 1 && (this.sheetKind === 'robot' || this.sheetKind === 'sell')) { this.liveTimer = 0; this.sheetDirty = true; }
     }
     this.refreshTimer += dt;
     if (this.refreshTimer > 0.8 && !this.pressing) {

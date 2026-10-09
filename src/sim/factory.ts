@@ -68,6 +68,8 @@ export interface PlaceCheck {
   reason?: string;
   ore?: string;
   rate?: number;
+  /** Tapis sous la machine (posée sur un tapis : ils sont remplacés, l'entrée et la sortie se branchent). */
+  belts?: number;
 }
 
 const DRILL_BASE_RATE = 0.5;
@@ -159,16 +161,21 @@ export class Factory {
 
   // ---------- Construction ----------
 
-  checkMachine(type: string, x: number, y: number, ignore?: Machine): PlaceCheck {
+  checkMachine(type: string, x: number, y: number, ignore?: Machine, overBelts = false): PlaceCheck {
     const def = machineDef(type);
     const oreCount = new Map<string, { n: number; rate: number }>();
+    let belts = 0;
     for (let j = 0; j < def.h; j++) {
       for (let i = 0; i < def.w; i++) {
         const cx = x + i, cy = y + j;
         if (!this.world.isRevealed(cx, cy)) return { ok: false, reason: 'Zone inexplorée' };
         const k = key(cx, cy);
         const m = this.cellMachine.get(k);
-        if (this.belts.has(k) || (m && m !== ignore)) return { ok: false, reason: 'Place occupée' };
+        if (m && m !== ignore) return { ok: false, reason: 'Place occupée' };
+        if (this.belts.has(k)) {
+          if (!overBelts) return { ok: false, reason: 'Place occupée' };
+          belts++;
+        }
         if (def.kind === 'drill') {
           const p = this.world.patchAt(cx, cy);
           if (p) {
@@ -184,14 +191,14 @@ export class Factory {
       let best: [string, { n: number; rate: number }] | null = null;
       for (const e of oreCount) if (!best || e[1].n > best[1].n) best = e;
       if (!best || best[1].n < 2) return { ok: false, reason: 'À poser sur un filon' };
-      return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate * (best[1].n / 4 * 0.5 + 0.5) };
+      return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate * (best[1].n / 4 * 0.5 + 0.5), belts };
     }
-    return { ok: true };
+    return { ok: true, belts };
   }
 
   addMachine(type: string, x: number, y: number, built = false, id?: number): Machine {
     const def = machineDef(type);
-    const check = def.kind === 'drill' ? this.checkMachine(type, x, y) : { ok: true } as PlaceCheck;
+    const check = def.kind === 'drill' ? this.checkMachine(type, x, y, undefined, true) : { ok: true } as PlaceCheck;
     if (id === undefined) id = this.nextId++;
     else this.nextId = Math.max(this.nextId, id + 1);
     const m: Machine = {
@@ -215,7 +222,8 @@ export class Factory {
   }
 
   moveMachine(m: Machine, x: number, y: number): boolean {
-    const check = this.checkMachine(m.type, x, y, m);
+    const check = this.checkMachine(m.type, x, y, m, true);
+    if (check.ok && check.belts) return false;
     if (!check.ok) return false;
     this.unindexMachine(m);
     m.x = x; m.y = y;
