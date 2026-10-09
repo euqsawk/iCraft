@@ -161,7 +161,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.groundShadows, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -958,17 +958,34 @@ export class GameRenderer {
       nv.root.scale.set(1 + nv.pulse * 0.04);
     }
     // Grand coffre : ses quatre objets les plus nombreux, en petit, à la place du dessin du coffre.
+    // Petit coffre : l'objet qu'il garde ; s'il en garde de plusieurs sortes, une icône « mélange ».
     for (const m of this.game.factory.machines.values()) {
-      if (m.type !== 'grand_coffre' || !m.built) continue;
+      if ((m.type !== 'grand_coffre' && m.type !== 'coffre') || !m.built) continue;
       const v = this.machineViews.get(m.id);
       if (!v || !v.root.visible) continue;
-      const top = Object.entries(m.inBuf).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t]) => t);
-      const sig = top.join(',');
+      const kinds = Object.entries(m.inBuf).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([t]) => t);
+      const small = m.type === 'coffre';
+      const top = kinds.slice(0, small ? 1 : 4);
+      const sig = small && kinds.length > 1 ? '*' : top.join(',');
       if (sig === v.shelfSig) continue;
       v.shelfSig = sig;
       if (!v.shelf) { v.shelf = new Container(); v.root.addChildAt(v.shelf, v.root.getChildIndex(v.icon) + 1); }
       v.shelf.removeChildren().forEach((c) => c.destroy());
       v.icon.visible = top.length === 0;
+      if (small) {
+        if (sig === '*') {
+          // Plusieurs sortes d'objets : trois pastilles de couleurs qui se chevauchent.
+          const g = new Graphics();
+          for (const [x, y, c] of [[-3.5, 2.5, 0x8a99ad], [3.5, 2.5, 0xd98146], [0, -3.5, 0x33415c]] as const) g.circle(x, y, 4.6).fill(c).stroke({ width: 1.6, color: 0xffffff });
+          v.shelf.addChild(g);
+        } else if (top[0]) {
+          const sp = new Sprite(this.itemTextures.get(top[0])!);
+          sp.anchor.set(0.5);
+          sp.scale.set(0.85);
+          v.shelf.addChild(sp);
+        }
+        continue;
+      }
       const spots = top.length === 1 ? [[0, 0]] : top.length === 2 ? [[-9, 0], [9, 0]] : [[-9, -9], [9, -9], [-9, 9], [9, 9]];
       top.forEach((t, i) => {
         const s = new Sprite(this.itemTextures.get(t)!);
