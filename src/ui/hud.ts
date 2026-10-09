@@ -390,9 +390,14 @@ export class Hud implements GestureHandlers {
   }
 
   private paletteTab = '';
+  /** La catégorie affichée au dernier dessin de la palette. */
+  private shownTab = '';
 
   private renderPalette(): void {
     const p = this.palette;
+    // On garde la position des catégories (et des cartes, si on reste dans la même catégorie).
+    const catScroll = p.querySelector<HTMLElement>('.pal-cats')?.scrollLeft ?? 0;
+    const rowScroll = p.querySelector<HTMLElement>('.pal-row')?.scrollLeft ?? 0;
     p.innerHTML = '';
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
@@ -456,6 +461,10 @@ export class Hud implements GestureHandlers {
     more.onclick = () => this.openTree('production');
     row.append(more);
     p.append(row);
+    const cats = p.querySelector<HTMLElement>('.pal-cats');
+    if (cats) cats.scrollLeft = catScroll;
+    if (this.paletteTab === this.shownTab) row.scrollLeft = rowScroll;
+    this.shownTab = this.paletteTab;
   }
 
   // ---------- Glisser une machine depuis la palette ----------
