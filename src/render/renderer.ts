@@ -812,6 +812,11 @@ export class GameRenderer {
    */
   private drawPowerMachines(g: Graphics): void {
     const f = this.game.factory;
+    // La portée des câbles posés : 5 cases autour de chaque câble.
+    if (f.cables.size) {
+      const cells = [...f.cables].map((k) => { const [x, y] = unkey(k); return { x, y }; });
+      this.fillRange(g, cells, 0xffe7a3, 0.1);
+    }
     for (const m of f.machines.values()) {
       const def = machineDef(m.type);
       const gen = def.kind === 'generator';
@@ -829,6 +834,48 @@ export class GameRenderer {
         dashedPolyline(g, roundRectPoints(x, y, w, hh, r), 6, 5, true);
         g.stroke({ width: 2, color: 0xffffff, alpha: 0.75 });
       }
+    }
+  }
+
+  /** Remplit les cases à portée de ces câbles (bandes horizontales fusionnées, dans la vue). */
+  private fillRange(g: Graphics, cells: { x: number; y: number }[], color: number, alpha: number, outline = false): void {
+    const R = RULES.cableRange;
+    const v = this.camera.bounds(CELL * 10);
+    const vy0 = Math.floor(v.y0 / CELL), vy1 = Math.ceil(v.y1 / CELL), vx0 = Math.floor(v.x0 / CELL), vx1 = Math.ceil(v.x1 / CELL);
+    const rows = new Map<number, [number, number][]>();
+    for (const c of cells) {
+      if (c.x + R < vx0 || c.x - R > vx1 || c.y + R < vy0 || c.y - R > vy1) continue;
+      for (let y = Math.max(vy0, c.y - R); y <= Math.min(vy1, c.y + R); y++) {
+        let r = rows.get(y);
+        if (!r) { r = []; rows.set(y, r); }
+        r.push([c.x - R, c.x + R]);
+      }
+    }
+    for (const [y, list] of rows) {
+      list.sort((a, b) => a[0] - b[0]);
+      let [a0, a1] = list[0];
+      const flush = () => g.rect(a0 * CELL, y * CELL, (a1 - a0 + 1) * CELL, CELL);
+      for (const [b0, b1] of list.slice(1)) {
+        if (b0 <= a1 + 1) a1 = Math.max(a1, b1);
+        else { flush(); [a0, a1] = [b0, b1]; }
+      }
+      flush();
+    }
+    g.fill({ color, alpha });
+    if (outline) {
+      // Le bord de la zone : les côtés des cases qui n'ont pas de voisine à portée.
+      const inRange = (x: number, y: number) => (rows.get(y) ?? []).some(([a, b]) => x >= a && x <= b);
+      for (const [y, list] of rows) {
+        for (const [a, b] of list) {
+          for (let x = a; x <= b; x++) {
+            if (!inRange(x, y - 1)) g.moveTo(x * CELL, y * CELL).lineTo((x + 1) * CELL, y * CELL);
+            if (!inRange(x, y + 1)) g.moveTo(x * CELL, (y + 1) * CELL).lineTo((x + 1) * CELL, (y + 1) * CELL);
+            if (!inRange(x - 1, y)) g.moveTo(x * CELL, y * CELL).lineTo(x * CELL, (y + 1) * CELL);
+            if (!inRange(x + 1, y)) g.moveTo((x + 1) * CELL, y * CELL).lineTo((x + 1) * CELL, (y + 1) * CELL);
+          }
+        }
+      }
+      g.stroke({ width: 2, color, alpha: 0.9 });
     }
   }
 
@@ -1531,6 +1578,11 @@ export class GameRenderer {
     } else if (pv?.kind === 'cable') {
       const cells = pv.tracer.cells;
       if (cells.length) {
+        // La portée du câble tracé, et les machines qu'il alimentera (cerclées de jaune).
+        this.fillRange(g, cells, PALETTE.yellow, 0.16, true);
+        for (const m of this.game.factory.machinesInRange(cells)) {
+          g.roundRect(m.x * CELL - 3, m.y * CELL - 3, m.w * CELL + 6, m.h * CELL + 6, 15).stroke({ width: 3.5, color: PALETTE.yellow });
+        }
         g.moveTo((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL);
         for (const c of cells.slice(1)) g.lineTo((c.x + 0.5) * CELL, (c.y + 0.5) * CELL);
         if (cells.length === 1) g.circle((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL, 3);

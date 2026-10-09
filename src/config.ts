@@ -52,6 +52,8 @@ export const RULES = {
   beltCost: 1,
   /** Électricité : prix d'une case de câble ; un charbon fait tourner un générateur à pleine charge pendant 10 s. */
   cableCost: 2,
+  /** Un câble alimente les machines à cette distance (en cases, carré autour de chaque case de câble). */
+  cableRange: 5,
   /** Le carburant dure 5 fois plus longtemps qu'un charbon (et brûle en premier). */
   carburantMult: 5,
   /** Véhicules : prix d'une case de route ou de rail, prix du véhicule, charge, vitesse (cases par seconde). */

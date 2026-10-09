@@ -1,6 +1,6 @@
 // L'usine : tapis et machines sur la grille, et leur simulation.
 import { RULES } from '../config.ts';
-import { acceptedInputs, baseType, ELECTRIC_BASES, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
+import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
@@ -648,10 +648,25 @@ export class Factory {
     return ok;
   }
 
-  /** Le réseau d'une machine (null si aucun câble ne passe sous elle). */
+  /** Le réseau d'une machine (null si aucun câble n'est à portée). */
   netOf(m: Machine): PowerNet | null {
     this.refresh();
     return this.netOfMachine.get(m) ?? null;
+  }
+
+  /** Les machines branchables (ou générateurs) à portée de ces cases de câble. */
+  machinesInRange(cells: { x: number; y: number }[]): Machine[] {
+    const R = RULES.cableRange;
+    const out = new Set<Machine>();
+    for (const c of cells) {
+      for (let y = c.y - R; y <= c.y + R; y++) {
+        for (let x = c.x - R; x <= c.x + R; x++) {
+          const m = this.cellMachine.get(key(x, y));
+          if (m && !out.has(m) && (this.powerUse(m) || machineDef(m.type).supply)) out.add(m);
+        }
+      }
+    }
+    return [...out];
   }
 
   /** Le réseau d'une case de câble. */
@@ -660,7 +675,7 @@ export class Factory {
     return this.netOfCable.get(key(x, y)) ?? null;
   }
 
-  /** Les réseaux : câbles reliés (case à case), et les machines posées sur un câble. */
+  /** Les réseaux : câbles reliés (case à case), et les machines à portée d'un câble (5 cases). */
   private buildNets(): void {
     const parent = new Map<number, number>();
     const find = (k: number): number => {
@@ -679,21 +694,25 @@ export class Factory {
         if (this.cables.has(n)) union(k, n);
       }
     }
-    // Une machine relie les câbles qui passent sous elle (sur ses cases ; un câble collé à côté ne suffit pas).
+    // Une machine se branche sur le câble le plus proche, à 5 cases au plus (dessous compris).
+    // Elle ne relie pas deux réseaux entre eux : seul le câble les relie.
+    const R = RULES.cableRange;
     const touch = new Map<Machine, number[]>();
     for (const m of this.machines.values()) {
       const def = machineDef(m.type);
       if (!this.powerUse(m) && !def.supply) continue;
-      const found: number[] = [];
-      for (let y = m.y; y < m.y + m.h; y++) {
-        for (let x = m.x; x < m.x + m.w; x++) {
+      let best = -1, bestD = Infinity;
+      for (let y = m.y - R; y < m.y + m.h + R; y++) {
+        for (let x = m.x - R; x < m.x + m.w + R; x++) {
           const k = key(x, y);
-          if (this.cables.has(k)) found.push(k);
+          if (!this.cables.has(k)) continue;
+          const dx = x < m.x ? m.x - x : x >= m.x + m.w ? x - (m.x + m.w - 1) : 0;
+          const dy = y < m.y ? m.y - y : y >= m.y + m.h ? y - (m.y + m.h - 1) : 0;
+          const d = Math.max(dx, dy) + (dx + dy) * 0.001;
+          if (d < bestD) { bestD = d; best = k; }
         }
       }
-      if (!found.length) continue;
-      for (const k of found) union(found[0], k);
-      touch.set(m, found);
+      if (best >= 0) touch.set(m, [best]);
     }
     const byRoot = new Map<number, PowerNet>();
     const netFor = (k: number) => {
@@ -1264,7 +1283,6 @@ export class Factory {
     return {
       nextId: this.nextId,
       cables: [...this.cables],
-      cableV: 2,
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0]),
@@ -1302,19 +1320,6 @@ export class Factory {
       if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);
-    // Ancienne sauvegarde : un câble collé à une machine la reliait. On le prolonge d'une case sous elle.
-    if ((s.cableV ?? 1) < 2 && this.cables.size) {
-      for (const m of this.machines.values()) {
-        const def = machineDef(m.type);
-        if (def.kind !== 'generator' && !ELECTRIC_BASES.includes(m.type)) continue;
-        for (let y = m.y; y < m.y + m.h; y++) {
-          for (let x = m.x; x < m.x + m.w; x++) {
-            const out = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]].some(([nx, ny]) => !this.inside(m, nx, ny) && this.cables.has(key(nx, ny)));
-            if (out) this.cables.add(key(x, y));
-          }
-        }
-      }
-    }
     this.lines.clear();
     this.nextLine = 1;
     for (const sl of s.lines ?? []) {
@@ -1337,8 +1342,6 @@ export class Factory {
 export interface FactorySave {
   nextId: number;
   cables?: number[];
-  /** 2 : un câble ne relie une machine que s'il passe sous elle (avant, il suffisait d'y être collé). */
-  cableV?: number;
   lines?: Line[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?][];

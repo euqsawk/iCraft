@@ -101,7 +101,7 @@ export const BRANCHES: Branch[] = [
   {
     id: 'energie', label: 'Énergie', nodes: [
       n('charbon', 'Charbon', 'charbon', 0, 1, 1, {}, [], 'Au début, tout tourne au charbon : machines, robot et drones.', base),
-      n('generateur', 'Générateur', 'generateur', 1, 1, 4, { moteur: 10, cable: 40 }, ['charbon'], 'Brûle du charbon et alimente jusqu’à 5 machines branchées (débloque ensuite chaque type de machine au courant). Débloque aussi les câbles : trace-les au doigt : un câble doit passer sous une machine pour la brancher.', m('generateur')),
+      n('generateur', 'Générateur', 'generateur', 1, 1, 4, { moteur: 10, cable: 40 }, ['charbon'], 'Brûle du charbon et alimente jusqu’à 5 machines branchées (débloque ensuite chaque type de machine au courant). Débloque aussi les câbles : trace-les au doigt : un câble alimente les machines à 5 cases autour de lui.', m('generateur')),
       // Chaque machine a sa version électrique : plus de charbon à livrer, il suffit d'un câble.
       n('foreuse_elec', 'Foreuse électrique', 'foreuse_elec', 2, 0, 4, { cable: 20, engrenage: 20 }, ['generateur'], 'Tes foreuses marchent au courant quand un câble les relie à un générateur : plus de charbon à livrer.', elec('foreuse')),
       n('four_elec', 'Four électrique', 'four_elec', 2, 1, 4, { cable: 40 }, ['generateur'], 'Tes fours marchent au courant quand un câble les relie à un générateur : plus de charbon à livrer.', elec('four')),
