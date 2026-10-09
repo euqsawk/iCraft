@@ -34,6 +34,8 @@ export interface Belt {
   jump?: number;
   /** Séparateur dont la dérivation part en pont : nombre de cases enjambées par la dérivation. */
   splitJump?: number;
+  /** Compteur posé sur cette case : les objets qui en sortent (date et matière), pour le débit. */
+  meter?: { ev: { t: number; k: string }[]; since: number };
 }
 
 /** Longueur parcourue sur une case de tapis, en cases (plus longue sur un pont). */
@@ -184,6 +186,33 @@ export class Factory {
     return this.nextOf.get(b) ?? null;
   }
 
+  // ---------- Compteurs de débit ----------
+
+  addMeter(b: Belt): void {
+    b.meter = { ev: [], since: this.clock };
+  }
+
+  /** Un objet quitte une case : son compteur le note (on garde les 20 dernières secondes). */
+  private meterHit(b: Belt, k: string): void {
+    const m = b.meter!;
+    m.ev.push({ t: this.clock, k });
+    while (m.ev.length && m.ev[0].t < this.clock - FLOW_WINDOW) m.ev.shift();
+  }
+
+  /** Débit d'un compteur, en objets par seconde, par matière (sur les 20 dernières secondes, ou depuis la pose). */
+  meterRates(b: Belt): { total: number; by: Record<string, number> } {
+    const m = b.meter;
+    const res = { total: 0, by: {} as Record<string, number> };
+    if (!m) return res;
+    const span = Math.max(4, Math.min(FLOW_WINDOW, this.clock - m.since));
+    for (const e of m.ev) {
+      if (e.t < this.clock - FLOW_WINDOW) continue;
+      res.by[e.k] = (res.by[e.k] ?? 0) + 1 / span;
+      res.total += 1 / span;
+    }
+    return res;
+  }
+
   /** Le pont qui passe au-dessus de cette case, s'il y en a un (split : c'est la dérivation d'un séparateur). */
   bridgeOver(x: number, y: number): { belt: Belt; split: boolean } | null {
     for (const b of this.belts.values()) {
@@ -245,6 +274,14 @@ export class Factory {
 
   checkMachine(type: string, x: number, y: number, ignore?: Machine, overBelts = false): PlaceCheck {
     const def = machineDef(type);
+    // Un compteur se pose sur un tapis, sans rien remplacer.
+    if (def.kind === 'meter') {
+      const b = this.beltAt(x, y);
+      if (!this.world.isRevealed(x, y)) return { ok: false, reason: 'Zone inexplorée' };
+      if (!b) return { ok: false, reason: 'Pose-le sur un tapis' };
+      if (b.meter) return { ok: false, reason: 'Ce tapis a déjà un compteur' };
+      return { ok: true };
+    }
     const oreCount = new Map<string, { n: number; rate: number }>();
     let belts = 0;
     for (let j = 0; j < def.h; j++) {
@@ -862,6 +899,7 @@ export class Factory {
             const entry = nxt.side ? 0.5 : (it.p - 1) * Lb / span(target);
             if (this.roomAt(target, entry)) {
               items.shift(); i--;
+              if (b.meter) this.meterHit(b, it.t);
               const moved: BeltItem = { t: it.t, p: entry };
               if (nxt.side) {
                 // Il arrive par le côté : il part du bord commun et glisse jusqu'au milieu.
@@ -876,6 +914,7 @@ export class Factory {
             }
           } else if (nxt.kind === 'machine' && this.canAccept(nxt.machine, it.t)) {
             items.shift(); i--;
+            if (b.meter) this.meterHit(b, it.t);
             this.give(nxt.machine, it.t);
           } else {
             it.p = 1;
@@ -1038,7 +1077,7 @@ export class Factory {
       nextId: this.nextId,
       cables: [...this.cables],
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1049,12 +1088,13 @@ export class Factory {
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
     for (const k of s.cables ?? []) this.cables.add(k);
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
+      if (meter) this.addMeter(b);
       // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
       if (feed !== undefined && feed >= 0) {
         b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
@@ -1086,7 +1126,7 @@ export interface FactorySave {
   nextId: number;
   cables?: number[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;

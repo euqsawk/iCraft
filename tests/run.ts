@@ -651,6 +651,32 @@ test('grand coffre : 2 × 2, 300 objets ; un coffre simple en garde 100', () => 
   assert(g.factory.putInStorage(big, 'fer', 1000) === 300 && g.factory.putInStorage(small, 'fer', 1000) === 100, 'contenances');
 });
 
+test('compteur : posé sur un tapis, il donne le débit des 20 dernières secondes', () => {
+  const g = new Game('TEST-M1');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  assert(!g.placeMeter(5, 5), 'pas sans tapis');
+  g.placeBelts([...Array(8)].map((_, i) => ({ x: 2 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
+  const chest = g.placeMachine('coffre', 10, 5)!;
+  for (const b of g.factory.belts.values()) b.built = true;
+  chest.built = true; g.pending = []; g.factory.markBuilt();
+  const m0 = g.money;
+  assert(g.placeMeter(6, 5) && m0 - g.money === MACHINES.compteur.cost && !g.placeMeter(6, 5), 'posé une fois');
+  const first = g.factory.beltAt(2, 5)!;
+  // Un objet par seconde.
+  for (let i = 0; i < 30 * 30; i++) {
+    if (i % 30 === 0) first.items.push({ t: i % 60 === 0 ? 'fer' : 'cuivre', p: 0 });
+    g.tick(1 / 30);
+  }
+  const r = g.factory.meterRates(g.factory.beltAt(6, 5)!);
+  assert(Math.abs(r.total - 1) < 0.1 && Math.abs(r.by.fer - 0.5) < 0.1, `débit ${r.total} (fer ${r.by.fer})`);
+  // Le tapis s'arrête : le débit retombe à zéro en 20 secondes.
+  run(g, 25);
+  assert(g.factory.meterRates(g.factory.beltAt(6, 5)!).total === 0, 'à l’arrêt');
+  const g2 = new Game('TEST-M1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(!!g2.factory.beltAt(6, 5)!.meter, 'rechargé');
+  assert(g.removeAt(6, 5) && !g.factory.beltAt(6, 5)!.meter && g.removeAt(6, 5) && !g.factory.beltAt(6, 5), 'gomme : le compteur, puis le tapis');
+});
+
 console.log('Électricité');
 test('générateur, câbles et machines électriques', () => {
   const g = new Game('TEST-E1');

@@ -93,6 +93,11 @@ export class GameRenderer {
   private groundLayer = new Container();
   private dots!: TilingSprite;
   private filonLayer = new Container();
+  /** Compteurs posés sur les tapis : un portique au-dessus des objets, et leur débit affiché au-dessus. */
+  private meterG = new Graphics();
+  private meterLabels = new Container();
+  private meterViews = new Map<Belt, { box: Graphics; text: Text; icon: Sprite; sig: string }>();
+  private meterT = 0;
   /** Vue du sous-sol (outil Sous-sol) : la surface pâlit, on voit les tapis souterrains et ce qu'ils transportent. */
   underground = false;
   private undergroundOn = false;
@@ -156,7 +161,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.groundShadows, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -419,6 +424,7 @@ export class GameRenderer {
       }
     }
     this.drawBridges(built);
+    this.drawMeters();
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
     gg.stroke({ width: 11, color: PALETTE.white, alpha: 0.9, cap: 'round' });
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
@@ -430,6 +436,65 @@ export class GameRenderer {
    * Raccord propre entre un tapis et une machine : une petite bouche posée sur le bord de la machine,
    * avec un chevron dans le sens du flux (vers la machine pour une entrée, vers le tapis pour une sortie).
    */
+  /** Le portique d'un compteur : deux poteaux de part et d'autre du tapis, une barre, un voyant jaune. */
+  private drawMeters(): void {
+    const g = this.meterG;
+    g.clear();
+    for (const b of this.game.factory.belts.values()) {
+      if (!b.meter) continue;
+      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+      const px = -DY[b.dir], py = DX[b.dir];
+      g.moveTo(cx + px * 10, cy + py * 10 - 4).lineTo(cx - px * 10, cy - py * 10 - 4).stroke({ width: 5, color: PALETTE.ink, cap: 'round' });
+      g.circle(cx + px * 10, cy + py * 10 - 2, 3.2).circle(cx - px * 10, cy - py * 10 - 2, 3.2).fill(PALETTE.ink);
+      g.circle(cx, cy - 4, 2.4).fill(PALETTE.yellow);
+    }
+    this.meterT = 1;
+  }
+
+  /** Le débit de chaque compteur, mis à jour deux fois par seconde : « 1,2 /s » et la matière principale. */
+  private updateMeterLabels(): void {
+    const f = this.game.factory;
+    const seen = new Set<Belt>();
+    for (const b of f.belts.values()) {
+      if (!b.meter) continue;
+      seen.add(b);
+      let v = this.meterViews.get(b);
+      if (!v) {
+        const box = new Graphics();
+        const text = new Text({ text: '', style: { fontFamily: FONT, fontSize: 10, fontWeight: '800', fill: PALETTE.ink }, resolution: 3 });
+        text.anchor.set(0, 0.5);
+        const icon = new Sprite();
+        icon.anchor.set(0.5);
+        icon.scale.set(0.6);
+        const c = new Container();
+        c.addChild(box, icon, text);
+        this.meterLabels.addChild(c);
+        v = { box, text, icon, sig: '' };
+        this.meterViews.set(b, v);
+      }
+      const r = f.meterRates(b);
+      const main = Object.entries(r.by).sort((a, c) => c[1] - a[1])[0]?.[0];
+      const label = `${(Math.round(r.total * 10) / 10).toString().replace('.', ',')} /s`;
+      const sig = `${label}|${main ?? ''}`;
+      const c = v.box.parent!;
+      c.position.set((b.x + 0.5) * CELL, (b.y + 0.5) * CELL - 20);
+      if (sig === v.sig) continue;
+      v.sig = sig;
+      v.text.text = label;
+      v.icon.visible = !!main;
+      if (main) v.icon.texture = this.itemTextures.get(main)!;
+      const iw = main ? 12 : 0, w = iw + v.text.width + 10;
+      v.icon.position.set(-w / 2 + 5 + 5, 0);
+      v.text.position.set(-w / 2 + 5 + iw, 0);
+      v.box.clear().roundRect(-w / 2, -8, w, 16, 8).fill(0xffffff).stroke({ width: 1.5, color: PALETTE.ink, alpha: 0.6 });
+    }
+    for (const [b, v] of this.meterViews) {
+      if (seen.has(b)) continue;
+      v.box.parent?.destroy({ children: true });
+      this.meterViews.delete(b);
+    }
+  }
+
   /** Le trajet d'un tapis souterrain : du centre de la machine de départ à celui de l'arrivée, par ses cases. */
   private tunnelPath(t: Tunnel): { x: number; y: number }[] | null {
     const f = this.game.factory;
@@ -1612,6 +1677,9 @@ export class GameRenderer {
     if (cablesChanged || (this.cableCount > 0 && this.cableT > 0.5)) this.drawCables();
     this.view = cam.bounds(CELL * 3);
     this.updateUnderground();
+    this.meterT += dt;
+    if (this.meterT > 0.5) { this.meterT = 0; this.updateMeterLabels(); }
+    this.meterLabels.visible = cam.zoom > 0.55 && !this.underground;
     const span = CHUNK * CELL;
     for (const c of this.beltChunks.values()) {
       const vis = this.inView((c.x + 0.5) * span, (c.y + 0.5) * span, span / 2 + CELL);

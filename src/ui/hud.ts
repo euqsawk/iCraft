@@ -777,7 +777,15 @@ export class Hud implements GestureHandlers {
       const items = chain.reduce((s, c) => s + c.items.length, 0);
       const pending = chain.some((c) => !c.built);
       const splitter = b.split !== undefined && !f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) ? '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>' : '';
-      const info = `<h3>${splitter ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${splitter}
+      // Un compteur sur la chaîne : son débit, matière par matière.
+      const mb = chain.find((c) => c.meter);
+      let meter = '';
+      if (mb) {
+        const r = f.meterRates(mb);
+        const parts = Object.entries(r.by).sort((a, c) => c[1] - a[1]).map(([k, v]) => `${esc(item(k).name.toLowerCase())} ${fmtN(v)}`);
+        meter = `<p><b>Compteur : ${fmtN(r.total)} objet${r.total >= 2 ? 's' : ''} par seconde</b>${parts.length ? ` (${parts.join(', ')})` : ''}, sur les 20 dernières secondes. La gomme le retire avant le tapis.</p>`;
+      }
+      const info = `<h3>${splitter ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${splitter}${meter}
         <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.length} ${ICONS.coinSm}</p>`;
       const feeders = (b.feeds ?? []).map((d) => f.machineAt(b.x + DX[d], b.y + DY[d])).filter((m): m is Machine => !!m);
       const fed = b.split !== undefined ? f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) : null;

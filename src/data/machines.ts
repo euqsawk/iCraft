@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter';
 
 export interface MachineDef {
   id: string;
@@ -143,6 +143,14 @@ export const MACHINES: Record<string, MachineDef> = {
     hint: 'Uranium → uranium enrichi',
     recipes: [r({ uranium: 1 }, { uranium_enrichi: 1 }, 3)],
   },
+  coffre: {
+    id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde 100 objets · les drones y prennent le charbon',
+  },
+  compteur: {
+    id: 'compteur', name: 'Compteur', kind: 'meter', coal: false, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true,
+    hint: 'Se pose sur un tapis : son débit, sur les 20 dernières secondes',
+  },
   grand_coffre: {
     id: 'grand_coffre', name: 'Grand coffre', kind: 'storage', coal: false, w: 2, h: 2, cost: 50, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 300 objets · 2 × 2',
@@ -150,10 +158,6 @@ export const MACHINES: Record<string, MachineDef> = {
   generateur: {
     id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 5,
     hint: 'Brûle du charbon et alimente les machines reliées par câble',
-  },
-  coffre: {
-    id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
-    hint: 'Garde 100 objets · les drones y prennent le charbon',
   },
   station: {
     id: 'station', name: 'Station', kind: 'station', coal: true, w: 2, h: 2, cost: 100, unlock: 1, recipes: [], buildable: true,

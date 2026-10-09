@@ -1,6 +1,6 @@
 // L'état complet d'une partie : monde, usine, robot, drones, argent, paliers, laboratoire et commandes.
 import { CHUNK, RULES } from '../config.ts';
-import { machineDef } from '../data/machines.ts';
+import { MACHINES, machineDef } from '../data/machines.ts';
 import { item, itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
 import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
@@ -595,6 +595,7 @@ export class Game {
 
   placeMachine(type: string, x: number, y: number): Machine | null {
     const def = machineDef(type);
+    if (def.kind === 'meter') { this.placeMeter(x, y); return null; }
     if (def.gift) {
       this.emit({ type: 'toast', text: `${def.name} : le Noyau te l’offre bientôt`, tone: 'info' });
       return null;
@@ -663,6 +664,16 @@ export class Game {
   }
 
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
+  /** Pose un compteur de débit sur un tapis (tout de suite). */
+  placeMeter(x: number, y: number): boolean {
+    const check = this.factory.checkMachine('compteur', x, y);
+    if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return false; }
+    if (!this.spend(MACHINES.compteur.cost)) return false;
+    this.factory.addMeter(this.factory.beltAt(x, y)!);
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
   removeAt(x: number, y: number): boolean {
     // Un pont passe au-dessus : on retire d'abord le pont, le tapis du dessous reste.
     const over = this.factory.bridgeOver(x, y);
@@ -677,6 +688,13 @@ export class Game {
       return true;
     }
     const b = this.factory.beltAt(x, y);
+    // Un compteur sur le tapis : il part d'abord (remboursé), le tapis au coup suivant.
+    if (b?.meter) {
+      delete b.meter;
+      this.earn(MACHINES.compteur.cost);
+      this.emit({ type: 'factory' });
+      return true;
+    }
     if (b) {
       this.earn(this.refundBelt(b));
       this.emit({ type: 'factory' });

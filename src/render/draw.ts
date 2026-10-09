@@ -199,6 +199,14 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       }
       g.circle(0, 0, 3).fill(ink);
       break;
+    case 'compteur':
+      // Un petit cadran : arc, aiguille, et un tapis dessous.
+      g.moveTo(-12, 10).lineTo(12, 10).stroke({ width: 5, color: PALETTE.white, cap: 'round' });
+      g.moveTo(-12, 10).lineTo(12, 10).stroke({ width: 1.5, color: PALETTE.roller, cap: 'round' });
+      g.arc(0, 4, 11, Math.PI, 0).stroke({ width: 3, color: ink, cap: 'round' });
+      g.moveTo(0, 4).lineTo(6, -3).stroke({ width: 2.6, color: coral, cap: 'round' });
+      g.circle(0, 4, 2.4).fill(ink);
+      break;
     case 'grand_coffre':
       // Deux coffres empilés, plus larges.
       g.roundRect(-15, -12, 30, 11, 3).fill(0xc98a4b);
