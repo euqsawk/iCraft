@@ -157,6 +157,16 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.moveTo(-3, 4).lineTo(-3, -4).moveTo(-5.5, -1.5).lineTo(-3, -4.5).lineTo(-0.5, -1.5).stroke({ width: 2, color: PALETTE.green, cap: 'round', join: 'round' });
       g.moveTo(3, -4).lineTo(3, 4).moveTo(0.5, 1.5).lineTo(3, 4.5).lineTo(5.5, 1.5).stroke({ width: 2, color: coral, cap: 'round', join: 'round' });
       break;
+    case 'arbre':
+      g.rect(-1.5, 2, 3, 7).fill(0x8a5a2b);
+      g.circle(0, -2, 7).fill(0x5fae6b).stroke({ width: 1.8, color: ink });
+      g.circle(-2.5, -4, 2).fill(0x8fd19a);
+      break;
+    case 'filtre':
+      g.roundRect(-14, -12, 28, 24, 6).fill(0xffffff).stroke({ width: 2.6, color: ink });
+      g.circle(0, 0, 8).stroke({ width: 2.2, color: ink });
+      g.moveTo(0, -7).lineTo(0, 7).moveTo(-7, 0).lineTo(7, 0).stroke({ width: 2, color: 0x5fae6b, cap: 'round' });
+      break;
     case 'lampadaire':
       g.moveTo(0, 9).lineTo(0, -5).stroke({ width: 2.4, color: ink, cap: 'round' });
       g.moveTo(-4, 9).lineTo(4, 9).stroke({ width: 2.4, color: ink, cap: 'round' });

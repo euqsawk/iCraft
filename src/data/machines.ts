@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger' | 'rocket';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger' | 'rocket' | 'tree' | 'filter';
 
 export interface MachineDef {
   id: string;
@@ -217,6 +217,14 @@ export const MACHINES: Record<string, MachineDef> = {
   batterie: {
     id: 'batterie', name: 'Batterie', kind: 'battery', coal: false, w: 2, h: 2, cost: 150, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde le surplus du solaire (10 kWh) et le rend la nuit',
+  },
+  arbre: {
+    id: 'arbre', name: 'Arbre', kind: 'tree', coal: false, w: 1, h: 1, cost: 5, unlock: 1, recipes: [], buildable: true,
+    hint: 'Nettoie doucement la pollution autour de lui',
+  },
+  filtre: {
+    id: 'filtre', name: 'Filtre à air', kind: 'filter', coal: false, w: 2, h: 2, cost: 250, unlock: 1, recipes: [], buildable: true,
+    hint: 'Au courant (60 kW) : nettoie vite la pollution autour de lui',
   },
   rampe: {
     id: 'rampe', name: 'Rampe de lancement', kind: 'rocket', coal: false, w: 4, h: 4, cost: 5000, unlock: 1, recipes: [], buildable: true,

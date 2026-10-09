@@ -190,6 +190,7 @@ export interface GameSave {
   stats?: { made: Record<string, number>; used: Record<string, number> };
   achievements?: string[];
   rockets?: number;
+  pollution?: Record<string, number>;
   gifts?: Record<string, number>;
   ordersDone?: number;
   sellT?: number;
@@ -202,7 +203,7 @@ export interface GameSave {
 }
 
 /** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte, avec le robot et les drones). */
-const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar']);
+const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar', 'rampe', 'arbre', 'filtre']);
 
 export class Game {
   readonly world: World;
@@ -280,6 +281,43 @@ export class Game {
     f.makeInner(m, Math.max(src.size ?? this.atelierSize, this.atelierSize)).load(this.blankSave(src.inner.serialize()));
     this.finishPlacement(m);
     this.emit({ type: 'toast', text: 'Copie de l’atelier posée', tone: 'good' });
+    return m;
+  }
+
+  /** Ce que vaut l'intérieur enregistré d'un atelier (machines, tapis, ateliers imbriqués). */
+  saveValue(s: FactorySave): number {
+    let v = 0;
+    for (const m of s.machines) v += (MACHINES[m.type]?.cost ?? 0) + (m.inner ? this.saveValue(m.inner) : 0);
+    for (const b of s.belts) v += RULES.beltCost + (b[8] ? RULES.bridgeCost : 0) + (b[9] ? RULES.bridgeCost : 0);
+    return v;
+  }
+
+  /** Prix d'un atelier posé depuis un plan : l'atelier, plus son contenu au taux de copie. */
+  planPrice(s: FactorySave): number {
+    return machineDef('atelier').cost + Math.ceil(this.saveValue(s) * this.copyRate);
+  }
+
+  /** L'intérieur d'un atelier, vidé, prêt à enregistrer comme plan. */
+  planOf(m: Machine): FactorySave | null {
+    return m.inner ? this.blankSave(m.inner.serialize()) : null;
+  }
+
+  /** Pose un atelier depuis un plan enregistré (d'une autre partie, peut-être). */
+  placePlan(save: FactorySave, size: number, x: number, y: number): Machine | null {
+    if (!this.hasMachine('atelier')) { this.emit({ type: 'toast', text: 'Modules : à débloquer dans l’arbre', tone: 'warn' }); return null; }
+    if (this.inAtelier && !this.nesting) { this.emit({ type: 'toast', text: 'Imbrication : à débloquer dans l’arbre (Modules)', tone: 'warn' }); return null; }
+    const f = this.view;
+    const check = f.checkMachine('atelier', x, y, undefined, true);
+    if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return null; }
+    // Un plan peut contenir des machines pas encore débloquées dans cette partie.
+    const missing = [...new Set(save.machines.map((m) => m.type))].filter((t) => MACHINES[t] && !this.hasMachine(t));
+    if (missing.length) { this.emit({ type: 'toast', text: `Pas encore débloqué : ${missing.map((t) => machineDef(t).name.toLowerCase()).join(', ')}`, tone: 'warn' }); return null; }
+    if (!this.spend(this.planPrice(save))) return null;
+    if (check.belts) this.earn(this.clearBeltsUnder(3, 3, x, y));
+    const m = f.addMachine('atelier', x, y, false);
+    f.makeInner(m, Math.max(size, this.atelierSize)).load(this.blankSave(save));
+    this.finishPlacement(m);
+    this.emit({ type: 'toast', text: 'Atelier posé depuis le plan', tone: 'good' });
     return m;
   }
 
@@ -476,6 +514,7 @@ export class Game {
     this.world = new World(seed);
     this.factory = new Factory(this.world);
     this.factory.onDeliver = (m, item) => this.receive(m, item, 1);
+    this.factory.pollution = this.pollution;
     this.factory.onRocket = (m) => { this.rockets++; this.emit({ type: 'rocket', id: m.id, n: this.rockets }); };
     this.factory.buildingAccepts = (m, item) => this.accepts(m, item) > 0;
     if (save) {
@@ -2029,6 +2068,18 @@ export class Game {
 
   /** Fusées lancées. */
   rockets = 0;
+  /** Pollution par morceau de carte (« cx,cy »). */
+  readonly pollution = new Map<string, number>();
+
+  /** Le temps qu'il fait : un temps tiré de la graine toutes les 200 secondes (clair le plus souvent). */
+  get weather(): 'clair' | 'pluie' | 'neige' {
+    const seg = Math.floor(this.played / RULES.weatherSpan);
+    if (seg < 1) return 'clair';
+    const r = (((Math.sin(seg * 127.1 + (this.world.seedNum % 1000) * 3.7) * 43758.5453) % 1) + 1) % 1;
+    return r < 0.62 ? 'clair' : r < 0.87 ? 'pluie' : 'neige';
+  }
+
+  private lastWeather: string | null = null;
 
   /** Succès obtenus. */
   achievements = new Set<string>();
@@ -2080,6 +2131,17 @@ export class Game {
       this.emit({ type: 'toast', text: night ? 'La nuit tombe : les panneaux solaires s’arrêtent, les batteries prennent le relais' : 'Le jour se lève : les panneaux solaires repartent', tone: 'info' });
     }
     this.wasNight = night;
+    // Météo : la pluie ralentit les camions, la neige (et un peu la pluie) voile le soleil.
+    const w = this.weather;
+    this.factory.truckMult = w === 'pluie' ? RULES.rainTruck : w === 'neige' ? 0.85 : 1;
+    this.factory.solarMult = w === 'neige' ? RULES.snowSolar : w === 'pluie' ? 0.8 : 1;
+    if (this.lastWeather !== null && w !== this.lastWeather) {
+      this.emit({ type: 'toast', text: w === 'pluie' ? 'Il pleut : les camions roulent moins vite' : w === 'neige' ? 'Il neige : les panneaux solaires donnent moitié moins' : 'Le temps se dégage', tone: 'info' });
+    }
+    this.lastWeather = w;
+    // La pollution retombe lentement d'elle-même.
+    const decay = Math.max(0, 1 - 0.002 * dt);
+    for (const [k, v] of this.pollution) { const nv = v * decay; if (nv < 0.05) this.pollution.delete(k); else this.pollution.set(k, nv); }
     this.achT += dt;
     if (this.achT > 2) { this.achT = 0; this.checkAchievements(); }
     this.statT += dt;
@@ -2112,6 +2174,7 @@ export class Game {
       look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
       gifts: this.gifts, ordersDone: this.ordersDone,
       stats: this.factory.stats, achievements: [...this.achievements], rockets: this.rockets,
+      pollution: Object.fromEntries([...this.pollution].filter(([, v]) => v >= 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])),
       crew: {
         robot: { fuel: r.fuel, carb: r.carb, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
         drones: this.drones.map((d) => ({ fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
@@ -2128,6 +2191,7 @@ export class Game {
     if (s.stats) { this.factory.stats.made = { ...s.stats.made }; this.factory.stats.used = { ...s.stats.used }; }
     for (const id of s.achievements ?? []) this.achievements.add(id);
     this.rockets = s.rockets ?? 0;
+    for (const [k, v] of Object.entries(s.pollution ?? {})) this.pollution.set(k, v);
     this.pending = s.pending.filter((j) => (j.kind === 'belt' ? this.factory.belts.has(j.k) : this.factory.machines.has(j.id)));
     this.order = s.order; this.choices = s.choices;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;

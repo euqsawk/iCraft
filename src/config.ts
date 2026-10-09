@@ -76,6 +76,19 @@ export const RULES = {
   hangarDrones: 3,
   /** Rampe de lancement : compte à rebours avant le décollage (s). */
   rocketCountdown: 5,
+  /** Météo : durée d'un temps (s) ; la pluie ralentit les camions, la neige voile le soleil. */
+  weatherSpan: 200,
+  rainTruck: 0.7,
+  snowSolar: 0.5,
+  /** Pollution (par morceau de carte) : un charbon brûlé dans un générateur en ajoute 1, dans une machine 0,3. */
+  pollGen: 1,
+  pollMachine: 0.3,
+  /** Au-delà, les machines ralentissent (jusqu'à 40 % plus lentes) et le soleil passe moins. */
+  pollThreshold: 40,
+  /** Ce que nettoient chaque seconde un arbre et un filtre à air (au courant) dans leur morceau de carte. */
+  treeClean: 0.04,
+  filterClean: 0.8,
+  filterKw: 60,
   /** Le carburant dure 5 fois plus longtemps qu'un charbon (et brûle en premier). */
   carburantMult: 5,
   /** Véhicules : prix d'une case de route ou de rail, prix du véhicule, charge, vitesse (cases par seconde). */

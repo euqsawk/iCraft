@@ -12,6 +12,7 @@ import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
 import { TunnelTracer } from '../sim/tunnels.ts';
 import { ACHIEVEMENTS } from '../data/achievements.ts';
+import { loadPlans, savePlans, type AtelierPlan } from '../save/plans.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { DX, DY } from '../sim/geom.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
@@ -101,6 +102,8 @@ export class Hud implements GestureHandlers {
   private moving: Machine | null = null;
   /** Copie d'atelier en cours de pose (mode déplacement, mais on pose une copie). */
   private copying: Machine | null = null;
+  /** Plan d'atelier en cours de pose (glissé depuis la palette). */
+  private placingPlan: AtelierPlan | null = null;
   private tracer: BeltTracer | null = null;
   private lastErase: { x: number; y: number } | null = null;
   private cableTracer: CableTracer | null = null;
@@ -123,6 +126,8 @@ export class Hud implements GestureHandlers {
   private orderCard!: HTMLButtonElement;
   private minimap!: HTMLCanvasElement;
   private dayIcon!: HTMLElement;
+  private weatherIcon!: HTMLElement;
+  private weatherSig = '';
   private daySig = '';
   private palette!: HTMLElement;
   private toolButtons = new Map<string, HTMLButtonElement>();
@@ -192,7 +197,8 @@ export class Hud implements GestureHandlers {
     mm.append(this.minimap);
     // Jour et nuit : un petit soleil (ou une lune) dans le coin de la mini-carte.
     this.dayIcon = h('span', 'daynight');
-    mm.append(this.dayIcon);
+    this.weatherIcon = h('span', 'daynight weather hidden');
+    mm.append(this.dayIcon, this.weatherIcon);
     // Toucher : la caméra se recentre sur le robot et le suit, jusqu'à ce qu'on la déplace.
     // Rester appuyé : la vraie carte.
     let pressT = 0, long = false;
@@ -377,7 +383,7 @@ export class Hud implements GestureHandlers {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor' || m.kind === 'charger') return 'electricite';
+    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor' || m.kind === 'charger' || m.kind === 'filter') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
     if (m.kind === 'storage' || m.kind === 'sell') return 'stockage';
     return 'outils';
@@ -391,7 +397,7 @@ export class Hud implements GestureHandlers {
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const inside = !!this.game.inAtelier;
-    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar'];
+    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar', 'rampe', 'arbre', 'filtre'];
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id))
       // Dans un atelier : ni foreuse, ni station, ni générateur, ni dépôt ; les entrées et sorties, seulement là.
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
@@ -421,8 +427,28 @@ export class Hud implements GestureHandlers {
         if (this.dragEnded) return;
         this.toast(`${m.name} : glisse sa carte jusqu’à sa place sur la carte`, 'info');
       };
-      b.addEventListener('pointerdown', (e) => this.cardDown(e, m.id, b));
+      b.addEventListener('pointerdown', (e) => { this.placingPlan = null; this.cardDown(e, m.id, b); });
       row.append(b);
+    }
+    // Les plans d'ateliers enregistrés (dans toutes les parties), dans la catégorie Modules.
+    const showPlans = this.game.hasMachine('atelier') && (!inside || this.game.nesting) && (list.length < 10 || this.paletteTab === 'modules');
+    if (showPlans) {
+      for (const plan of loadPlans()) {
+        const b = h('button', 'mcard plan');
+        b.innerHTML = `<img src="${this.machineIcons.get('atelier')}" alt="">${esc(plan.name)}<small>${ICONS.coinSm}${this.game.planPrice(plan.save)}</small><span class="plan-x" aria-label="Oublier ce plan">×</span>`;
+        b.onclick = (ev) => {
+          if ((ev.target as HTMLElement).classList.contains('plan-x')) {
+            savePlans(loadPlans().filter((p) => p.id !== plan.id));
+            this.toast(`Plan oublié : ${plan.name}`, 'info');
+            this.renderPalette();
+            return;
+          }
+          if (this.dragEnded) return;
+          this.toast(`${plan.name} : glisse sa carte sur la carte pour poser l’atelier`, 'info');
+        };
+        b.addEventListener('pointerdown', (e) => { if (!(e.target as HTMLElement).classList.contains('plan-x')) { this.placingPlan = plan; this.cardDown(e, 'atelier', b); } });
+        row.append(b);
+      }
     }
     // Dernière carte : l'arbre, pour débloquer d'autres machines.
     const ready = this.game.unlockableCount();
@@ -492,8 +518,10 @@ export class Hud implements GestureHandlers {
       setTimeout(() => { this.dragEnded = false; }, 350);
       const pv = this.r.preview;
       if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && !cancel) {
-        this.game.placeMachine(type, pv.x, pv.y);
+        if (this.placingPlan) this.game.placePlan(this.placingPlan.save, this.placingPlan.size, pv.x, pv.y);
+        else this.game.placeMachine(type, pv.x, pv.y);
       }
+      this.placingPlan = null;
       this.r.preview = null;
       this.r.guides = [];
       this.bubble.classList.add('hidden');
@@ -641,7 +669,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && machineDef(m.type).kind === 'storage') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
-    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger', 'rocket'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
+    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger', 'rocket', 'filter'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -682,7 +710,7 @@ export class Hud implements GestureHandlers {
       this.showBubble(s.x, s.y - 8, `<span class="rate"><img src="${this.itemIcons.get(check.ore)}" alt=""><b>${rate} / s</b></span> ${esc(item(check.ore).name.toLowerCase())} · ${tail}${onBelt}`, false);
       return;
     }
-    const label = this.copying ? (check.ok ? `Copie · ${ICONS.coinSm}${this.game.copyPrice(this.copying)}${onBelt}` : esc(check.reason ?? 'Impossible')) : this.tool === 'move' ? `Déplacer ici${onBelt}` : check.ok ? `${def.name} · ${ICONS.coinSm}${def.cost}${onBelt}` : esc(check.reason ?? 'Impossible');
+    const label = this.placingPlan ? (check.ok ? `${esc(this.placingPlan.name)} · ${ICONS.coinSm}${this.game.planPrice(this.placingPlan.save)}` : esc(check.reason ?? 'Impossible')) : this.copying ? (check.ok ? `Copie · ${ICONS.coinSm}${this.game.copyPrice(this.copying)}${onBelt}` : esc(check.reason ?? 'Impossible')) : this.tool === 'move' ? `Déplacer ici${onBelt}` : check.ok ? `${def.name} · ${ICONS.coinSm}${def.cost}${onBelt}` : esc(check.reason ?? 'Impossible');
     this.showBubble(s.x, s.y - 8, label, !check.ok);
   }
 
@@ -1656,6 +1684,19 @@ export class Hud implements GestureHandlers {
         copy.onclick = () => { close(); this.startCopy(mm); };
         row1.append(enter, copy);
         sheet.append(row1);
+        const planBtn = h('button', 'btn', 'Enregistrer comme plan');
+        planBtn.onclick = () => {
+          const save = g.planOf(mm);
+          if (!save) return;
+          const kinds = machines.map(([t]) => machineDef(t).name.toLowerCase()).slice(0, 3).join(', ');
+          const plans = loadPlans();
+          const plan: AtelierPlan = { id: `p${Date.now().toString(36)}`, name: `Atelier ${plans.length + 1}${kinds ? ` · ${kinds}` : ''}`, size: mm.size ?? 20, save, machines: total };
+          if (savePlans([...plans, plan])) { this.toast('Plan enregistré : il est dans la palette (Modules) de toutes tes parties', 'good'); this.renderPalette(); }
+          else this.toast('Impossible d’enregistrer le plan sur cet appareil', 'warn');
+        };
+        const prow = h('div', 'row');
+        prow.append(planBtn);
+        sheet.append(prow);
         const acts = h('div', 'row');
         const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
         mv.onclick = () => { close(); this.startMove(mm); };
@@ -1682,18 +1723,19 @@ export class Hud implements GestureHandlers {
         sheet.append(acts);
         return;
       }
-      if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'charger') {
+      if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'charger' || def.kind === 'filter') {
         const wn = g.view.waterNetOf(mm);
         const waterLine = wn ? `Réseau d’eau : ${fmtN(wn.demand)} L/s demandés pour ${fmtN(wn.supply)} L/s pompés.` : 'Aucun tuyau ne la touche.';
         const sub = def.kind === 'pump' ? `${status} 40 L/s. ${waterLine}`
           : def.kind === 'reactor' ? `${status} Eau : ${Math.round((mm.water ?? 0) * 100)} %. ${wn ? waterLine : 'Relie-le par un tuyau à une pompe, sinon il ne démarre pas.'}`
+          : def.kind === 'filter' ? `${status} Pollution ici : ${Math.round(g.view.pollutionAt(mm))}. Au courant, il en retire ${RULES.filterClean} par seconde.`
           : `${status} Les drones autour (robot ou stations) viennent s’y recharger au lieu de brûler du charbon.`;
         sheet.append(this.sheetHead(def.name, esc(sub), close));
         const card = h('div', 'card');
         if (def.kind === 'reactor') {
           const rods = mm.inBuf.uranium_enrichi ?? 0;
           card.innerHTML = `${this.gauge('Barreaux', rods, RULES.fuelStack, rods <= 1).replace(this.itemIcons.get('charbon')!, this.itemIcons.get('uranium_enrichi')!)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${(mm.water ?? 0) * 100}%"></span></span><b>${Math.round((mm.water ?? 0) * 100)} %</b></div>${this.powerCard(mm)}<p class="muted small">Un barreau d’uranium enrichi dure 2 minutes à pleine charge ; apporte-les par tapis.</p>`;
-        } else if (def.kind === 'charger') {
+        } else if (def.kind === 'charger' || def.kind === 'filter') {
           card.innerHTML = this.powerCard(mm);
         } else {
           card.innerHTML = `<p class="muted small">${esc(waterLine)}</p>`;
@@ -2745,6 +2787,15 @@ export class Hud implements GestureHandlers {
       this.dayIcon.style.background = light > 0.5 ? '#FFF6D6' : '#1F2A3D';
       // La nuit, le titre du palier (posé sur la carte) garde un fond blanc pour rester lisible.
       this.root.classList.toggle('is-night', light < 0.6 && !this.game.inAtelier);
+      const w = this.game.weather;
+      if (w !== this.weatherSig) {
+        this.weatherSig = w;
+        this.weatherIcon.classList.toggle('hidden', w === 'clair');
+        this.weatherIcon.innerHTML = w === 'pluie'
+          ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 10 H11.5 A2.8 2.8 0 0 0 11 4.5 A3.5 3.5 0 0 0 4.3 5.6 A2.2 2.2 0 0 0 4.5 10 Z" fill="#DCE6F0" stroke="#2E3A4B" stroke-width="1.3"/><path d="M6 12 L5.3 14 M9 12 L8.3 14 M12 12 L11.3 14" stroke="#4B8BD1" stroke-width="1.4" stroke-linecap="round"/></svg>'
+          : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2 V14 M2.8 5 L13.2 11 M2.8 11 L13.2 5" stroke="#4B8BD1" stroke-width="1.6" stroke-linecap="round"/></svg>';
+        this.weatherIcon.title = w === 'pluie' ? 'Pluie : camions plus lents' : w === 'neige' ? 'Neige : solaire réduit' : '';
+      }
     }
     // Inventaires en grand : la fabrication avance à chaque image, le reste chaque seconde.
     if (this.sheetKind && this.overlay) {

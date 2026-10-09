@@ -794,3 +794,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .ach-row.done .ach-ico { background: var(--yellow); color: var(--ink); }
 .pill.money { white-space: nowrap; flex: none; }
 .lvl-info { min-width: 0; }
+.daynight.weather { left: auto; right: 3px; background: #fff; }
+.daynight.hidden { display: none; }
+.mcard.plan { position: relative; }
+.mcard.plan .plan-x { position: absolute; right: 4px; top: 2px; width: 20px; height: 20px; border-radius: 10px; background: #F0F5F2; color: var(--ink2); font-size: 14px; line-height: 20px; font-weight: 900; }

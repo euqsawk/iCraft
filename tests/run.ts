@@ -1050,6 +1050,49 @@ test('toundras lointaines (titane, cristal pur), fusée, monte-charge', () => {
   run(g, 60);
   assert((chest.inBuf.verre ?? 0) >= 5 && (chest.inBuf.sable ?? 0) < 20, `monte-charge : ${JSON.stringify(chest.inBuf)}`);
 });
+test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
+  const g = new Game('TEST-P1');
+  const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  g.money = 1e6; g.world.reveal(8, 8, 25); g.drones[0].cargo = null;
+  // Météo : clair au début, puis des temps tirés de la graine.
+  assert(g.weather === 'clair', 'il fait beau au départ');
+  const seen = new Set<string>();
+  for (let i = 1; i < 40; i++) { g.played = i * RULES.weatherSpan + 1; seen.add(g.weather); }
+  assert(seen.has('pluie') && seen.has('clair'), `temps : ${[...seen]}`);
+  g.played = [...Array(40).keys()].map((i) => i * RULES.weatherSpan + 1).find((t) => { g.played = t; return g.weather === 'pluie'; })!;
+  run(g, 0.1);
+  assert(g.factory.truckMult === RULES.rainTruck, 'la pluie ralentit les camions');
+  // Pollution : un générateur qui brûle salit le sol ; au-delà du seuil, les machines ralentissent.
+  for (const id of ['generateur', 'arbre', 'filtre', 'pompe', 'presse']) g.unlocks.add(id);
+  apply();
+  const four = g.placeMachine('four', 10, 10)!;
+  four.built = true; g.pending = []; g.factory.markBuilt();
+  const k = `${Math.floor(11 / 16)},${Math.floor(11 / 16)}`;
+  g.pollution.set(k, 200);
+  assert(g.factory.pollutionMult(four) < 1, 'pollution : machines plus lentes');
+  const tree = g.placeMachine('arbre', 13, 10)!;
+  tree.built = true; g.factory.markBuilt();
+  const p0 = g.pollution.get(k)!;
+  run(g, 10);
+  assert(g.pollution.get(k)! < p0, `les arbres nettoient : ${p0} → ${g.pollution.get(k)}`);
+  const g2 = new Game('TEST-P1', JSON.parse(JSON.stringify(g.serialize())));
+  assert((g2.pollution.get(k) ?? 0) > 0, 'pollution sauvegardée');
+  // Plans : l'intérieur d'un atelier, reposé ailleurs (dans une autre partie).
+  g.unlocks.add('module'); apply();
+  const a = g.placeMachine('atelier', 20, 20)!;
+  a.built = true; g.pending = [];
+  g.enterAtelier(a); g.placeMachine('presse', 5, 5); g.leaveAtelier();
+  const plan = g.planOf(a)!;
+  const other = new Game('TEST-P2');
+  other.money = 1e6; other.world.reveal(8, 8, 25);
+  for (const id of ['module']) other.unlocks.add(id);
+  (other as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(!other.placePlan(plan, 20, 10, 10), 'la presse n’est pas débloquée dans l’autre partie');
+  other.unlocks.add('presse');
+  const m0 = other.money;
+  const b = other.placePlan(plan, 20, 10, 10)!;
+  assert(b && b.inner && [...b.inner.machines.values()].some((x) => x.type === 'presse') && m0 - other.money === other.planPrice(plan), 'atelier posé depuis le plan');
+});
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {
   const g = new Game('TEST-M1');

@@ -1,5 +1,5 @@
 // L'usine : tapis et machines sur la grille, et leur simulation.
-import { RULES } from '../config.ts';
+import { CHUNK, RULES } from '../config.ts';
 import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
@@ -238,6 +238,7 @@ export class Factory {
   /** Puissance demandée par la machine quand elle travaille, en kW (0 : elle ne se branche pas). */
   powerUse(m: Machine): number {
     if (machineDef(m.type).kind === 'charger') return RULES.chargerKw;
+    if (machineDef(m.type).kind === 'filter') return RULES.filterKw;
     if (m.inner) return this.electric.size ? this.innerKw(m) : 0;
     return this.electric.has(m.type) ? machineDef(m.type).kw ?? 100 : 0;
   }
@@ -636,7 +637,7 @@ export class Factory {
     }
     for (const l of this.lines.values()) {
       const cap = l.kind === 'train' ? RULES.trainLoad : RULES.truckLoad;
-      const speed = (l.kind === 'train' ? RULES.trainSpeed : RULES.truckSpeed);
+      const speed = (l.kind === 'train' ? RULES.trainSpeed : RULES.truckSpeed * this.truckMult);
       const gap = l.kind === 'train' ? RULES.trainGap : RULES.truckGap;
       const n = l.stops.length;
       for (const v of l.vehicles) {
@@ -943,6 +944,33 @@ export class Factory {
   /** Le courant de chaque réseau : les générateurs qui ont du charbon servent les machines qui veulent travailler. */
   /** Lumière du jour (0 la nuit, 1 en plein jour) : les panneaux solaires en dépendent. */
   daylight = 1;
+  /** Météo : vitesse des camions et part du soleil qui passe (pluie, neige). */
+  truckMult = 1;
+  solarMult = 1;
+  /** Pollution par morceau de carte (partagée avec la partie) ; null dans un atelier. */
+  pollution: Map<string, number> | null = null;
+
+  private chunkOf(m: Machine): string {
+    return `${Math.floor((m.x + m.w / 2) / CHUNK)},${Math.floor((m.y + m.h / 2) / CHUNK)}`;
+  }
+
+  /** Ajoute de la pollution là où est la machine. */
+  pollute(m: Machine, amount: number): void {
+    if (!this.pollution) return;
+    const k = this.chunkOf(m);
+    this.pollution.set(k, (this.pollution.get(k) ?? 0) + amount);
+  }
+
+  /** Pollution là où est la machine. */
+  pollutionAt(m: Machine): number {
+    return this.pollution?.get(this.chunkOf(m)) ?? 0;
+  }
+
+  /** Une zone très polluée ralentit les machines (jusqu'à 40 %). */
+  pollutionMult(m: Machine): number {
+    const p = this.pollutionAt(m);
+    return p <= RULES.pollThreshold ? 1 : Math.max(0.6, 1 - (p - RULES.pollThreshold) / 300);
+  }
 
   /**
    * Le courant de chaque réseau. Le soleil sert d'abord, puis les batteries, puis les générateurs au charbon
@@ -955,7 +983,7 @@ export class Factory {
       for (const g of n.gens) {
         if (!g.built) continue;
         const d = machineDef(g.type);
-        if (d.kind === 'solar') solar += d.supply! * this.daylight;
+        if (d.kind === 'solar') solar += d.supply! * this.daylight * this.solarMult * this.pollutionMult(g);
         else if (d.kind === 'reactor') { if ((g.inBuf.uranium_enrichi ?? 0) > 0 || g.burn > 0) coal += d.supply! * (g.water ?? 0); }
         else if (g.fuel > 0 || g.burn > 0) coal += d.supply!;
       }
@@ -1028,6 +1056,7 @@ export class Factory {
       const k = burnOne(g, RULES.genCoalSeconds);
       if (!k) { g.status = 'nofuel'; return; }
       this.flow(g, k, 1, false);
+      this.pollute(g, RULES.pollGen);
     }
     g.burn -= dt * load;
     g.status = 'working';
@@ -1220,6 +1249,7 @@ export class Factory {
       const k = burnOne(m, RULES.coalMachineSeconds);
       if (!k) return false;
       this.flow(m, k, 1, false);
+      this.pollute(m, RULES.pollMachine);
     }
     m.burn -= dt;
     return true;
@@ -1416,8 +1446,13 @@ export class Factory {
     for (const m of this.machines.values()) {
       if (!m.built) continue;
       const def = machineDef(m.type);
-      m.want = def.kind === 'charger';
-      if (def.kind === 'charger') m.status = (m.power ?? 0) > 0 ? 'working' : 'nopower';
+      m.want = def.kind === 'charger' || def.kind === 'filter';
+      if (def.kind === 'charger' || def.kind === 'filter') m.status = (m.power ?? 0) > 0 ? 'working' : 'nopower';
+      // Arbres et filtres nettoient la pollution de leur morceau de carte.
+      if (this.pollution && (def.kind === 'tree' || (def.kind === 'filter' && (m.power ?? 0) > 0))) {
+        const k = this.chunkOf(m), p = this.pollution.get(k) ?? 0;
+        if (p > 0) this.pollution.set(k, Math.max(0, p - (def.kind === 'tree' ? RULES.treeClean : RULES.filterClean) * dt));
+      }
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
       else if (def.kind === 'atelier') this.tickAtelier(m, def, dt);
@@ -1454,7 +1489,7 @@ export class Factory {
     const k = this.energy(m, def, dt);
     if (k <= 0 && !this.selfFed(m)) { m.status = this.noEnergy(m); return; }
     m.status = 'working';
-    m.drillT += dt * m.rate * (k > 0 ? k : 1);
+    m.drillT += dt * m.rate * (k > 0 ? k : 1) * this.pollutionMult(m);
     if (m.drillT >= 1) {
       m.drillT -= 1;
       m.made++;
@@ -1485,7 +1520,7 @@ export class Factory {
         if (k <= 0 && this.selfFed(m)) k = 1;
         if (k <= 0) { m.status = this.noEnergy(m); return; }
         // Un mélangeur arrosé (tuyau d'eau) travaille moitié plus vite.
-        m.craft.t += dt * k * (m.type === 'melangeur' && (m.water ?? 0) > 0 ? 1 + 0.5 * m.water! : 1);
+        m.craft.t += dt * k * this.pollutionMult(m) * (m.type === 'melangeur' && (m.water ?? 0) > 0 ? 1 + 0.5 * m.water! : 1);
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
       // Le carburant qu'elle produit remplit d'abord sa propre case carburant.

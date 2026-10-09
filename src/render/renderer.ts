@@ -182,6 +182,10 @@ export class GameRenderer {
   private glowLayer = new Container();
   private lightRT: RenderTexture | null = null;
   private lightSprite = new Sprite();
+  /** Pollution : un voile brun sur les morceaux de carte pollués. Météo : pluie ou neige, à l'écran. */
+  private smogG = new Graphics();
+  private smogT = 1;
+  private weatherG = new Graphics();
   /** La fusée : debout sur sa rampe pendant le compte à rebours, puis le décollage. */
   private rocketG = new Graphics();
   private rocketAnim: { x: number; y: number; t: number } | null = null;
@@ -202,12 +206,13 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.rocketG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
     this.lightSprite.visible = false;
     app.stage.addChildAt(this.lightSprite, app.stage.getChildIndex(this.worldLayer) + 1);
+    app.stage.addChildAt(this.weatherG, app.stage.getChildIndex(this.lightSprite) + 1);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -2225,6 +2230,47 @@ export class GameRenderer {
     if (a.t > 6) this.rocketAnim = null;
   }
 
+  /** Le voile de pollution, morceau de carte par morceau de carte. */
+  private drawSmog(dt: number): void {
+    this.smogT += dt;
+    if (this.smogT < 0.5) return;
+    this.smogT = 0;
+    const g = this.smogG;
+    g.clear();
+    if (this.game.inAtelier) return;
+    const span = CHUNK * CELL;
+    for (const [k, v] of this.game.pollution) {
+      if (v < 5) continue;
+      const [cx, cy] = k.split(',').map(Number);
+      const x = cx * span, y = cy * span;
+      if (!this.inView(x + span / 2, y + span / 2, span)) continue;
+      g.roundRect(x - CELL, y - CELL, span + CELL * 2, span + CELL * 2, CELL * 3).fill({ color: 0x8a7a58, alpha: Math.min(0.22, v / 400) });
+    }
+  }
+
+  /** Pluie (traits obliques) ou neige (flocons qui dérivent), dessinées à l'écran. */
+  private drawWeather(): void {
+    const g = this.weatherG;
+    g.clear();
+    const w = this.game.inAtelier ? 'clair' : this.game.weather;
+    if (w === 'clair') return;
+    const W = this.app.screen.width, H = this.app.screen.height, t = this.time;
+    const n = w === 'pluie' ? 110 : 80;
+    for (let i = 0; i < n; i++) {
+      const sx = ((Math.sin(i * 12.9898) * 43758.5453) % 1 + 1) % 1;
+      const sy = ((Math.sin(i * 78.233) * 12345.678) % 1 + 1) % 1;
+      if (w === 'pluie') {
+        const y = ((sy * H + t * 620) % (H + 40)) - 20, x = ((sx * W - t * 140 + y * 0.22) % W + W) % W;
+        g.moveTo(x, y).lineTo(x - 4, y + 14);
+      } else {
+        const y = ((sy * H + t * 45) % (H + 20)) - 10, x = ((sx * W + Math.sin(t * 1.3 + i) * 14) % W + W) % W;
+        g.circle(x, y, 1.6 + (i % 3) * 0.6);
+      }
+    }
+    if (w === 'pluie') g.stroke({ width: 1.5, color: 0x8fb8de, alpha: 0.7 });
+    else g.fill({ color: 0xffffff, alpha: 0.85 });
+  }
+
   render(dt: number): void {
     this.frameDt = dt;
     if (this.game.view !== this.shownFactory) this.switchView();
@@ -2271,7 +2317,9 @@ export class GameRenderer {
     this.updateStationDrones();
     this.updatePickups();
     this.drawRockets(dt);
+    this.drawSmog(dt);
     this.drawNight();
+    this.drawWeather();
     this.drawOverlay();
     this.renderLoupe();
   }
