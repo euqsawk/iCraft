@@ -185,6 +185,11 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.rect(-7.5, -1.5, 15, 1.6).fill(0x8a5a2b);
       g.roundRect(-1.8, -2.6, 3.6, 3.8, 1).fill(PALETTE.yellow).stroke({ width: 1, color: ink });
       break;
+    case 'station':
+      // Aire d'atterrissage : un cercle et un H.
+      g.circle(0, 0, 12.5).fill(0xffffff).stroke(st);
+      g.moveTo(-5, -6).lineTo(-5, 6).moveTo(5, -6).lineTo(5, 6).moveTo(-5, 0).lineTo(5, 0).stroke({ width: 3, color: coral, cap: 'round' });
+      break;
     case 'revente':
       // Benne ouverte avec une flèche vers le bas et une pièce.
       g.poly([-13, -4, 13, -4, 10, 12, -10, 12]).fill(0xffffff).stroke({ ...st, join: 'round' });

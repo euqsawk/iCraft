@@ -442,7 +442,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && m.type === 'coffre') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
-    if (m?.built && (machineDef(m.type).kind === 'crafter' || machineDef(m.type).kind === 'drill')) { this.openMachine(m); return; }
+    if (m?.built && ['crafter', 'drill', 'station'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -1060,6 +1060,28 @@ export class Hud implements GestureHandlers {
         title = `Foreuse · ${mm.ore ? item(mm.ore).name.toLowerCase() : '?'}`;
         status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(mm.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
       }
+      if (def.kind === 'station') {
+        sheet.append(this.sheetHead('Station', `Son drone construit, recharge et livre dans un rayon de ${RULES.stationRange} cases autour d’elle.`, close));
+        this.r.rangeOf = mm.id;
+        const d = g.stationDrones.get(mm.id);
+        const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
+        const card = h('div', 'card');
+        card.innerHTML = `${this.gauge('Charbon de la station', mm.fuel, 10, g.factory.lowFuel(mm))}<p class="muted small">Le drone y reprend du charbon quand il n’en a plus. Ses drones voisins et les tapis la rechargent.</p>
+          ${d ? `<button class="prio-btn big" data-st="1"><span>Drone</span>${this.gauge('', d.fuel, 10, d.fuel <= 2)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>` : ''}`;
+        card.querySelector<HTMLButtonElement>('[data-st]')?.addEventListener('click', () => this.openPriorities(0, mm.id));
+        sheet.append(card);
+        const dep = h('div', 'card');
+        dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · charbon</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
+        this.wireGrid(dep, mm);
+        if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
+        sheet.append(dep);
+        const acts = h('div', 'row');
+        const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+        mv.onclick = () => { close(); this.setTool('move'); this.moving = mm; this.toast('Glisse la station : son rayon d’action s’affiche', 'info'); };
+        acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close));
+        sheet.append(acts);
+        return;
+      }
       sheet.append(this.sheetHead(title, esc(status), close));
       sheet.append(this.flowCard(mm));
       // Charbon et recettes
@@ -1206,19 +1228,20 @@ export class Hud implements GestureHandlers {
   }
 
   /** La liste des tâches d'un drone, à ranger de la plus importante à la moins importante. */
-  private openPriorities(i: number): void {
+  private openPriorities(i: number, station?: number): void {
     this.closePopover();
     const g = this.game;
+    const setOrder = (list: DronePriority[]) => (station !== undefined ? g.setStationPriorities(station, list) : g.setDronePriorities(i, list));
     this.openSheet((sheet, close) => {
-      const d = g.drones[i];
+      const d = station !== undefined ? g.stationDrones.get(station) : g.drones[i];
       if (!d) { close(); return; }
-      sheet.append(this.sheetHead(`Priorités du drone ${i + 1}`, 'De la plus importante à la moins importante. Le drone fait la première tâche utile de la liste ; son propre charbon passe toujours avant.', close));
+      sheet.append(this.sheetHead(station !== undefined ? 'Priorités du drone de la station' : `Priorités du drone ${i + 1}`, 'De la plus importante à la moins importante. Le drone fait la première tâche utile de la liste ; son propre charbon passe toujours avant.', close));
       const list = h('div', 'prio-list');
       const move = (from: number, to: number) => {
         const order = [...d.priorities];
         const [p] = order.splice(from, 1);
         order.splice(to, 0, p);
-        g.setDronePriorities(i, order);
+        setOrder(order);
         this.refreshSheet();
       };
       d.priorities.forEach((p, k) => {
@@ -1237,7 +1260,7 @@ export class Hud implements GestureHandlers {
       });
       sheet.append(list);
       const row = h('div', 'row prio-actions');
-      if (g.drones.length > 1) {
+      if (g.drones.length > 1 && station === undefined) {
         const all = h('button', 'btn', 'Même ordre pour tous');
         all.onclick = () => {
           g.drones.forEach((_, j) => g.setDronePriorities(j, d.priorities));
@@ -1246,10 +1269,10 @@ export class Hud implements GestureHandlers {
         row.append(all);
       }
       const reset = h('button', 'btn', 'Ordre de départ');
-      reset.onclick = () => { g.setDronePriorities(i, DEFAULT_ORDER); this.refreshSheet(); };
+      reset.onclick = () => { setOrder(DEFAULT_ORDER); this.refreshSheet(); };
       row.append(reset);
       sheet.append(row);
-      if (g.drones.length > 1) {
+      if (g.drones.length > 1 && station === undefined) {
         const tabs = h('div', 'row');
         g.drones.forEach((_, j) => {
           if (j === i) return;
@@ -1336,6 +1359,7 @@ export class Hud implements GestureHandlers {
   }
 
   private closeSheet(): void {
+    this.r.rangeOf = null;
     this.overlay?.remove();
     this.overlay = null;
     this.sheetBuild = null;

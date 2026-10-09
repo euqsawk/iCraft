@@ -91,6 +91,8 @@ export const RULES = {
   /** Stock maximum par objet au Laboratoire. */
   labCap: 500,
   /** Revente : un passage du gros drone toutes les 5 min, 0,2 pièce par point de valeur, 400 objets au plus. */
+  /** Station : rayon de travail de son drone, en cases. */
+  stationRange: 12,
   sellEvery: 300,
   sellRate: 0.2,
   sellCap: 400,

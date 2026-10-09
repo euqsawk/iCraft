@@ -78,6 +78,7 @@ export const BRANCHES: Branch[] = [
   {
     id: 'robot', label: 'Robot', nodes: [
       n('robot', 'Robot', 'robot', 0, 1, 1, {}, [], 'Ton robot construit, mine à l’arrêt sur un filon et emmène ses drones.', base),
+      n('station', 'Station', 'station', 1, 1, 1, { lingot_fer: 30, lingot_cuivre: 10 }, ['robot'], 'Une station avec son propre drone : il construit, recharge et livre dans un rayon de 12 cases autour d’elle.', m('station')),
       n('drone2', 'Deuxième drone', 'drone', 1, 0, 2, { plaque_fer: 40, fil_cuivre: 30 }, ['robot'], 'Un drone de plus pour construire, recharger et livrer.', { kind: 'drone' }),
       n('antenne', 'Antenne', 'antenne', 1, 2, 3, { fil_cuivre: 60, acier: 20 }, ['robot'], 'Les drones vont plus loin autour du robot.', soon),
       n('drone3', 'Troisième drone', 'drone', 2, 0, 3, { vis: 40, acier: 30, fil_cuivre: 30 }, ['drone2'], 'Un drone de plus.', { kind: 'drone' }),

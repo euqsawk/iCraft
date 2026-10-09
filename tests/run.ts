@@ -332,6 +332,34 @@ test('scanner : les 3 filons les plus proches, du plus proche au plus loin', () 
   assert(g.scan('licorne').length === 0, 'matière inconnue');
 });
 
+test('station : son drone travaille autour d’elle, loin du robot', () => {
+  const g = new Game('TEST-19');
+  g.money = 10000; g.world.reveal(30, 2, 26);
+  assert(!g.placeMachine('station', 26, 0), 'la station se débloque dans l’arbre');
+  g.lab = { lingot_fer: 30, lingot_cuivre: 10 };
+  assert(g.unlock('station'), 'déblocage');
+  const st = g.placeMachine('station', 26, 0)!;
+  // Le robot la construit, puis on l'envoie loin : seule la station reste là-bas.
+  run(g, 60);
+  assert(st.built && g.stationDrones.size === 1, `station construite ${st.built}, drones ${g.stationDrones.size}`);
+  g.sendRobot(-10, 10);
+  run(g, 15);
+  const chest = g.placeMachine('coffre', 32, 2)!;
+  const four = g.placeMachine('four', 22, 3)!;
+  run(g, 40);
+  assert(chest.built && four.built, `chantiers faits par le drone de la station : coffre ${chest.built}, four ${four.built}`);
+  g.factory.putInStorage(chest, 'charbon', 20);
+  four.fuel = 0;
+  run(g, 30);
+  assert(four.fuel > 0, `le drone de la station aurait dû recharger le four (${four.fuel})`);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.stationDrones.size === 1, 'drone de station rechargé');
+  g2.removeMachine([...g2.factory.machines.values()].find((m) => m.type === 'station')!);
+  run(g2, 1);
+  assert(g2.stationDrones.size === 0, 'drone retiré avec la station');
+});
+
 console.log('Charbon');
 test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => {
   const g = new Game('TEST-20');
@@ -478,8 +506,8 @@ test('les drones vident les coffres vers le Noyau et le Laboratoire, selon leur 
   g.on((e) => { if (e.type === 'deliver' && firsts.length < 1) firsts.push(e.at); });
   run(g, 60);
   assert(firsts[0] === 'laboratoire', `première livraison : ${firsts[0]}`);
-  assert((g.lab.lingot_fer ?? 0) === 20, `labo : ${g.lab.lingot_fer}`);
-  assert((g.palierDone.lingot_fer ?? 0) === 40, `Noyau : ${g.palierDone.lingot_fer}`);
+  assert((g.lab.lingot_fer ?? 0) === 30, `labo : ${g.lab.lingot_fer}`);
+  assert((g.palierDone.lingot_fer ?? 0) === 30, `Noyau : ${g.palierDone.lingot_fer}`);
 });
 test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   const g = new Game('TEST-30');

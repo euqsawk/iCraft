@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station';
 
 export interface MachineDef {
   id: string;
@@ -140,6 +140,10 @@ export const MACHINES: Record<string, MachineDef> = {
   coffre: {
     id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 100 objets · les drones y prennent le charbon',
+  },
+  station: {
+    id: 'station', name: 'Station', kind: 'station', coal: true, w: 2, h: 2, cost: 100, unlock: 1, recipes: [], buildable: true,
+    hint: 'Un drone qui travaille tout seul dans la zone autour',
   },
   revente: {
     id: 'revente', name: 'Revente', kind: 'sell', coal: false, w: 2, h: 2, cost: 20, unlock: 1, recipes: [], buildable: true,

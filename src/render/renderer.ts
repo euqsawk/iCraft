@@ -415,7 +415,7 @@ export class GameRenderer {
         let s = this.itemPool[used];
         if (!s) { s = new Sprite(); s.anchor.set(0.5); this.itemLayer.addChild(s); this.itemPool.push(s); }
         s.texture = this.itemTextures.get(it.t)!;
-        s.position.set(x, y);
+        s.position.set(x + (it.sx ?? 0) * CELL, y + (it.sy ?? 0) * CELL);
         s.visible = true;
         used++;
       }
@@ -658,7 +658,7 @@ export class GameRenderer {
     // Faisceaux de construction : pointillés du drone vers le chantier.
     const fx = this.fx;
     fx.clear();
-    for (const d of this.game.drones) {
+    for (const d of this.game.allDrones()) {
       if (d.state !== 'work' || d.task?.kind !== 'build') continue;
       const p = this.game.jobPos(d.task.job);
       if (!p) continue;
@@ -744,6 +744,36 @@ export class GameRenderer {
     }
   }
 
+  /** Station dont on montre le rayon d'action (fenêtre ouverte). */
+  rangeOf: number | null = null;
+
+  private drawRange(g: Graphics, cx: number, cy: number): void {
+    const R = RULES.stationRange * CELL;
+    g.circle(cx, cy, R).fill({ color: PALETTE.yellow, alpha: 0.1 });
+    dashedPolyline(g, Array.from({ length: 97 }, (_, i) => ({ x: cx + Math.cos(i / 96 * Math.PI * 2) * R, y: cy + Math.sin(i / 96 * Math.PI * 2) * R })), 10, 7);
+    g.stroke({ width: 3, color: PALETTE.ink, alpha: 0.35, cap: 'round' });
+  }
+
+  // Drones des stations
+  private stationViews = new Map<number, Container>();
+
+  private updateStationDrones(): void {
+    const seen = new Set<number>();
+    for (const [id, d] of this.game.stationDrones) {
+      seen.add(id);
+      let v = this.stationViews.get(id);
+      if (!v) { v = this.makeDroneView(); this.stationViews.set(id, v); }
+      v.position.set(d.x * CELL, d.y * CELL - (d.state === 'parked' ? 10 : 22) + (d.state === 'parked' ? 0 : Math.sin(this.time * 4 + id) * 2.5));
+      v.alpha = d.state === 'parked' ? 0.75 : 1;
+      const cargo = v.getChildByLabel('cargo') as Sprite;
+      cargo.visible = !!d.cargo;
+      if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
+    }
+    for (const [id, v] of this.stationViews) {
+      if (!seen.has(id)) { v.destroy({ children: true }); this.stationViews.delete(id); }
+    }
+  }
+
   private lastMined = 0;
   private pops: { s: Sprite; t: number }[] = [];
 
@@ -803,11 +833,18 @@ export class GameRenderer {
         dashedPolyline(g, [{ x: gd.x0, y: gd.y0 }, { x: gd.x1, y: gd.y1 }], 5, 5);
       }
       g.stroke({ width: 2, color: PALETTE.coral, alpha: 0.8 });
+      // Une station : son rayon d'action, en pointillés, pendant qu'on la pose ou la déplace.
+      if (pv.type === 'station') this.drawRange(g, x + W / 2, y + H / 2);
       g.roundRect(x + 1, y + 1, W - 2, H - 2, 15).fill({ color: pv.ok ? PALETTE.white : 0xffd9d0, alpha: 0.85 });
       dashedPolyline(g, roundRectPoints(x + 1, y + 1, W - 2, H - 2, 15), 6, 5, true);
       g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.6 });
     } else if (pv?.kind === 'erase') {
       g.circle((pv.x + 0.5) * CELL, (pv.y + 0.5) * CELL, CELL * 0.8).fill({ color: PALETTE.coral, alpha: 0.25 }).stroke({ width: 2, color: PALETTE.coral });
+    }
+    // Fenêtre d'une station ouverte : son rayon d'action.
+    if (this.rangeOf !== null) {
+      const st = this.game.factory.machines.get(this.rangeOf);
+      if (st) this.drawRange(g, (st.x + st.w / 2) * CELL, (st.y + st.h / 2) * CELL);
     }
     const sel = this.selection;
     if (sel?.kind === 'robot') {
@@ -1102,6 +1139,7 @@ export class GameRenderer {
     this.updateMachines(dt);
     this.drawItems();
     this.updateActors();
+    this.updateStationDrones();
     this.updatePickups();
     this.drawOverlay();
     this.renderLoupe();

@@ -10,6 +10,9 @@ export interface BeltItem {
   p: number;
   /** Sur un séparateur : 1 si l'objet part par la dérivation. */
   o?: 1;
+  /** Arrivé par le côté : décalage (en cases) qui se résorbe en avançant, pour ne pas sauter au milieu. */
+  sx?: number;
+  sy?: number;
 }
 
 export interface Belt {
@@ -535,6 +538,10 @@ export class Factory {
       const items = b.items; // triés : le plus avancé en premier
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
+        if (it.sx || it.sy) {
+          const k = Math.hypot(it.sx ?? 0, it.sy ?? 0), nk = Math.max(0, k - speed);
+          if (nk === 0) { delete it.sx; delete it.sy; } else { it.sx = (it.sx ?? 0) * nk / k; it.sy = (it.sy ?? 0) * nk / k; }
+        }
         // Sur un séparateur, si une sortie n'existe plus, l'objet prend l'autre.
         if (it.o && !branch) delete it.o;
         else if (!it.o && !main && branch) it.o = 1;
@@ -568,6 +575,11 @@ export class Factory {
             if (this.roomAt(target, entry)) {
               items.shift(); i--;
               const moved: BeltItem = { t: it.t, p: entry };
+              if (nxt.side) {
+                // Il arrive par le côté : il part du bord commun et glisse jusqu'au milieu.
+                const d = it.o && b.split !== undefined ? b.split : b.dir;
+                moved.sx = -DX[d] * 0.5; moved.sy = -DY[d] * 0.5;
+              }
               this.enter(target, moved);
               target.items.push(moved);
               if (nxt.side) target.items.sort((a, c) => c.p - a.p);
@@ -679,6 +691,11 @@ export class Factory {
       buf[t]--;
       if (buf[t] === 0 && buf === m.inBuf) delete buf[t];
       const it: BeltItem = { t, p: side ? 0.5 : 0 };
+      if (side) {
+        // Il sort de la machine par le côté du tapis : il part de son bord.
+        const fd = (b.feeds ?? []).find((d) => this.machineAt(b.x + DX[d], b.y + DY[d]) === m)!;
+        it.sx = DX[fd] * 0.5; it.sy = DY[fd] * 0.5;
+      }
       this.enter(b, it);
       b.items.push(it);
       if (side) b.items.sort((a, c) => c.p - a.p);

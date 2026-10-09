@@ -72,6 +72,8 @@ export type DroneTask =
 export interface Drone {
   x: number;
   y: number;
+  /** Drone d'une station (numéro de la station) : il travaille autour d'elle, pas autour du robot. */
+  station?: number;
   /** home : en vol stationnaire près du robot ; fly : en mission ; parked : posé sur le robot, sans charbon. */
   state: 'home' | 'fly' | 'work' | 'parked';
   task: DroneTask | null;
@@ -179,6 +181,7 @@ export interface GameSave {
   crew?: {
     robot: { fuel: number; burn: number; inv: (Slot | null)[]; craft?: CraftJob[] };
     drones: { fuel: number; burn: number; cargo: Slot | null; priority?: DronePriority; priorities?: DronePriority[] }[];
+    stations?: { id: number; fuel: number; burn: number; cargo: Slot | null; priorities?: DronePriority[] }[];
   };
 }
 
@@ -988,7 +991,7 @@ export class Game {
   /** Combien une machine (four, foreuse…) accepte encore de cet objet : charbon dans sa case carburant, ingrédients. */
   machineAccepts(m: Machine, t: string): number {
     const def = machineDef(m.type);
-    if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill')) return 0;
+    if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill' && def.kind !== 'station')) return 0;
     let n = 0;
     const ingredient = def.recipes.some((r) => r.in[t]);
     if (t === 'charbon' && def.coal) n += this.factory.fuelRoom(m);
@@ -1095,12 +1098,54 @@ export class Game {
 
   private droneJobs(): Set<Job> {
     const s = new Set<Job>();
-    for (const d of this.drones) if (d.task?.kind === 'build') s.add(d.task.job);
+    for (const d of this.allDrones()) if (d.task?.kind === 'build') s.add(d.task.job);
     return s;
   }
 
-  private near(p: { x: number; y: number }, range = RULES.buildRange): boolean {
-    return Math.hypot(p.x - this.robot.x, p.y - this.robot.y) <= range;
+  /** Les drones des stations, par numéro de station. */
+  stationDrones = new Map<number, Drone>();
+
+  /** Tous les drones : ceux du robot, puis ceux des stations. */
+  allDrones(): Drone[] {
+    return [...this.drones, ...this.stationDrones.values()];
+  }
+
+  /** Le point autour duquel travaille le drone en cours : le robot, ou sa station. */
+  private anchor = { x: 0, y: 0, build: RULES.buildRange, supply: RULES.supplyRange };
+
+  private useAnchor(d: Drone): void {
+    const st = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
+    if (st) {
+      const c = this.center(st);
+      this.anchor = { x: c.x, y: c.y, build: RULES.stationRange, supply: RULES.stationRange };
+    } else {
+      this.anchor = { x: this.robot.x, y: this.robot.y, build: RULES.buildRange, supply: RULES.supplyRange };
+    }
+  }
+
+  /** Une station construite a son drone ; une station retirée l'emporte avec elle. */
+  private syncStations(): void {
+    for (const m of this.factory.machines.values()) {
+      if (m.type !== 'station' || !m.built || this.stationDrones.has(m.id)) continue;
+      const c = this.center(m);
+      this.stationDrones.set(m.id, { x: c.x, y: c.y - 1, station: m.id, state: 'home', task: null, t: 0, slot: 0, fuel: RULES.fuelStack, burn: 0, cargo: null, priorities: [...DEFAULT_ORDER] });
+    }
+    for (const id of this.stationDrones.keys()) {
+      const m = this.factory.machines.get(id);
+      if (!m || m.type !== 'station' || !m.built) this.stationDrones.delete(id);
+    }
+  }
+
+  setStationPriorities(id: number, list: DronePriority[]): void {
+    const d = this.stationDrones.get(id);
+    if (!d) return;
+    d.priorities = cleanOrder(list);
+    d.task = null;
+    if (d.state === 'fly') d.state = 'home';
+  }
+
+  private near(p: { x: number; y: number }, range = this.anchor.build): boolean {
+    return Math.hypot(p.x - this.anchor.x, p.y - this.anchor.y) <= range;
   }
 
   private center(m: Machine): { x: number; y: number } {
@@ -1119,7 +1164,7 @@ export class Game {
     for (const m of this.factory.machines.values()) {
       if (m.type !== 'coffre' || !m.built || !(m.inBuf[item] > 0)) continue;
       const c = this.center(m);
-      if (!this.near(c, RULES.supplyRange)) continue;
+      if (!this.near(c, this.anchor.supply)) continue;
       const dist = Math.hypot(c.x - d.x, c.y - d.y);
       if (dist < bd) { bd = dist; best = { kind: 'chest', id: m.id }; }
     }
@@ -1133,8 +1178,8 @@ export class Game {
     for (const m of this.factory.machines.values()) {
       if (!m.built) continue;
       const c = this.center(m);
-      const d = Math.hypot(c.x - this.robot.x, c.y - this.robot.y);
-      if (d > RULES.supplyRange) continue;
+      const d = Math.hypot(c.x - this.anchor.x, c.y - this.anchor.y);
+      if (d > this.anchor.supply) continue;
       const def = machineDef(m.type);
       if (def.kind === 'crafter' && item !== 'charbon' && this.factory.canAccept(m, item)) {
         if (d < bd) { bd = d; best = m; }
@@ -1154,7 +1199,7 @@ export class Game {
   }
 
   private pickTask(d: Drone): DroneTask | null {
-    const others = this.drones.filter((o) => o !== d && o.task);
+    const others = this.allDrones().filter((o) => o !== d && o.task);
     const reservedFuel = new Set(others.map((o) => (o.task!.kind === 'refuel' ? o.task!.id : -1)));
 
     // Son propre carburant d'abord, toujours.
@@ -1164,7 +1209,7 @@ export class Game {
     }
     // Machines à portée qui ont besoin de charbon, la plus vide d'abord.
     const needy = [...this.factory.machines.values()]
-      .filter((m) => m.built && this.factory.fuelRoom(m) > 0 && !reservedFuel.has(m.id) && this.near(this.center(m), RULES.supplyRange))
+      .filter((m) => m.built && this.factory.fuelRoom(m) > 0 && !reservedFuel.has(m.id) && this.near(this.center(m), this.anchor.supply))
       .sort((a, b) => a.fuel - b.fuel);
     const order = d.priorities;
     const refueler = order[0] === 'carburant';
@@ -1295,8 +1340,20 @@ export class Game {
 
   private tickDrones(dt: number): void {
     const r = this.robot;
-    for (const d of this.drones) {
-      const home = { x: r.x + Math.cos(d.slot + this.time * 0.8) * 1.1, y: r.y - 1.4 + Math.sin(d.slot + this.time * 0.8) * 0.35 };
+    this.syncStations();
+    for (const d of this.allDrones()) {
+      this.useAnchor(d);
+      const st = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
+      const home = st
+        ? { x: this.anchor.x + Math.cos(this.time * 0.9 + d.station!) * 0.7, y: this.anchor.y - 0.9 + Math.sin(this.time * 0.9 + d.station!) * 0.25 }
+        : { x: r.x + Math.cos(d.slot + this.time * 0.8) * 1.1, y: r.y - 1.4 + Math.sin(d.slot + this.time * 0.8) * 0.35 };
+      if (d.state === 'parked' && st) {
+        // Posé sur sa station : il repart dès qu'elle a du charbon dans sa case carburant.
+        d.x = this.anchor.x; d.y = this.anchor.y - 0.6;
+        const got = Math.min(RULES.fuelStack - d.fuel, st.fuel);
+        if (got > 0) { st.fuel -= got; d.fuel += got; d.state = 'home'; }
+        continue;
+      }
       if (d.state === 'parked') {
         // Posé sur le robot : il repart dès que le robot peut partager sa case carburant
         // (jamais son inventaire ; le robot y remplit lui-même sa case carburant).
@@ -1371,6 +1428,7 @@ export class Game {
       crew: {
         robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
         drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priorities: [...d.priorities] })),
+        stations: [...this.stationDrones.entries()].map(([id, d]) => ({ id, fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priorities: [...d.priorities] })),
       },
     };
   }
@@ -1417,6 +1475,11 @@ export class Game {
       const r = this.robot;
       r.fuel = s.crew.robot.fuel; r.burn = s.crew.robot.burn; r.inv.load(s.crew.robot.inv);
       this.craftQueue = (s.crew.robot.craft ?? []).filter((j) => j && typeof j.target === 'string').map((j) => ({ ...j }));
+      this.syncStations();
+      for (const sd of s.crew.stations ?? []) {
+        const d = this.stationDrones.get(sd.id);
+        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priorities = cleanOrder(sd.priorities ?? []); }
+      }
       s.crew.drones.forEach((sd, i) => {
         const d = this.drones[i];
         if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
