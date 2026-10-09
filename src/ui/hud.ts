@@ -998,6 +998,29 @@ export class Hud implements GestureHandlers {
     return card;
   }
 
+  /**
+   * Bouton Supprimer en deux temps. Le « toucher encore » est retenu par machine pendant 4 s,
+   * même si la fenêtre se redessine entre les deux touchers (elle se rafraîchit toute seule).
+   */
+  private armedDelete: { id: number; until: number } | null = null;
+
+  private deleteButton(m: Machine, label: string, confirm: string, close: () => void): HTMLButtonElement {
+    const armed = () => this.armedDelete?.id === m.id && performance.now() < this.armedDelete.until;
+    const del = h('button', `btn danger${armed() ? ' armed' : ''}`, `${ICONS.trash}${esc(armed() ? confirm : label)}`);
+    del.onclick = () => {
+      if (!armed()) {
+        this.armedDelete = { id: m.id, until: performance.now() + 4000 };
+        del.classList.add('armed');
+        del.innerHTML = `${ICONS.trash}${esc(confirm)}`;
+        return;
+      }
+      this.armedDelete = null;
+      this.game.removeMachine(m);
+      close();
+    };
+    return del;
+  }
+
   /** Une machine en grand (four, foreuse…) : état, charbon, recettes, ce qu'elle contient, et l'inventaire du robot. */
   openMachine(m: Machine): void {
     this.closePopover();
@@ -1053,13 +1076,7 @@ export class Hud implements GestureHandlers {
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.setTool('move'); this.moving = mm; this.toast('Glisse la machine à sa nouvelle place', 'info'); };
-      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer · rend ${def.cost}`);
-      let armed = false;
-      del.onclick = () => {
-        if (!armed) { armed = true; del.textContent = 'Toucher encore'; return; }
-        g.removeMachine(mm);
-        close();
-      };
+      const del = this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
     }, true);
@@ -1126,13 +1143,7 @@ export class Hud implements GestureHandlers {
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.setTool('move'); this.moving = bin; this.toast('Glisse la Revente à sa nouvelle place', 'info'); };
-      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer`);
-      let armed = false;
-      del.onclick = () => {
-        if (!armed) { armed = true; del.textContent = n ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore'; return; }
-        g.removeMachine(bin);
-        close();
-      };
+      const del = this.deleteButton(bin, 'Supprimer', n ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
     }, true);
@@ -1165,13 +1176,7 @@ export class Hud implements GestureHandlers {
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.setTool('move'); this.moving = chest; this.toast('Glisse le coffre à sa nouvelle place', 'info'); };
-      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer`);
-      let armed = false;
-      del.onclick = () => {
-        if (!armed) { armed = true; del.textContent = total ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore'; return; }
-        g.removeMachine(chest);
-        close();
-      };
+      const del = this.deleteButton(chest, 'Supprimer', total ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
     }, true);

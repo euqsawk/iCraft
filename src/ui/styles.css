@@ -652,3 +652,5 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .flow-bar > span { display: block; height: 100%; border-radius: 2px; transition: width .4s; }
 .flow-row.in .flow-bar > span { background: #F47C64; }
 .flow-row.out .flow-bar > span { background: var(--green); }
+.btn.danger.armed { background: var(--coral); color: #fff; }
+.btn.danger.armed svg { color: #fff; }
