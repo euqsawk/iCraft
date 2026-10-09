@@ -25,6 +25,7 @@ import { exportPanel, playTime } from './title.ts';
 import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
+import { swipeToClose } from './swipe.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'souterrain' | 'transport';
 
@@ -1227,7 +1228,7 @@ export class Hud implements GestureHandlers {
         if (locked.length && !q) {
           html += `<div class="card"><p class="muted">Encore à débloquer dans l’arbre</p><div class="rc-locked">${locked.map((m) => {
             const node = nodeForMachine(m.id);
-            return `<span class="chip"><img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)} · ${m.recipes.length} recette${m.recipes.length > 1 ? 's' : ''}${node ? ` · palier ${node.palier}` : ''}</span>`;
+            return `<div class="rc-lrow"><img src="${this.machineIcons.get(m.id)}" alt=""><b>${esc(m.name)}</b><small>${m.recipes.length} recette${m.recipes.length > 1 ? 's' : ''}${node ? ` · palier ${node.palier}` : ''}</small></div>`;
           }).join('')}</div></div>`;
         }
         list.innerHTML = html;
@@ -2367,6 +2368,7 @@ export class Hud implements GestureHandlers {
       if (performance.now() - opened < 450) { e.stopPropagation(); e.preventDefault(); }
     }, true);
     build(sheet, close);
+    swipeToClose(sheet, back, () => { if (this.overlay === back) close(); });
     this.root.append(back);
     this.overlay = back;
     this.sheetBuild = live ? build : null;
@@ -2378,6 +2380,8 @@ export class Hud implements GestureHandlers {
     const back = this.overlay, build = this.sheetBuild;
     if (!back || !build) return;
     const sheet = back.firstElementChild as HTMLElement;
+    // Pas pendant qu'on la tire vers le bas : le doigt perdrait son élément (et la fin du geste).
+    if (sheet.dataset.dragging) { this.sheetDirty = true; return; }
     const top = sheet.scrollTop;
     sheet.innerHTML = '';
     build(sheet, () => this.closeSheet());
@@ -2663,6 +2667,7 @@ export class Hud implements GestureHandlers {
     back.onclick = (e) => { if (e.target === back) close(); };
     exportPanel(this.game.serialize(), close).then((panel) => {
       panel.classList.add('sheet');
+      swipeToClose(panel, back, () => { if (this.overlay === back) close(); });
       back.append(panel);
     }).catch(() => { close(); this.toast('Export impossible sur ce navigateur', 'warn'); });
   }

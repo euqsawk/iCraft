@@ -735,9 +735,11 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .rc-head small, .rc-elec { font-size: 11px; font-weight: 800; color: var(--ink2); }
 .rc-elec { margin-left: auto; padding: 2px 8px; border-radius: 9px; background: #FFF1D6; color: var(--ink); }
 .rc-time { margin-left: auto; font-size: 11px; font-weight: 800; color: var(--ink2); }
-.rc-locked { display: flex; flex-wrap: wrap; gap: 6px; }
-.rc-locked .chip { opacity: .7; }
-.rc-locked .chip img { width: 18px; height: 18px; }
+.rc-locked { display: flex; flex-direction: column; gap: 6px; }
+.rc-lrow { display: flex; align-items: center; gap: 10px; width: 100%; box-sizing: border-box; padding: 8px 12px; border-radius: 12px; background: #F4F8F6; color: var(--ink2); }
+.rc-lrow img { width: 26px; height: 26px; flex: none; opacity: .75; }
+.rc-lrow b { flex: 1 1 auto; min-width: 0; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-lrow small { flex: none; font-weight: 700; color: #6B7684; }
 
 /* Dans un atelier : le bandeau de l'atelier remplace la mission et la mini-carte. */
 .in-atelier .order-row { visibility: hidden; }
