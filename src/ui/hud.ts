@@ -5,7 +5,8 @@ import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import type { Machine } from '../sim/factory.ts';
-import { DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
+import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
+import { PRIO_ICONS } from './prioIcons.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
@@ -223,6 +224,7 @@ export class Hud implements GestureHandlers {
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
+      case 'sold': this.toast(`Le gros drone a revendu ${e.count} objet${e.count > 1 ? 's' : ''} : +${fmt(e.money)} pièces`, 'good'); break;
       case 'drones': this.toast(`${this.game.droneCount} drones travaillent avec ton robot`, 'good'); break;
       default: break;
     }
@@ -276,13 +278,14 @@ export class Hud implements GestureHandlers {
     const p = this.palette;
     p.innerHTML = '';
     const placed = new Set([...this.game.factory.machines.values()].map((x) => x.type));
+    // Le Laboratoire et le Comptoir viennent en tête ; une fois posés, ils disparaissent de la liste.
+    if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     for (const m of BUILDABLE) {
       if (!this.game.hasMachine(m.id)) continue;
-      const done = !!m.unique && placed.has(m.id);
-      const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}${done ? ' locked' : ''}`);
-      b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${done ? 'Déjà posé' : `${ICONS.coinSm}${m.cost}`}</small>`;
+      if (m.unique && placed.has(m.id)) continue;
+      const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}`);
+      b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${ICONS.coinSm}${m.cost}</small>`;
       b.onclick = () => {
-        if (done) { this.toast(`Un seul ${m.name.toLowerCase()} par partie : touche-le sur la carte pour l’ouvrir`, 'info'); return; }
         this.machineType = m.id;
         this.renderPalette();
         this.toast(`${m.name} : touche la carte pour la poser`, 'info');
@@ -517,6 +520,11 @@ export class Hud implements GestureHandlers {
         const patch = this.game.world.patchAt(m.x, m.y) ?? this.game.world.patchAt(m.x + 1, m.y + 1);
         title = `Foreuse · ${m.ore ? item(m.ore).name.toLowerCase() : '?'}`;
         text = `${STATUS_TEXT[m.status]}. Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(m.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
+      } else if (def.kind === 'sell') {
+        const g = this.game, n = g.sellCount(m);
+        const t = Math.ceil(g.nextPickup), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
+        const coming = g.pickups.some((x) => x.id === m.id && !x.done);
+        text = `Tout ce qu’un tapis y apporte est revendu, à bas prix. ${coming ? 'Le gros drone arrive !' : `Prochain passage du gros drone dans ${mm} min ${ss}.`} ${n} objet${n > 1 ? 's' : ''} sur ${RULES.sellCap} · environ ${g.sellValue(m)} pièces.`;
       } else {
         text = def.kind === 'storage'
           ? `${def.hint}. ${this.game.factory.storageSlots(m)} cases sur 10 occupées.`
@@ -533,7 +541,7 @@ export class Hud implements GestureHandlers {
       }
       const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p>${fuelLine}<p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
         ${recipes}
-        ${inChips ? `<p>${def.kind === 'storage' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
+        ${inChips ? `<p>${def.kind === 'storage' || def.kind === 'sell' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
         ${outChips ? `<p>Prêt à sortir</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
@@ -614,17 +622,72 @@ export class Hud implements GestureHandlers {
     const info = `<h3>${esc(g.look.name)}</h3><p>${esc(status)}</p>${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}
       <p>Inventaire</p>${this.slotsHtml(r.inv.slots)}
       ${g.drones.length ? `<p>Drones</p>${drones}` : '<p>Pas encore de drone.</p>'}`;
-    // Priorité de chaque drone : il fait d'abord cette tâche, puis le reste.
+    // Priorités de chaque drone : une liste, de la plus importante à la moins importante.
+    const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
     const prio = g.drones.length
-      ? `<p class="prio-head">Priorité des drones <small>d’abord ça, puis le reste</small></p>${g.drones.map((d, i) => `<label class="prio-row"><span>Drone ${i + 1}</span><select data-drone="${i}">${DRONE_PRIORITIES.map((p) => `<option value="${p.id}"${p.id === d.priority ? ' selected' : ''}>${esc(p.label)}</option>`).join('')}</select></label>`).join('')}`
+      ? `<p class="prio-head">Priorités des drones</p>${g.drones.map((d, i) => `<button class="prio-btn" data-drone="${i}"><span>Drone ${i + 1}</span><b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>`).join('')}`
       : '';
     if (!this.setPopover('robot', info, prio)) return;
-    this.popover.querySelectorAll<HTMLSelectElement>('select[data-drone]').forEach((sel) => {
-      sel.onchange = () => {
-        g.setDronePriority(Number(sel.dataset.drone), sel.value as DronePriority);
-        this.toast(`Drone ${Number(sel.dataset.drone) + 1} : ${(DRONE_PRIORITIES.find((p) => p.id === sel.value)?.label ?? '').replace(/^./, (c) => c.toLowerCase())} d’abord`, 'good');
-      };
+    this.popover.querySelectorAll<HTMLButtonElement>('[data-drone]').forEach((b) => {
+      b.onclick = () => this.openPriorities(Number(b.dataset.drone));
     });
+  }
+
+  /** La liste des tâches d'un drone, à ranger de la plus importante à la moins importante. */
+  private openPriorities(i: number): void {
+    this.closePopover();
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      const d = g.drones[i];
+      if (!d) { close(); return; }
+      sheet.append(this.sheetHead(`Priorités du drone ${i + 1}`, 'De la plus importante à la moins importante. Le drone fait la première tâche utile de la liste ; son propre charbon passe toujours avant.', close));
+      const list = h('div', 'prio-list');
+      const move = (from: number, to: number) => {
+        const order = [...d.priorities];
+        const [p] = order.splice(from, 1);
+        order.splice(to, 0, p);
+        g.setDronePriorities(i, order);
+        this.refreshSheet();
+      };
+      d.priorities.forEach((p, k) => {
+        const row = h('div', `prio-item${k === 0 ? ' first' : ''}`);
+        row.innerHTML = `<span class="prio-n">${k + 1}</span><span class="prio-ico">${PRIO_ICONS[p] ?? ''}</span><b>${esc(DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p)}</b>`;
+        const up = h('button', 'prio-move', '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 L7 5 L11 9"/></svg>');
+        up.setAttribute('aria-label', 'Monter');
+        up.disabled = k === 0;
+        up.onclick = () => move(k, k - 1);
+        const down = h('button', 'prio-move', '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5 L7 9 L11 5"/></svg>');
+        down.setAttribute('aria-label', 'Descendre');
+        down.disabled = k === d.priorities.length - 1;
+        down.onclick = () => move(k, k + 1);
+        row.append(up, down);
+        list.append(row);
+      });
+      sheet.append(list);
+      const row = h('div', 'row prio-actions');
+      if (g.drones.length > 1) {
+        const all = h('button', 'btn', 'Même ordre pour tous');
+        all.onclick = () => {
+          g.drones.forEach((_, j) => g.setDronePriorities(j, d.priorities));
+          this.toast('Tous les drones suivent cet ordre', 'good');
+        };
+        row.append(all);
+      }
+      const reset = h('button', 'btn', 'Ordre de départ');
+      reset.onclick = () => { g.setDronePriorities(i, DEFAULT_ORDER); this.refreshSheet(); };
+      row.append(reset);
+      sheet.append(row);
+      if (g.drones.length > 1) {
+        const tabs = h('div', 'row');
+        g.drones.forEach((_, j) => {
+          if (j === i) return;
+          const b = h('button', 'btn', `Drone ${j + 1}`);
+          b.onclick = () => this.openPriorities(j);
+          tabs.append(b);
+        });
+        sheet.append(tabs);
+      }
+    }, true);
   }
 
   private popKey = '';

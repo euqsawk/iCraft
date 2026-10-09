@@ -185,6 +185,13 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.rect(-7.5, -1.5, 15, 1.6).fill(0x8a5a2b);
       g.roundRect(-1.8, -2.6, 3.6, 3.8, 1).fill(PALETTE.yellow).stroke({ width: 1, color: ink });
       break;
+    case 'revente':
+      // Benne ouverte avec une flèche vers le bas et une pièce.
+      g.poly([-13, -4, 13, -4, 10, 12, -10, 12]).fill(0xffffff).stroke({ ...st, join: 'round' });
+      g.moveTo(-7, 2).lineTo(-6, 9).moveTo(0, 2).lineTo(0, 9).moveTo(7, 2).lineTo(6, 9).stroke({ width: 2, color: ink, cap: 'round' });
+      g.circle(0, -11, 5).fill(PALETTE.yellow).stroke({ width: 1.8, color: ink });
+      g.moveTo(-1.2, -13).lineTo(-1.2, -9).stroke({ width: 1.6, color: ink, cap: 'round' });
+      break;
     case 'laboratoire':
       // Fiole : col étroit, panse triangulaire, liquide menthe.
       g.poly([-4, -14, 4, -14, 4, -5, 13, 11, -13, 11, -4, -5]).fill(0xffffff).stroke({ ...st, join: 'round' });

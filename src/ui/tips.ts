@@ -53,7 +53,7 @@ export const TIPS: Tip[] = [
   },
   {
     id: 'drones', title: 'Le travail des drones',
-    text: (g) => `Touche ${g.look.name} : tu vois son inventaire et son charbon, et tu choisis la priorité de chaque drone.`,
+    text: (g) => `Touche ${g.look.name} : tu vois son inventaire et son charbon. Touche un drone pour ranger ses tâches, de la plus importante à la moins importante.`,
     goal: (_g, c) => c.robotOpened,
   },
   {

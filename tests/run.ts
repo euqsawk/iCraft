@@ -446,7 +446,7 @@ test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
   assert(g2.hasMachine('presse') && g2.factory.speedMult === 2 && g2.palier === 2 && g2.drones.length === 2, 'sauvegarde de l’arbre');
-  assert(g2.drones[1].priority === 'noyau' && JSON.stringify(g2.lab) === JSON.stringify(g.lab), 'priorités et labo');
+  assert(g2.drones[1].priorities[0] === 'noyau' && g2.drones[1].priorities.length === 6 && JSON.stringify(g2.lab) === JSON.stringify(g.lab), 'priorités et labo');
 });
 test('une sauvegarde d’avant les paliers garde ses déblocages et repart au palier 1', () => {
   const g = new Game('TEST-31');
@@ -459,6 +459,51 @@ test('une sauvegarde d’avant les paliers garde ses déblocages et repart au pa
   delete s.unlocks;
   const g3 = new Game(s.seed, s);
   assert(g3.hasMachine('presse') && g3.hasMachine('tour') && g3.hasMachine('trefileuse'), 'machines de l’ancien niveau 4');
+});
+
+test('priorités : une liste ordonnée par drone, appliquée dans l’ordre', () => {
+  const g = new Game('TEST-44');
+  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
+  const chest = g.placeMachine('coffre', 6, 8)!;
+  const lab = g.placeMachine('laboratoire', 8, 4)!;
+  run(g, 40);
+  assert(chest.built && lab.built, 'construits');
+  // Le Noyau avant le Laboratoire : tout le fer part au Noyau d'abord.
+  g.setDronePriorities(0, ['noyau', 'laboratoire', 'carburant', 'chantiers', 'comptoir', 'robot']);
+  g.factory.putInStorage(chest, 'lingot_fer', 30);
+  run(g, 40);
+  assert((g.palierDone.lingot_fer ?? 0) === 30 && !(g.lab.lingot_fer > 0), `Noyau ${g.palierDone.lingot_fer}, labo ${g.lab.lingot_fer}`);
+  g.setDronePriorities(0, ['laboratoire', 'laboratoire', 'inconnu' as never]);
+  assert(g.drones[0].priorities.length === 6 && g.drones[0].priorities[0] === 'laboratoire' && new Set(g.drones[0].priorities).size === 6, 'liste nettoyée');
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  s.crew.drones[0] = { ...s.crew.drones[0], priorities: undefined, priority: 'comptoir' };
+  const g2 = new Game(s.seed, s);
+  assert(g2.drones[0].priorities[0] === 'comptoir' && g2.drones[0].priorities.length === 6, 'ancienne priorité unique reprise en tête');
+});
+test('Revente : le gros drone passe toutes les 5 minutes et paie peu', () => {
+  const g = new Game('TEST-45');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  const bin = g.placeMachine('revente', 7, 8)!;
+  run(g, 30);
+  assert(bin.built, 'benne construite');
+  assert(g.receive(bin, 'lingot_fer', 100) === 100 && g.receive(bin, 'fer', 1000) === 300, 'plafond de 400 objets');
+  assert(g.sellValue(bin) === Math.floor((100 * 3 + 300) * 0.2), `valeur ${g.sellValue(bin)}`);
+  assert((g.palierDone.lingot_fer ?? 0) === 0, 'la revente ne compte pas pour le Noyau');
+  const m0 = g.money;
+  let sold = 0;
+  g.on((e) => { if (e.type === 'sold') sold = e.money; });
+  g.sellT = 0;
+  run(g, 299);
+  assert(g.money === m0 && g.sellCount(bin) === 400, 'vendu trop tôt');
+  run(g, 2);
+  assert(g.pickups.length === 1, 'le gros drone devrait arriver');
+  assert(g.receive(bin, 'fer', 5) === 0, 'la benne est fermée pendant le passage');
+  run(g, 4);
+  assert(sold === 120 && g.money === m0 + 120 && g.sellCount(bin) === 0, `vendu ${sold}`);
+  run(g, 4);
+  assert(g.pickups.length === 0 && g.receive(bin, 'fer', 5) === 5, 'la benne rouvre');
+  // Bien moins rentable que le Comptoir : 10 lingots y rapportent 80 pièces, 6 à la revente.
+  assert(Math.floor(10 * 3 * 0.2) * 10 < 80, 'revente trop rentable');
 });
 
 console.log('Sauvegardes');

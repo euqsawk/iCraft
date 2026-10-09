@@ -527,3 +527,23 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .tip.success .tip-x, .tip.success .tip-off { visibility: hidden; }
 #hud:has(.tip:not(.hidden):not(.away)) .toasts { top: calc(var(--top) + 290px); }
 .title-hero { flex: 1; justify-content: center; }
+
+/* Priorités des drones : une liste ordonnée */
+.prio-btn { display: flex; align-items: center; gap: 8px; width: 100%; background: #F4F8F6; border-radius: 12px; padding: 7px 10px; margin: 3px 0; font-size: 12px; font-weight: 800; color: var(--ink); text-align: left; }
+.prio-btn span { white-space: nowrap; }
+.prio-btn b { flex: 1; min-width: 0; display: flex; align-items: center; gap: 5px; font-weight: 900; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prio-btn i { font-style: normal; font-size: 16px; color: var(--ink2); }
+.prio-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.prio-item { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 16px; box-shadow: 0 3px 0 var(--shadow); padding: 6px 6px 6px 10px; min-height: 48px; }
+.prio-item b { flex: 1; font-size: 14px; font-weight: 900; text-align: left; }
+.prio-item.first { background: #FFF6DC; box-shadow: 0 3px 0 var(--coin-edge); }
+.prio-n { width: 24px; height: 24px; border-radius: 12px; background: var(--ink); color: #fff; font-size: 12px; font-weight: 900; display: flex; align-items: center; justify-content: center; flex: none; }
+.prio-item.first .prio-n { background: var(--coral); }
+.prio-ico { width: 20px; display: flex; justify-content: center; }
+.prio-ico svg { width: 16px; height: 16px; }
+.prio-move { width: 40px; height: 36px; border-radius: 12px; background: #F0F5F2; color: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; }
+.prio-move:disabled { opacity: .3; }
+.prio-actions .btn { flex: 1 1 0; }
+.prio-list.demo .prio-item { min-height: 38px; padding: 4px 10px; }
+.prio-list.demo .prio-item b { font-size: 13px; }
+.prio-item.rise { animation: rise .45s cubic-bezier(.2, 1.3, .4, 1); }

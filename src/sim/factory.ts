@@ -395,7 +395,7 @@ export class Factory {
   canAccept(m: Machine, item: string): boolean {
     if (!m.built) return false;
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') return this.buildingAccepts(m, item);
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
     if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) return true;
     if (def.kind !== 'crafter') return false;
@@ -410,7 +410,7 @@ export class Factory {
 
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') { this.onDeliver(m, item); return; }
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
     if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) {
       // Le carburant d'abord ; un haut-fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = this.coalIngredient(def) && m.fuel >= 3 && (m.inBuf.charbon ?? 0) < RULES.machineBuffer;

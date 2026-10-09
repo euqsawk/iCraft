@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell';
 
 export interface MachineDef {
   id: string;
@@ -139,6 +139,10 @@ export const MACHINES: Record<string, MachineDef> = {
     id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 100 objets · les drones y prennent le charbon',
   },
+  revente: {
+    id: 'revente', name: 'Revente', kind: 'sell', coal: false, w: 2, h: 2, cost: 20, unlock: 1, recipes: [], buildable: true,
+    hint: 'Un gros drone passe toutes les 5 minutes et revend tout, à bas prix',
+  },
   laboratoire: {
     id: 'laboratoire', name: 'Laboratoire', kind: 'lab', coal: false, unique: true, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde les objets qui servent à débloquer l’arbre',
@@ -153,7 +157,12 @@ export const MACHINES: Record<string, MachineDef> = {
   },
 };
 
-export const BUILDABLE: MachineDef[] = Object.values(MACHINES).filter((m) => m.buildable);
+/** Ordre de la palette : le Laboratoire et le Comptoir d'abord. */
+const FIRST = ['laboratoire', 'comptoir'];
+export const BUILDABLE: MachineDef[] = [
+  ...FIRST.map((id) => MACHINES[id]),
+  ...Object.values(MACHINES).filter((m) => m.buildable && !FIRST.includes(m.id)),
+];
 
 export function machineDef(id: string): MachineDef {
   const d = MACHINES[id];

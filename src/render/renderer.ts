@@ -3,7 +3,8 @@ import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, 
 
 /** Les types DOM et ceux de PixiJS divergent sur getContext('webgpu') : simple conversion. */
 const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
-import { BIOME_COLORS, CELL, CHUNK, PALETTE } from '../config.ts';
+import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
+import { PICKUP_TIME } from '../sim/game.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
 import type { Belt, Machine } from '../sim/factory.ts';
@@ -62,6 +63,8 @@ interface ChunkView {
 }
 
 interface MachineView {
+  /** Revente : remplissage dessiné. */
+  fill?: number;
   root: Container;
   body: Graphics;
   icon: Container;
@@ -492,7 +495,20 @@ export class GameRenderer {
       nv.root.scale.set(1 + nv.pulse * 0.04);
     }
     // Comptoir : un « ! » quand il attend qu'on choisisse une commande.
+    // Revente : une jauge de remplissage.
     for (const m of this.game.factory.machines.values()) {
+      if (m.type === 'revente') {
+        const v = this.machineViews.get(m.id);
+        if (!v || !m.built) continue;
+        const fill = Math.min(1, this.game.sellCount(m) / RULES.sellCap);
+        if (Math.abs(fill - (v.fill ?? -1)) < 0.004) continue;
+        v.fill = fill;
+        v.badge.clear();
+        const W = 2 * CELL - 14, y = CELL - 9;
+        v.badge.roundRect(-W / 2, y, W, 5, 2.5).fill(PALETTE.roller);
+        if (fill > 0) v.badge.roundRect(-W / 2, y, Math.max(5, W * fill), 5, 2.5).fill(fill >= 1 ? PALETTE.coral : PALETTE.green);
+        continue;
+      }
       if (m.type !== 'comptoir') continue;
       const v = this.machineViews.get(m.id);
       if (!v) continue;
@@ -611,6 +627,72 @@ export class GameRenderer {
         const pulse = 0.5 + 0.5 * Math.sin(this.time * 12);
         fx.circle(p.x * CELL, p.y * CELL, 5 + pulse * 3).fill({ color: PALETTE.yellow, alpha: 0.5 });
       }
+    }
+  }
+
+  // ---------- Gros drone de revente ----------
+
+  private skyLayer: Container | null = null;
+  private pickupViews = new Map<number, { root: Container; rotors: Graphics[]; crate: Graphics; shadow: Graphics }>();
+
+  private makeCargoDrone(): { root: Container; rotors: Graphics[]; crate: Graphics; shadow: Graphics } {
+    if (!this.skyLayer) {
+      this.skyLayer = new Container();
+      this.worldLayer.addChildAt(this.skyLayer, this.worldLayer.getChildIndex(this.fogLayer) + 1);
+    }
+    const ink = PALETTE.ink;
+    const shadow = new Graphics().ellipse(0, 0, 26, 7).fill({ color: PALETTE.shadow, alpha: 0.8 });
+    this.skyLayer.addChild(shadow);
+    const root = new Container();
+    const crate = new Graphics();
+    crate.moveTo(-8, 8).lineTo(-12, 22).moveTo(8, 8).lineTo(12, 22).stroke({ width: 2, color: ink, cap: 'round' });
+    crate.roundRect(-16, 20, 32, 20, 4).fill(0xc98a4b).stroke({ width: 2.5, color: ink });
+    crate.rect(-16, 28, 32, 3).fill(0x8a5a2b);
+    const body = new Graphics();
+    body.moveTo(-34, -4).lineTo(34, -4).stroke({ width: 4, color: ink, cap: 'round' });
+    body.roundRect(-22, -12, 44, 22, 9).fill(0xffffff).stroke({ width: 3, color: ink });
+    body.roundRect(-14, -6, 28, 9, 4).fill(PALETTE.yellow);
+    body.circle(0, 14, 4).fill(ink);
+    const rotors: Graphics[] = [];
+    for (const x of [-34, 34]) {
+      const r = new Graphics().ellipse(0, 0, 15, 3.2).fill({ color: ink, alpha: 0.55 });
+      r.position.set(x, -8);
+      rotors.push(r);
+      body.addChild(r);
+    }
+    root.addChild(crate, body);
+    this.skyLayer.addChild(root);
+    return { root, rotors, crate, shadow };
+  }
+
+  private updatePickups(): void {
+    const seen = new Set<number>();
+    for (const p of this.game.pickups) {
+      seen.add(p.id);
+      let v = this.pickupViews.get(p.id);
+      if (!v) { v = this.makeCargoDrone(); this.pickupViews.set(p.id, v); }
+      // Arrivée depuis le haut à droite, vol stationnaire au-dessus de la benne, départ vers le haut à gauche.
+      const T = PICKUP_TIME, half = T / 2, t = p.t;
+      const bx = p.x * CELL, by = (p.y - 1.4) * CELL;
+      const far = CELL * 26;
+      const smooth = (u: number) => u * u * (3 - 2 * u);
+      let x: number, y: number, k: number;
+      if (t < half - 0.6) { k = 1 - smooth(Math.min(1, t / (half - 0.6))); x = bx + far * k; y = by - far * 0.8 * k; }
+      else if (t < half + 0.6) { k = 0; x = bx; y = by + Math.sin((t - half + 0.6) / 1.2 * Math.PI) * CELL * 0.6; }
+      else { k = smooth(Math.min(1, (t - half - 0.6) / (half - 0.6))); x = bx - far * k; y = by - far * 0.8 * k; }
+      v.root.position.set(x, y + Math.sin(this.time * 5) * 2);
+      v.root.rotation = t < half - 0.6 || t > half + 0.6 ? -0.12 : 0;
+      v.root.scale.set(1.25);
+      v.crate.visible = p.done;
+      for (const r of v.rotors) r.scale.x = Math.cos(this.time * 30);
+      v.shadow.position.set(x, p.y * CELL + CELL * 0.6);
+      v.shadow.alpha = Math.max(0, 1 - Math.abs(x - bx) / (CELL * 8)) * 0.8;
+    }
+    for (const [id, v] of this.pickupViews) {
+      if (seen.has(id)) continue;
+      v.root.destroy({ children: true });
+      v.shadow.destroy();
+      this.pickupViews.delete(id);
     }
   }
 
@@ -862,6 +944,7 @@ export class GameRenderer {
     this.updateMachines(dt);
     this.drawItems();
     this.updateActors();
+    this.updatePickups();
     this.drawOverlay();
     this.renderLoupe();
   }

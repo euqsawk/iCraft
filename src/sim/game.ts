@@ -1,7 +1,7 @@
 // L'état complet d'une partie : monde, usine, robot, drones, argent, paliers, laboratoire et commandes.
 import { RULES } from '../config.ts';
 import { machineDef } from '../data/machines.ts';
-import { itemLabel } from '../data/items.ts';
+import { item, itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
 import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
 import { key, unkey, type Dir } from './geom.ts';
@@ -23,7 +23,18 @@ export const DRONE_PRIORITIES: { id: DronePriority; label: string }[] = [
   { id: 'comptoir', label: 'Livrer le Comptoir' },
   { id: 'robot', label: 'Distribuer le minerai du robot' },
 ];
-const DEFAULT_ORDER: DronePriority[] = DRONE_PRIORITIES.map((p) => p.id);
+export const DEFAULT_ORDER: DronePriority[] = DRONE_PRIORITIES.map((p) => p.id);
+
+/** Une liste de priorités complète et sans doublon (les tâches oubliées vont à la fin). */
+export function cleanOrder(list: unknown): DronePriority[] {
+  const ok = Array.isArray(list) ? list.filter((p): p is DronePriority => DEFAULT_ORDER.includes(p as DronePriority)) : [];
+  const uniq = [...new Set(ok)];
+  return [...uniq, ...DEFAULT_ORDER.filter((p) => !uniq.includes(p))];
+}
+
+/** Passage du gros drone de revente : il arrive, ramasse (à mi-parcours), repart. */
+export interface SellPickup { id: number; t: number; x: number; y: number; done: boolean }
+export const PICKUP_TIME = 6;
 
 export type Job = { kind: 'belt'; k: number } | { kind: 'machine'; id: number };
 
@@ -53,8 +64,8 @@ export interface Drone {
   burn: number;
   /** Une case d'inventaire. */
   cargo: Slot | null;
-  /** Sa tâche principale. */
-  priority: DronePriority;
+  /** Ses tâches, de la plus importante à la moins importante. */
+  priorities: DronePriority[];
 }
 
 export interface Robot {
@@ -91,6 +102,7 @@ export type GameEvent =
   | { type: 'reveal' }
   | { type: 'factory' }
   | { type: 'drones' }
+  | { type: 'sold'; money: number; count: number }
   | { type: 'unlock'; id: string };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
@@ -137,10 +149,11 @@ export interface GameSave {
   look?: RobotLook;
   tips?: TipState;
   played?: number;
+  sellT?: number;
   /** Charbon et inventaires du robot et des drones (depuis la version 2). */
   crew?: {
     robot: { fuel: number; burn: number; inv: (Slot | null)[] };
-    drones: { fuel: number; burn: number; cargo: Slot | null; priority?: DronePriority }[];
+    drones: { fuel: number; burn: number; cargo: Slot | null; priority?: DronePriority; priorities?: DronePriority[] }[];
   };
 }
 
@@ -172,6 +185,9 @@ export class Game {
   tips: TipState = { done: [], off: false };
   /** Temps de jeu, en secondes. */
   played = 0;
+  /** Revente : temps depuis le dernier passage, et passages en cours. */
+  sellT = 0;
+  pickups: SellPickup[] = [];
   /** Drones gagnés avec l'ancien système de commandes (anciennes parties). */
   extraDrones = 0;
   /** Chantier en cours du robot lui-même. */
@@ -213,7 +229,7 @@ export class Game {
   private rebuildDrones(): void {
     const n = this.droneCount;
     while (this.drones.length < n) {
-      this.drones.push({ x: this.robot.x, y: this.robot.y - 1, state: 'home', task: null, t: 0, slot: 0, fuel: RULES.fuelStack, burn: 0, cargo: null, priority: 'carburant' });
+      this.drones.push({ x: this.robot.x, y: this.robot.y - 1, state: 'home', task: null, t: 0, slot: 0, fuel: RULES.fuelStack, burn: 0, cargo: null, priorities: [...DEFAULT_ORDER] });
     }
     this.drones.length = n;
     this.drones.forEach((d, i) => { d.slot = (i / Math.max(n, 1)) * Math.PI * 2; });
@@ -286,6 +302,7 @@ export class Game {
     if (m.type === 'noyau') return this.noyauNeeds()[item] ?? 0;
     if (m.type === 'comptoir') return this.comptoirNeeds()[item] ?? 0;
     if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? Math.max(0, RULES.labCap - (this.lab[item] ?? 0)) : 0;
+    if (m.type === 'revente') return m.built && !this.pickups.some((p) => p.id === m.id && !p.done) ? Math.max(0, RULES.sellCap - this.sellCount(m)) : 0;
     return 0;
   }
 
@@ -293,6 +310,10 @@ export class Game {
   receive(m: Machine, item: string, n: number): number {
     const k = Math.min(n, this.accepts(m, item));
     if (k <= 0) return 0;
+    if (m.type === 'revente') {
+      m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
+      return k;
+    }
     if (this.offlineGains) this.offlineGains[item] = (this.offlineGains[item] ?? 0) + k;
     this.delivered += k;
     if (m.type === 'noyau') {
@@ -334,6 +355,56 @@ export class Game {
       done += Math.min(v, this.palierDone[k] ?? 0);
     }
     return total ? done / total : 1;
+  }
+
+  // ---------- Revente : le gros drone passe toutes les 5 minutes ----------
+
+  sellCount(m: Machine): number {
+    let n = 0;
+    for (const v of Object.values(m.inBuf)) n += v;
+    return n;
+  }
+
+  /** Ce que rapporterait le contenu d'une benne de revente. */
+  sellValue(m: Machine): number {
+    let v = 0;
+    for (const [k, n] of Object.entries(m.inBuf)) v += item(k).value * n;
+    return Math.floor(v * RULES.sellRate);
+  }
+
+  /** Secondes avant le prochain passage du gros drone. */
+  get nextPickup(): number {
+    return Math.max(0, RULES.sellEvery - this.sellT);
+  }
+
+  /** Vide une benne et paie son contenu. */
+  private sell(m: Machine): number {
+    const money = this.sellValue(m);
+    const n = this.sellCount(m);
+    m.inBuf = {};
+    if (money > 0) this.earn(money);
+    if (n > 0) this.emit({ type: 'sold', money, count: n });
+    return money;
+  }
+
+  private tickSell(dt: number): void {
+    this.sellT += dt;
+    if (this.sellT >= RULES.sellEvery) {
+      this.sellT -= RULES.sellEvery;
+      for (const m of this.factory.machines.values()) {
+        if (m.type === 'revente' && m.built && this.sellCount(m) > 0) this.pickups.push({ id: m.id, t: 0, x: m.x + m.w / 2, y: m.y + m.h / 2, done: false });
+      }
+    }
+    for (const p of this.pickups) {
+      const before = p.t;
+      p.t += dt;
+      if (before < PICKUP_TIME / 2 && p.t >= PICKUP_TIME / 2) {
+        const m = this.factory.machines.get(p.id);
+        if (m) this.sell(m);
+        p.done = true;
+      }
+    }
+    this.pickups = this.pickups.filter((p) => p.t < PICKUP_TIME);
   }
 
   get finalPalier(): boolean {
@@ -461,6 +532,8 @@ export class Game {
     }
     this.checkPalier();
     if (this.order && orderComplete(this.order)) this.completeOrder();
+    // Le gros drone est passé pendant l'absence : les bennes de revente sont vidées.
+    for (const m of this.factory.machines.values()) if (m.type === 'revente' && m.built) this.sell(m);
     this.emit({ type: 'order' });
     return { away, counted, gained };
   }
@@ -774,7 +847,8 @@ export class Game {
     const needy = [...this.factory.machines.values()]
       .filter((m) => m.built && this.factory.fuelRoom(m) > 0 && !reservedFuel.has(m.id) && this.near(this.center(m), RULES.supplyRange))
       .sort((a, b) => a.fuel - b.fuel);
-    const order = [d.priority, ...DEFAULT_ORDER.filter((p) => p !== d.priority)];
+    const order = d.priorities;
+    const refueler = order[0] === 'carburant';
     const cargo = d.cargo;
 
     // 1. Avec une cargaison : la livrer là où elle sert, dans l'ordre des priorités.
@@ -782,7 +856,7 @@ export class Game {
       for (const cat of order) {
         if (cat === 'carburant') {
           if (cargo.t === 'charbon' && needy[0]) return { kind: 'refuel', id: needy[0].id };
-          if (cargo.t === 'charbon' && d.priority === 'carburant' && cargo.n < RULES.invStack) {
+          if (cargo.t === 'charbon' && refueler && cargo.n < RULES.invStack) {
             const src = this.sourceFor(d, 'charbon');
             if (src) return { kind: 'fetch', from: src, item: 'charbon' };
           }
@@ -800,7 +874,7 @@ export class Game {
         }
       }
       // Personne n'en veut : on la range dans un coffre (sauf le charbon d'un drone ravitailleur).
-      if (!(cargo.t === 'charbon' && d.priority === 'carburant')) {
+      if (!(cargo.t === 'charbon' && refueler)) {
         const dest = this.destinationFor(cargo.t);
         if (dest) return { kind: 'deliver', id: dest.id };
       }
@@ -810,7 +884,7 @@ export class Game {
     // 2. Les mains vides : la première tâche utile dans l'ordre des priorités.
     for (const cat of order) {
       if (cat === 'carburant') {
-        if (needy.length || d.priority === 'carburant') {
+        if (needy.length || refueler) {
           const src = this.sourceFor(d, 'charbon');
           if (src) return { kind: 'fetch', from: src, item: 'charbon' };
         }
@@ -880,12 +954,19 @@ export class Game {
     if (d.cargo && d.cargo.n <= 0) d.cargo = null;
   }
 
-  setDronePriority(i: number, p: DronePriority): void {
+  /** Range les tâches d'un drone, de la plus importante à la moins importante. */
+  setDronePriorities(i: number, list: DronePriority[]): void {
     const d = this.drones[i];
     if (!d) return;
-    d.priority = p;
+    d.priorities = cleanOrder(list);
     d.task = null;
     if (d.state === 'fly') d.state = 'home';
+  }
+
+  /** Met une tâche en tête de liste. */
+  setDronePriority(i: number, p: DronePriority): void {
+    const d = this.drones[i];
+    if (d) this.setDronePriorities(i, [p, ...d.priorities.filter((x) => x !== p)]);
   }
 
   /** Le drone brûle du charbon en vol ; faux s'il n'en a plus. */
@@ -953,6 +1034,7 @@ export class Game {
     this.tickRobot(dt);
     this.tickDrones(dt);
     this.factory.tick(dt);
+    this.tickSell(dt);
   }
 
   // ---------- Sauvegarde ----------
@@ -969,10 +1051,10 @@ export class Game {
       drones: this.droneCount,
       unlocks: [...this.unlocks],
       palier: this.palier, palierDone: this.palierDone, lab: this.lab, extraDrones: this.extraDrones,
-      look: this.look, tips: this.tips, played: Math.floor(this.played),
+      look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
       crew: {
         robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save() },
-        drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priority: d.priority })),
+        drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priorities: [...d.priorities] })),
       },
     };
   }
@@ -990,6 +1072,7 @@ export class Game {
     // Les parties d'avant les conseils n'en reçoivent pas.
     this.tips = s.tips ? { done: [...(s.tips.done ?? [])], off: !!s.tips.off } : { done: [], off: true };
     this.played = s.played ?? 0;
+    this.sellT = s.sellT ?? 0;
     if (s.v >= 4) {
       this.palier = s.palier ?? 1;
       this.palierDone = s.palierDone ?? {};
@@ -1015,7 +1098,7 @@ export class Game {
       r.fuel = s.crew.robot.fuel; r.burn = s.crew.robot.burn; r.inv.load(s.crew.robot.inv);
       s.crew.drones.forEach((sd, i) => {
         const d = this.drones[i];
-        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priority = sd.priority ?? 'carburant'; }
+        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
       });
     } else if (this.drones[0]) {
       // Sauvegarde d'avant le charbon : le cadeau de départ.

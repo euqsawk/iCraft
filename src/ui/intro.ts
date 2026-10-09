@@ -2,18 +2,11 @@
 import { ACCESSORIES, cleanLook, DEFAULT_LOOK, ROBOT_COLORS, ROBOT_NAMES, type RobotLook } from '../data/look.ts';
 import { droneSvg, robotSvg } from '../render/robotShapes.ts';
 import { DRONE_PRIORITIES } from '../sim/game.ts';
+import { PRIO_ICONS } from './prioIcons.ts';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 
-const PRIO_ICONS: Record<string, string> = {
-  carburant: '<svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 3 L11 2 L14 8 L10 14 L3 12 L2 6 Z" fill="#2E3A4B"/></svg>',
-  chantiers: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#2E3A4B" stroke-width="2" stroke-linecap="round"><path d="M3 13 L9 7 M8 3 L13 8 L11 10 L6 5 Z"/></svg>',
-  noyau: '<svg viewBox="0 0 16 16" width="14" height="14"><rect x="2" y="2" width="12" height="12" rx="3" fill="#F47C64"/></svg>',
-  laboratoire: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#2E3A4B" stroke-width="1.8" stroke-linejoin="round"><path d="M6 2 H10 M7 2 V6 L3 13 H13 L9 6 V2"/></svg>',
-  comptoir: '<svg viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="6" fill="#FFC857" stroke="#2E3A4B" stroke-width="1.6"/></svg>',
-  robot: '<svg viewBox="0 0 16 16" width="14" height="14"><rect x="3" y="3" width="10" height="9" rx="2.5" fill="#FFC857"/><circle cx="5" cy="13.5" r="1.6" fill="#2E3A4B"/><circle cx="11" cy="13.5" r="1.6" fill="#2E3A4B"/></svg>',
-};
 
 /** Montre la présentation et renvoie l'apparence choisie. */
 export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
@@ -64,8 +57,8 @@ export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
           <h1 class="intro-title">Tes drones</h1>
           <p class="intro-text">Ils volent autour de ${esc(look.name)} : ils construisent avec lui, rechargent les machines en charbon et apportent au Noyau, au Laboratoire et au Comptoir ce qu’ils trouvent dans tes coffres. Tu commences avec un drone, et 10 charbons dans sa soute.</p>
           <div class="prio-demo">
-            <p class="custom-label">Touche ${esc(look.name)} pour donner une priorité à chaque drone : il fait ça d’abord, puis le reste.</p>
-            <div class="prio-chips">${DRONE_PRIORITIES.map((p, i) => `<span class="pchip${i === 0 ? ' on' : ''}">${PRIO_ICONS[p.id] ?? ''}${esc(p.label)}</span>`).join('')}</div>
+            <p class="custom-label">Touche ${esc(look.name)}, puis un drone : range ses tâches de la plus importante à la moins importante. Il fait la première tâche utile de la liste.</p>
+            <ol class="prio-list demo">${DRONE_PRIORITIES.map((p, i) => `<li class="prio-item${i === 0 ? ' first' : ''}"><span class="prio-n">${i + 1}</span><span class="prio-ico">${PRIO_ICONS[p.id] ?? ''}</span><b>${esc(p.label)}</b></li>`).join('')}</ol>
           </div>`;
       }
       screen.innerHTML = `
@@ -110,14 +103,21 @@ export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
         };
       }
       if (step === 2) {
-        // Les priorités défilent, pour montrer qu'on en choisit une par drone.
-        const chips = [...screen.querySelectorAll('.pchip')];
-        let i = 0;
+        // Une tâche remonte en tête de liste, pour montrer qu'on les range.
+        const list = screen.querySelector<HTMLElement>('.prio-list')!;
         const timer = setInterval(() => {
-          if (!chips[0]?.isConnected) { clearInterval(timer); return; }
-          i = (i + 1) % chips.length;
-          chips.forEach((c, j) => c.classList.toggle('on', j === i));
-        }, 1100);
+          if (!list.isConnected) { clearInterval(timer); return; }
+          const items = [...list.children] as HTMLElement[];
+          const last = items[items.length - 1];
+          list.insertBefore(last, items[0]);
+          [...list.children].forEach((li, k) => {
+            li.classList.toggle('first', k === 0);
+            li.querySelector('.prio-n')!.textContent = String(k + 1);
+          });
+          last.classList.remove('rise');
+          void last.offsetWidth;
+          last.classList.add('rise');
+        }, 1600);
       }
     };
     render();
