@@ -357,22 +357,14 @@ export class GameRenderer {
     const g = this.portG;
     g.clear();
     const f = this.game.factory;
-    // Une petite avancée blanche sort du bord arrondi de la machine et vient coiffer le bout du tapis :
-    // les objets passent dessous, par la bouche sombre.
+    // Raccord : un simple chevron là où le tapis touche la machine.
     const port = (b: Belt, d: number, into: boolean) => {
       const m = f.machineAt(b.x + DX[d], b.y + DY[d]);
       const ghost = !b.built || !m?.built;
       const ex = (b.x + 0.5 + DX[d] * 0.5) * CELL, ey = (b.y + 0.5 + DY[d] * 0.5) * CELL;
       const ax = DX[d], ay = DY[d], px = -ay, py = ax;
-      const half = 10, out = 7, inn = 11;
-      const x0 = Math.min(ex - ax * out, ex + ax * inn) - (ax === 0 ? half : 0);
-      const y0 = Math.min(ey - ay * out, ey + ay * inn) - (ay === 0 ? half : 0);
-      const w = ax === 0 ? half * 2 : out + inn, hh = ay === 0 ? half * 2 : out + inn;
-      // Ombre, comme sous les machines, puis l'avancée blanche aux coins arrondis.
-      if (!ghost) g.roundRect(x0, y0 + 3, w, hh, 6).fill(PALETTE.shadow);
-      g.roundRect(x0, y0, w, hh, 6).fill({ color: PALETTE.white, alpha: ghost ? 0.6 : 1 });
-      // Juste un chevron dans le bloc blanc : rouge pour une entrée, vert pour une sortie.
-      const s = into ? 1 : -1, cx = ex + ax * 2, cy = ey + ay * 2;
+      // Juste un chevron sur le bord : rouge pour une entrée, vert pour une sortie.
+      const s = into ? 1 : -1, cx = ex + ax * 5, cy = ey + ay * 5;
       g.moveTo(cx - ax * 2.5 * s + px * 4.5, cy - ay * 2.5 * s + py * 4.5).lineTo(cx + ax * 2 * s, cy + ay * 2 * s).lineTo(cx - ax * 2.5 * s - px * 4.5, cy - ay * 2.5 * s - py * 4.5)
         .stroke({ width: 2.6, color: into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
     };
