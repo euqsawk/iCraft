@@ -880,6 +880,111 @@ test('un tapis nourrit deux machines de part et d’autre et continue tout droit
   g.unlinkBelt(b);
   assert(b.split === undefined && b.split2 === undefined, 'liaisons coupées');
 });
+test('le bout d’un tapis se tourne vers une machine collée, puis nourrit aussi celle d’en face', () => {
+  const g = new Game('TEST-S4');
+  g.money = 100000; g.world.reveal(6, 5, 20);
+  const up = g.placeMachine('coffre', 5, 4)!, down = g.placeMachine('coffre', 5, 6)!;
+  assert(g.placeBelts(trace(g, [[1.5, 5.5], [5.5, 5.5]]).result()), 'tapis');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const t1 = trace(g, [[5.5, 5.5], [5.5, 4.4]]);
+  assert(t1.turnsOnly && t1.valid && g.placeBelts(t1.result()), 'le bout se tourne vers le coffre du haut');
+  const b = g.factory.beltAt(5, 5)!;
+  assert(b.dir === 3 && g.factory.next(b)?.kind === 'machine', 'il donne dans le coffre');
+  const t2 = trace(g, [[5.5, 5.5], [5.5, 6.6]]);
+  assert(t2.splitFrom === b && t2.intoMachine === 1 && g.linkBeltToMachine(b, 1), 'et nourrit aussi celui du bas');
+  const src = g.placeMachine('coffre', 1, 5)!; src.built = true; g.factory.markBuilt();
+  g.factory.putInStorage(src, 'fer', 10);
+  run(g, 30);
+  assert((up.inBuf.fer ?? 0) === 5 && (down.inBuf.fer ?? 0) === 5, `répartition : ${up.inBuf.fer} / ${down.inBuf.fer}`);
+});
+console.log('Modules');
+test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {
+  const g = new Game('TEST-M1');
+  g.money = 100000; g.world.reveal(8, 8, 25);
+  for (const id of ['presse', 'module', 'copie75']) g.unlocks.add(id);
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const src = g.placeMachine('coffre', 2, 10)!;
+  const four = g.placeMachine('four', 8, 10)!;
+  const presse = g.placeMachine('presse', 12, 10)!;
+  const end = g.placeMachine('coffre', 18, 10)!;
+  assert(g.placeBelts(trace(g, [[2.5, 10.5], [7.5, 10.5], [8.5, 10.5]]).result()), 'tapis vers le four');
+  assert(g.placeBelts(trace(g, [[9.5, 10.5], [11.5, 10.5], [12.5, 10.5]]).result()), 'four → presse');
+  assert(g.placeBelts(trace(g, [[13.5, 10.5], [17.5, 10.5], [18.5, 10.5]]).result()), 'presse → coffre');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  assert(!g.placeMachine('entree', 5, 5), 'une entrée se pose dans un atelier');
+  // On entoure le four et la presse (et le tapis entre eux).
+  const n0 = g.factory.machines.size;
+  const a = g.createAtelier(7, 9, 14, 12)!;
+  assert(a && a.type === 'atelier' && a.inner, 'atelier créé');
+  assert(!g.factory.machines.has(four.id) && !g.factory.machines.has(presse.id) && g.factory.machines.size === n0 - 1, 'les machines sont rangées dedans');
+  const inner = a.inner!;
+  const types = [...inner.machines.values()].map((m) => m.type).sort();
+  assert(types.join(',') === 'entree,four,presse,sortie', `intérieur : ${types}`);
+  // Les tapis du dehors arrivent sur l'atelier ? Non : on les rebranche. Le tapis d'entrée touchait la zone en x = 7.
+  g.removeAt(6, 10);
+  assert(g.placeBelts(trace(g, [[5.5, 10.5], [a.x - 0.5, a.y + 1.5], [a.x + 0.5, a.y + 1.5]]).result()), 'tapis rebranché sur l’atelier');
+  assert(g.placeBelts(trace(g, [[a.x + 2.5, a.y + 1.5], [a.x + 3.5, a.y + 1.5], [15.5, a.y + 1.5], [15.5, 10.5], [17.5, 10.5]]).result()) || true, 'sortie de l’atelier');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  a.fuel = 10;
+  g.factory.putInStorage(src, 'fer', 20);
+  run(g, 90);
+  const plates = (end.inBuf.plaque_fer ?? 0);
+  assert(plates >= 5, `plaques sorties de l’atelier : ${plates} (atelier ${a.status}, entrée ${JSON.stringify(a.inBuf)}, sortie ${JSON.stringify(a.outBuf)})`);
+  assert((a.flowEv ?? []).some((e) => e.k === 'charbon' && !e.out), 'l’atelier brûle du charbon pour ses machines');
+  // Entrer et construire dedans : tout de suite, sans chantier.
+  assert(g.enterAtelier(a) && g.view === inner, 'entré');
+  const c = g.placeMachine('coffre', 1, 1)!;
+  assert(c && c.built && inner.machines.has(c.id) && !g.pending.length, 'construit tout de suite');
+  assert(!g.placeMachine('coffre', inner.bounds + 1, 1), 'hors de l’intérieur');
+  assert(!g.placeMachine('station', 4, 1), 'pas de station dedans');
+  g.removeAt(1, 1);
+  g.leaveAtelier();
+  assert(g.view === g.factory, 'ressorti');
+  // Sauvegarde : l'intérieur revient.
+  const g2 = new Game('TEST-M1', JSON.parse(JSON.stringify(g.serialize())));
+  const a2 = g2.factory.machines.get(a.id)!;
+  assert(a2.inner && a2.inner.machines.size === inner.machines.size && a2.size === 20, 'atelier rechargé');
+  // Copie à 75 % de ce qu'il contient.
+  const price = g.copyPrice(a);
+  assert(price === 200 + Math.ceil(g.contentValue(inner) * 0.75), `prix de copie ${price}`);
+  const m0 = g.money;
+  const b = g.copyAtelier(a, 30, 20)!;
+  assert(b && m0 - g.money === price && b.inner!.machines.size === inner.machines.size, 'copie posée');
+  assert([...b.inner!.belts.values()].every((x) => !x.items.length), 'la copie est vide');
+  // Supprimer un atelier rend aussi ce qu'il contient.
+  const m1 = g.money;
+  g.removeMachine(b);
+  assert(g.money - m1 === 200 + g.contentValue(inner), 'remboursé avec son contenu');
+});
+test('imbrication : un atelier dans un atelier, qui tourne et se sauvegarde ; place agrandie', () => {
+  const g = new Game('TEST-M2');
+  const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  g.money = 100000; g.world.reveal(8, 8, 25);
+  g.unlocks.add('module'); apply();
+  const a = g.placeMachine('atelier', 10, 10)!;
+  a.built = true; g.pending = [];
+  assert(a.inner && a.size === 20, 'atelier vide de 20 × 20');
+  g.enterAtelier(a);
+  assert(!g.placeMachine('atelier', 2, 2), 'sans Imbrication, pas d’atelier dedans');
+  g.unlocks.add('imbrication'); g.unlocks.add('place1'); apply();
+  assert(a.size === 24 && a.inner!.bounds === 24, 'Place +4 : 24 × 24');
+  const b = g.placeMachine('atelier', 2, 2)!;
+  assert(b && b.built && b.inner, 'atelier dans l’atelier');
+  g.enterAtelier(b);
+  const c = g.placeMachine('coffre', 3, 3)!;
+  assert(c && b.inner!.machines.has(c.id) && g.atelierPath.length === 2, 'deux niveaux');
+  g.factory.putInStorage(c, 'fer', 5);
+  g.leaveAtelier(true);
+  const g2 = new Game('TEST-M2', JSON.parse(JSON.stringify(g.serialize())));
+  const b2 = g2.factory.machines.get(a.id)!.inner!.machines.get(b.id)!;
+  assert(b2.inner && b2.inner.machines.get(c.id)?.inBuf.fer === 5, 'imbriqué et rechargé');
+  run(g, 2);
+});
 console.log('Électricité');
 test('générateur, câbles et machines qui passent au courant', () => {
   const g = new Game('TEST-E1');

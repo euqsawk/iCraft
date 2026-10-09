@@ -55,7 +55,7 @@ export type Preview =
   | { kind: 'tunnel'; tracer: TunnelTracer }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
-  | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number }
+  | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number; module?: boolean }
   | null;
 
 export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number } | { kind: 'robot' } | null;
@@ -164,6 +164,12 @@ export class GameRenderer {
   private loupeRT!: RenderTexture;
   /** Lignes d'alignement à dessiner pendant la pose d'une machine. */
   guides: { x0: number; y0: number; x1: number; y1: number }[] = [];
+  /** L'usine affichée (la carte ou l'intérieur d'un atelier) et la pièce de l'atelier. */
+  private shownFactory: unknown = null;
+  private roomG = new Graphics();
+  private roomSize = 0;
+  /** Caméra de la carte, gardée pendant qu'on est dans un atelier. */
+  private outerCam: { x: number; y: number; zoom: number } | null = null;
 
   constructor(app: Application, game: Game) {
     this.app = app;
@@ -173,7 +179,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -371,7 +377,7 @@ export class GameRenderer {
     const built: Belt[] = [], ghosts: Belt[] = [];
     // Les tapis construits, rangés par morceau de carte.
     const groups = new Map<string, Belt[]>();
-    for (const b of this.game.factory.belts.values()) {
+    for (const b of this.game.view.belts.values()) {
       if (!b.built) { ghosts.push(b); continue; }
       built.push(b);
       const k = chunkKey(Math.floor(b.x / CHUNK), Math.floor(b.y / CHUNK));
@@ -386,7 +392,7 @@ export class GameRenderer {
     }
     // Là où le tapis touche une machine, il file sous elle (la machine est dessinée par-dessus) :
     // pas de bout arrondi qui laisserait un vide contre ses coins arrondis.
-    const f = this.game.factory;
+    const f = this.game.view;
     const under = (b: Belt, d: number) => (f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
     const line = (g: Graphics, list: Belt[], dy: number) => {
       for (const b of list) {
@@ -459,7 +465,7 @@ export class GameRenderer {
   private drawMeters(): void {
     const g = this.meterG;
     g.clear();
-    for (const b of this.game.factory.belts.values()) {
+    for (const b of this.game.view.belts.values()) {
       if (!b.meter) continue;
       const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
       const px = -DY[b.dir], py = DX[b.dir];
@@ -472,7 +478,7 @@ export class GameRenderer {
 
   /** Le débit de chaque compteur, mis à jour deux fois par seconde : « 1,2 /s » et la matière principale. */
   private updateMeterLabels(): void {
-    const f = this.game.factory;
+    const f = this.game.view;
     const seen = new Set<Belt>();
     for (const b of f.belts.values()) {
       if (!b.meter) continue;
@@ -527,7 +533,7 @@ export class GameRenderer {
   }
 
   private drawRoutes(): void {
-    const g = this.routeG, f = this.game.factory;
+    const g = this.routeG, f = this.game.view;
     g.clear();
     const legs: { kind: string; pts: { x: number; y: number }[] }[] = [];
     for (const l of f.lines.values()) {
@@ -610,7 +616,7 @@ export class GameRenderer {
 
   /** Le trajet (en pixels) du trajet i d'une ligne : de l'arrêt i à l'arrêt suivant, en L. */
   private legPx(l: Line, i: number): { x: number; y: number }[] | null {
-    const f = this.game.factory;
+    const f = this.game.view;
     const a = f.machines.get(l.stops[i % l.stops.length].id), b = f.machines.get(l.stops[(i + 1) % l.stops.length].id);
     if (!a || !b) return null;
     // Deux arrêts alignés : le coin du L se confond avec un bout, on l'enlève.
@@ -619,7 +625,7 @@ export class GameRenderer {
   }
 
   private updateRoutes(): void {
-    const f = this.game.factory;
+    const f = this.game.view;
     let sig = '';
     for (const l of f.lines.values()) {
       sig += `|${l.id}:${l.stops.map((st) => { const m = f.machines.get(st.id); return `${m?.x},${m?.y}`; }).join(';')}`;
@@ -665,7 +671,7 @@ export class GameRenderer {
 
   /** Le trajet d'un tapis souterrain : du centre de la machine de départ à celui de l'arrivée, par ses cases. */
   private tunnelPath(t: Tunnel): { x: number; y: number }[] | null {
-    const f = this.game.factory;
+    const f = this.game.view;
     const a = f.machines.get(t.from), b = f.machines.get(t.to);
     if (!a || !b) return null;
     const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
@@ -677,7 +683,7 @@ export class GameRenderer {
     const on = this.underground;
     const elec = this.electric && !on;
     this.cableG.visible = this.showCables && !elec;
-    const f = this.game.factory;
+    const f = this.game.view;
     if (on !== this.undergroundOn || elec !== this.electricOn) {
       this.undergroundOn = on;
       this.electricOn = elec;
@@ -717,7 +723,7 @@ export class GameRenderer {
   }
 
   private drawTunnels(): void {
-    const g = this.tunnelG, mk = this.tunnelMarks, f = this.game.factory;
+    const g = this.tunnelG, mk = this.tunnelMarks, f = this.game.view;
     g.clear(); mk.clear();
     for (const t of f.tunnels.values()) {
       const pts = this.tunnelPath(t);
@@ -755,7 +761,7 @@ export class GameRenderer {
 
   /** Les objets en route sous terre (seulement dans la vue du sous-sol). */
   private drawTunnelItems(): void {
-    const f = this.game.factory;
+    const f = this.game.view;
     let used = 0;
     for (const t of f.tunnels.values()) {
       if (!t.items.length) continue;
@@ -786,7 +792,7 @@ export class GameRenderer {
    */
   private drawCables(): void {
     this.cableT = 0;
-    const f = this.game.factory;
+    const f = this.game.view;
     this.cableCount = f.cables.size;
     this.cableG.clear();
     this.powerG.clear();
@@ -819,7 +825,7 @@ export class GameRenderer {
    * Jaune vif : alimentée (ou générateur qui tourne) ; gris bleu : branchée mais sans courant ; contour clair : pas branchée.
    */
   private drawPowerMachines(g: Graphics): void {
-    const f = this.game.factory;
+    const f = this.game.view;
     // La portée des câbles posés : 5 cases autour de chaque câble.
     if (f.cables.size) {
       const cells = [...f.cables].map((k) => { const [x, y] = unkey(k); return { x, y }; });
@@ -891,7 +897,7 @@ export class GameRenderer {
   private drawBridges(built: Belt[]): void {
     const g = this.bridgeG;
     g.clear();
-    const f = this.game.factory;
+    const f = this.game.view;
     const decks: { x0: number; y0: number; x1: number; y1: number; d: number; jump: number }[] = [];
     const deck = (b: Belt, d: number, jump: number) => {
       const L = 1 + jump;
@@ -954,7 +960,7 @@ export class GameRenderer {
   private drawPorts(): void {
     const g = this.portG, lg = this.linkG;
     g.clear(); lg.clear();
-    const f = this.game.factory;
+    const f = this.game.view;
     // Raccord : un simple chevron là où le tapis touche la machine.
     const port = (b: Belt, d: number, into: boolean, dist = 1) => {
       const m = f.machineAt(b.x + DX[d] * dist, b.y + DY[d] * dist);
@@ -1008,7 +1014,7 @@ export class GameRenderer {
       if (!s) { s = new Sprite(); s.anchor.set(0.5); layer.addChild(s); pool.push(s); }
       return s;
     };
-    for (const belt of this.game.factory.belts.values()) {
+    for (const belt of this.game.view.belts.values()) {
       if (!belt.built || belt.items.length === 0) continue;
       const bx = (belt.x + 0.5) * CELL, by = (belt.y + 0.5) * CELL;
       const m = belt.jump || belt.splitJump ? far : 0;
@@ -1058,7 +1064,7 @@ export class GameRenderer {
 
   /** Une autre machine touche-t-elle le haut de celle-ci ? */
   private machineAbove(m: Machine): boolean {
-    const f = this.game.factory;
+    const f = this.game.view;
     for (let x = m.x; x < m.x + m.w; x++) {
       const o = f.machineAt(x, m.y - 1);
       if (o && o !== m) return true;
@@ -1139,7 +1145,7 @@ export class GameRenderer {
 
   private updateMachines(dt: number): void {
     const seen = new Set<number>();
-    for (const m of this.game.factory.machines.values()) {
+    for (const m of this.game.view.machines.values()) {
       seen.add(m.id);
       if (m.type === 'noyau') {
         if (!this.noyauView) this.buildNoyau(m);
@@ -1167,10 +1173,10 @@ export class GameRenderer {
       if (m.type === 'four' && m.status === 'working') v.icon.y = Math.sin(this.time * 9) * 0.6;
       // Le nom s'affiche au-dessus de la machine, sauf si une autre machine y est collée (il la recouvrirait).
       if (v.label) v.label.visible = this.camera.zoom > 0.6 && !this.machineAbove(m);
-      const low = this.game.factory.lowFuel(m);
+      const low = this.game.view.lowFuel(m);
       v.lamp.visible = low && Math.sin(this.time * (m.fuel <= 0 && m.burn <= 0 ? 12 : 6)) > -0.2;
       // Branchée sur un réseau qui a du courant : un petit éclair dans le coin (elle se passe de charbon).
-      const powered = m.built && this.game.factory.powered(m);
+      const powered = m.built && this.game.view.powered(m);
       const st = `${m.status}${powered ? '+' : ''}`;
       if (st !== v.status) {
         v.status = st;
@@ -1218,7 +1224,7 @@ export class GameRenderer {
     }
     // Grand coffre : ses quatre objets les plus nombreux, en petit, à la place du dessin du coffre.
     // Petit coffre : l'objet qu'il garde ; s'il en garde de plusieurs sortes, une icône « mélange ».
-    for (const m of this.game.factory.machines.values()) {
+    for (const m of this.game.view.machines.values()) {
       if ((m.type !== 'grand_coffre' && m.type !== 'coffre') || !m.built) continue;
       const v = this.machineViews.get(m.id);
       if (!v || !v.root.visible) continue;
@@ -1256,7 +1262,7 @@ export class GameRenderer {
     }
     // Comptoir : un « ! » quand il attend qu'on choisisse une commande.
     // Revente : une jauge de remplissage.
-    for (const m of this.game.factory.machines.values()) {
+    for (const m of this.game.view.machines.values()) {
       if (m.type === 'revente') {
         const v = this.machineViews.get(m.id);
         if (!v || !m.built || !v.root.visible) continue;
@@ -1501,7 +1507,7 @@ export class GameRenderer {
   private drawRange(g: Graphics, cx: number, cy: number): void {
     const R = RULES.stationRange * CELL;
     // Les machines à portée du drone de la station se teintent en vert.
-    for (const m of this.game.factory.machines.values()) {
+    for (const m of this.game.view.machines.values()) {
       if (m.type === 'station') continue;
       const mx = (m.x + m.w / 2) * CELL, my = (m.y + m.h / 2) * CELL;
       if (Math.hypot(mx - cx, my - cy) > R) continue;
@@ -1589,7 +1595,7 @@ export class GameRenderer {
       if (cells.length) {
         // La portée du câble tracé, et les machines qu'il alimentera (cerclées de jaune).
         this.fillRange(g, cells, PALETTE.yellow, 0.16, true);
-        for (const m of this.game.factory.machinesInRange(cells)) {
+        for (const m of this.game.view.machinesInRange(cells)) {
           g.roundRect(m.x * CELL - 3, m.y * CELL - 3, m.w * CELL + 6, m.h * CELL + 6, 15).stroke({ width: 3.5, color: PALETTE.yellow });
         }
         g.moveTo((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL);
@@ -1637,17 +1643,19 @@ export class GameRenderer {
       const x0 = Math.min(pv.x0, pv.x1) * CELL, y0 = Math.min(pv.y0, pv.y1) * CELL;
       const w = (Math.abs(pv.x1 - pv.x0) + 1) * CELL, hh = (Math.abs(pv.y1 - pv.y0) + 1) * CELL;
       const c = this.game.areaContents(pv.x0, pv.y0, pv.x1, pv.y1);
-      for (const m of c.machines) g.roundRect(m.x * CELL + 2, m.y * CELL + 2, m.w * CELL - 4, m.h * CELL - 4, 12).fill({ color: PALETTE.coral, alpha: 0.3 });
-      for (const b of c.belts) g.rect(b.x * CELL + 3, b.y * CELL + 3, CELL - 6, CELL - 6).fill({ color: PALETTE.coral, alpha: 0.3 });
-      g.roundRect(x0, y0, w, hh, 6).fill({ color: PALETTE.coral, alpha: 0.1 });
+      // Module : en vert, ce qui sera rangé dans l'atelier ; gomme : en corail, ce qui partira.
+      const col = pv.module ? PALETTE.green : PALETTE.coral;
+      for (const m of c.machines) g.roundRect(m.x * CELL + 2, m.y * CELL + 2, m.w * CELL - 4, m.h * CELL - 4, 12).fill({ color: col, alpha: 0.3 });
+      for (const b of c.belts) g.rect(b.x * CELL + 3, b.y * CELL + 3, CELL - 6, CELL - 6).fill({ color: col, alpha: 0.3 });
+      g.roundRect(x0, y0, w, hh, 6).fill({ color: col, alpha: 0.1 });
       dashedPolyline(g, roundRectPoints(x0, y0, w, hh, 6), 7, 5, true);
-      g.stroke({ width: 2.5, color: PALETTE.coral, alpha: 0.9 });
+      g.stroke({ width: 2.5, color: col, alpha: 0.9 });
     } else if (pv?.kind === 'erase') {
       g.circle((pv.x + 0.5) * CELL, (pv.y + 0.5) * CELL, CELL * 0.8).fill({ color: PALETTE.coral, alpha: 0.25 }).stroke({ width: 2, color: PALETTE.coral });
     }
     // Machine qu'on déplace : un cadre corail qui pulse, et une croix de déplacement au-dessus.
     if (this.movingId !== null) {
-      const m = this.game.factory.machines.get(this.movingId);
+      const m = this.game.view.machines.get(this.movingId);
       if (m) {
         const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
         const pad = 6 + pulse * 4;
@@ -1669,7 +1677,7 @@ export class GameRenderer {
     }
     // Fenêtre d'une station ouverte : son rayon d'action.
     if (this.rangeOf !== null) {
-      const st = this.game.factory.machines.get(this.rangeOf);
+      const st = this.game.view.machines.get(this.rangeOf);
       if (st) this.drawRange(g, (st.x + st.w / 2) * CELL, (st.y + st.h / 2) * CELL);
     }
     const sel = this.selection;
@@ -1678,16 +1686,16 @@ export class GameRenderer {
       dashedPolyline(g, Array.from({ length: 33 }, (_, i) => ({ x: r.x * CELL + Math.cos(i / 32 * Math.PI * 2) * 26, y: r.y * CELL - 16 + Math.sin(i / 32 * Math.PI * 2) * 26 })), 5, 4);
       g.stroke({ width: 2.5, color: PALETTE.coral });
     } else if (sel?.kind === 'machine') {
-      const m = this.game.factory.machines.get(sel.id);
+      const m = this.game.view.machines.get(sel.id);
       if (m) {
         const pad = 5;
         dashedPolyline(g, roundRectPoints(m.x * CELL - pad, m.y * CELL - pad, m.w * CELL + pad * 2, m.h * CELL + pad * 2, 18), 6, 4, true);
         g.stroke({ width: 2.5, color: PALETTE.coral });
       }
     } else if (sel?.kind === 'belt') {
-      const b = this.game.factory.beltAt(sel.x, sel.y);
+      const b = this.game.view.beltAt(sel.x, sel.y);
       if (b) {
-        for (const c of this.game.factory.chainOf(b)) {
+        for (const c of this.game.view.chainOf(b)) {
           const p = this.beltPath(c);
           g.moveTo(p[0].x, p[0].y).lineTo(p[1].x, p[1].y).lineTo(p[2].x, p[2].y);
         }
@@ -1933,7 +1941,7 @@ export class GameRenderer {
     g.clear();
     if (h) {
       h.t += dt;
-      const m = this.game.factory.machines.get(h.id);
+      const m = this.game.view.machines.get(h.id);
       if (!m || h.t > 7) { this.highlight = null; return; }
       const pulse = 0.5 + 0.5 * Math.sin(h.t * 5);
       const pad = 6 + pulse * 5, a = Math.min(1, (7 - h.t) / 1.5);
@@ -1942,11 +1950,66 @@ export class GameRenderer {
     }
   }
 
+  /**
+   * On entre dans un atelier (ou on en sort) : tout ce qui est dessiné pour l'ancienne usine part,
+   * et la pièce de l'atelier remplace le sol, le brouillard, le robot et les drones.
+   */
+  private switchView(): void {
+    const inside = this.game.inAtelier;
+    const wasOuter = this.shownFactory === this.game.factory;
+    this.shownFactory = this.game.view;
+    for (const v of this.machineViews.values()) v.root.destroy({ children: true });
+    this.machineViews.clear();
+    if (this.noyauView) { this.noyauView.root.destroy({ children: true }); this.noyauView = null; }
+    this.beltsDirty = true;
+    this.cableCount = -1;
+    this.routeSig = '';
+    this.tunnelSig = '';
+    this.selection = null;
+    this.preview = null;
+    for (const l of [this.groundLayer, this.filonLayer, this.fogLayer, this.actorLayer, this.groundShadows, this.routeG]) l.visible = !inside;
+    this.roomG.visible = !!inside;
+    this.roomSize = 0;
+    if (inside) {
+      if (wasOuter) this.outerCam = { x: this.camera.x, y: this.camera.y, zoom: this.camera.zoom };
+      // On cadre ce qu'il contient (ou toute la pièce si elle est vide).
+      const size = inside.size ?? 20;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const m of this.game.view.machines.values()) { x0 = Math.min(x0, m.x); y0 = Math.min(y0, m.y); x1 = Math.max(x1, m.x + m.w); y1 = Math.max(y1, m.y + m.h); }
+      if (!Number.isFinite(x0)) { x0 = 0; y0 = 0; x1 = size; y1 = size; }
+      const w = Math.max(x1 - x0 + 4, 10) * CELL;
+      this.camera.x = (x0 + x1) / 2 * CELL; this.camera.y = (y0 + y1) / 2 * CELL;
+      this.camera.zoom = Math.max(0.35, Math.min(1.3, (this.app.screen.width - 24) / w));
+      this.follow = false;
+    } else if (this.outerCam) {
+      Object.assign(this.camera, this.outerCam);
+      this.outerCam = null;
+    }
+  }
+
+  /** La pièce d'un atelier : un sol clair bordé d'un mur, et le dehors en sombre. */
+  private drawRoom(): void {
+    const inside = this.game.inAtelier;
+    if (!inside) return;
+    const size = inside.size ?? 20;
+    if (size === this.roomSize) return;
+    this.roomSize = size;
+    const S = size * CELL, g = this.roomG;
+    g.clear();
+    g.rect(-S * 4, -S * 4, S * 9, S * 9).fill(0x2e3a4b);
+    g.roundRect(-14, -10, S + 28, S + 28, 22).fill(0x1f2835);
+    g.roundRect(-14, -14, S + 28, S + 28, 22).fill(0x8fa3b8);
+    g.roundRect(-4, -4, S + 8, S + 8, 14).fill(0xe9efe9);
+    g.rect(0, 0, S, S).fill(0xf4f7f2);
+  }
+
   render(dt: number): void {
+    if (this.game.view !== this.shownFactory) this.switchView();
+    this.drawRoom();
     this.time += dt;
     if (this.intro) this.stepIntro(dt);
     this.stepFocus(dt);
-    if (this.follow) this.centerOnRobot();
+    if (this.follow && !this.game.inAtelier) this.centerOnRobot();
     this.stepScan(dt);
     const cam = this.camera;
     cam.setSize(this.app.screen.width, this.app.screen.height);
@@ -1963,7 +2026,7 @@ export class GameRenderer {
     this.portG.alpha = portA;
     this.portG.visible = portA > 0;
     this.updateChunks();
-    const cablesChanged = this.beltsDirty || this.game.factory.cables.size !== this.cableCount;
+    const cablesChanged = this.beltsDirty || this.game.view.cables.size !== this.cableCount;
     if (this.beltsDirty) this.redrawBelts();
     // Les câbles : redessinés quand l'usine change, et deux fois par seconde (réseau alimenté ou non).
     this.cableT += dt;

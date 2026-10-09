@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out';
 
 export interface MachineDef {
   id: string;
@@ -180,6 +180,18 @@ export const MACHINES: Record<string, MachineDef> = {
   comptoir: {
     id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
     hint: 'Des commandes au choix, payées en pièces',
+  },
+  atelier: {
+    id: 'atelier', name: 'Atelier', kind: 'atelier', coal: true, w: 3, h: 3, cost: 200, unlock: 1, recipes: [], buildable: true,
+    hint: 'Un module : des machines rangées dans un seul bloc. Entre dedans pour les voir ou les modifier, copie-le',
+  },
+  entree: {
+    id: 'entree', name: 'Entrée', kind: 'port_in', coal: false, w: 1, h: 1, cost: 5, unlock: 1, recipes: [], buildable: true,
+    hint: 'Dans un atelier : ce qui entre dans l’atelier ressort ici, sur un tapis',
+  },
+  sortie: {
+    id: 'sortie', name: 'Sortie', kind: 'port_out', coal: false, w: 1, h: 1, cost: 5, unlock: 1, recipes: [], buildable: true,
+    hint: 'Dans un atelier : ce qu’un tapis y apporte sort de l’atelier',
   },
   noyau: {
     id: 'noyau', name: 'Noyau', kind: 'core', coal: false, w: 4, h: 4, cost: 0, unlock: 1, recipes: [], buildable: false,

@@ -738,3 +738,26 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .rc-locked { display: flex; flex-wrap: wrap; gap: 6px; }
 .rc-locked .chip { opacity: .7; }
 .rc-locked .chip img { width: 18px; height: 18px; }
+
+/* Dans un atelier : le bandeau de l'atelier remplace la mission et la mini-carte. */
+.in-atelier .order-row { visibility: hidden; }
+.atelier-bar {
+  position: absolute; left: 12px; right: 12px; top: calc(var(--top) + 64px); max-width: 520px; margin: 0 auto; z-index: 3; pointer-events: auto;
+  display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border-radius: 20px;
+  background: #fff; box-shadow: 0 5px 0 var(--shadow); border-left: 6px solid var(--green);
+}
+.atelier-bar .ab-ico { width: 34px; height: 34px; border-radius: 12px; background: #E3F3DD; color: var(--green); display: flex; align-items: center; justify-content: center; flex: none; }
+.atelier-bar .ab-ico svg { width: 22px; height: 22px; }
+.atelier-bar div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.atelier-bar b { font-size: 14px; font-weight: 900; }
+.atelier-bar small { font-size: 11.5px; font-weight: 700; color: var(--ink2); line-height: 1.3; }
+.atelier-bar small b { font-size: 11.5px; }
+.atelier-bar .btn { flex: none; padding: 0 16px; }
+.in-atelier .move-banner { top: calc(var(--top) + 140px); }
+.module-banner { border-left-color: var(--green); }
+.module-banner .mb-ico { background: #E3F3DD; color: var(--green); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.btn > svg { width: 18px; height: 18px; flex: none; }
+.move-banner .mb-ico svg { width: 22px; height: 22px; }
+/* Dans un atelier, le fond change : le titre du palier garde un fond blanc. */
+.in-atelier .lvl-info { background: #fff; border-radius: 14px; padding: 4px 10px; box-shadow: 0 3px 0 var(--shadow); }

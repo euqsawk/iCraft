@@ -130,6 +130,7 @@ export type GameEvent =
   | { type: 'built'; job: Job }
   | { type: 'reveal' }
   | { type: 'factory' }
+  | { type: 'view' }
   | { type: 'drones' }
   | { type: 'sold'; money: number; count: number }
   | { type: 'inventory' }
@@ -192,9 +193,232 @@ export interface GameSave {
   };
 }
 
+/** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte, avec le robot et les drones). */
+const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse']);
+
 export class Game {
   readonly world: World;
   readonly factory: Factory;
+  /** Les ateliers où l'on est entré, du plus grand au plus petit (le dernier est celui qu'on regarde). */
+  private viewStack: Machine[] = [];
+  /** Modules : côté de l'intérieur d'un atelier, prix d'une copie (fraction), ateliers dans les ateliers. */
+  atelierSize = 20;
+  copyRate = 1;
+  nesting = false;
+
+  /** L'usine qu'on regarde et où l'on construit : la carte, ou l'intérieur d'un atelier. */
+  get view(): Factory {
+    return this.viewStack[this.viewStack.length - 1]?.inner ?? this.factory;
+  }
+
+  /** L'atelier où l'on est (null sur la carte). */
+  get inAtelier(): Machine | null {
+    return this.viewStack[this.viewStack.length - 1] ?? null;
+  }
+
+  /** Les ateliers ouverts, du plus grand au plus petit. */
+  get atelierPath(): Machine[] {
+    return [...this.viewStack];
+  }
+
+  /** Entre dans un atelier (pour voir et modifier ce qu'il contient). */
+  enterAtelier(m: Machine): boolean {
+    if (!m.inner || !m.built) return false;
+    this.viewStack.push(m);
+    this.emit({ type: 'view' });
+    return true;
+  }
+
+  /** Ressort d'un atelier (d'un cran). */
+  leaveAtelier(all = false): void {
+    if (!this.viewStack.length) return;
+    if (all) this.viewStack = []; else this.viewStack.pop();
+    this.emit({ type: 'view' });
+  }
+
+  /** Ce que vaut ce que contient une usine (machines, tapis, ateliers imbriqués), en pièces. */
+  contentValue(f: Factory): number {
+    let v = 0;
+    for (const m of f.machines.values()) v += machineDef(m.type).cost + (m.inner ? this.contentValue(m.inner) : 0);
+    for (const b of f.belts.values()) v += RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0);
+    return v;
+  }
+
+  /** Prix d'une copie d'atelier : l'atelier, plus ce qu'il contient au taux de copie. */
+  copyPrice(m: Machine): number {
+    return machineDef('atelier').cost + Math.ceil((m.inner ? this.contentValue(m.inner) : 0) * this.copyRate);
+  }
+
+  /** L'intérieur d'un atelier vidé de ce qui y circule (pour une copie). */
+  private blankSave(s: FactorySave): FactorySave {
+    return {
+      ...s,
+      belts: s.belts.map((b) => { const c = [...b] as typeof b; c[5] = []; return c; }),
+      machines: s.machines.map((m) => ({ ...m, inBuf: {}, outBuf: {}, fuel: 0, carb: 0, burn: 0, craft: null, made: 0, drillT: 0, ...(m.inner ? { inner: this.blankSave(m.inner) } : {}) })),
+    };
+  }
+
+  /** Pose une copie d'un atelier (vide de ce qui y circule) ; le prix dépend des déblocages Copie. */
+  copyAtelier(src: Machine, x: number, y: number): Machine | null {
+    if (!src.inner) return null;
+    const f = this.view;
+    const check = f.checkMachine('atelier', x, y, undefined, true);
+    if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return null; }
+    if (this.inAtelier && !this.nesting) { this.emit({ type: 'toast', text: 'Imbrication : à débloquer dans l’arbre (Modules)', tone: 'warn' }); return null; }
+    if (this.isAncestorOrSelf(src)) { this.emit({ type: 'toast', text: 'Un atelier ne peut pas se contenir lui-même', tone: 'warn' }); return null; }
+    if (!this.spend(this.copyPrice(src))) return null;
+    if (check.belts) this.earn(this.clearBeltsUnder(3, 3, x, y));
+    const m = f.addMachine('atelier', x, y, false);
+    f.makeInner(m, Math.max(src.size ?? this.atelierSize, this.atelierSize)).load(this.blankSave(src.inner.serialize()));
+    this.finishPlacement(m);
+    this.emit({ type: 'toast', text: 'Copie de l’atelier posée', tone: 'good' });
+    return m;
+  }
+
+  /** Est-on à l'intérieur de cet atelier (ou de l'un de ceux qu'il contient) ? */
+  private isAncestorOrSelf(m: Machine): boolean {
+    return this.viewStack.includes(m);
+  }
+
+  /** Après une pose : dans un atelier, c'est construit tout de suite ; sur la carte, le robot s'en charge. */
+  private finishPlacement(m: Machine): void {
+    if (this.inAtelier) m.built = true;
+    else this.pending.push({ kind: 'machine', id: m.id });
+    this.emit({ type: 'factory' });
+  }
+
+  /**
+   * Range les machines et les tapis d'une zone dans un atelier de 3 × 3, posé au milieu de la zone.
+   * Les tapis qui entraient dans la zone arrivent à l'intérieur par une Entrée, ceux qui en sortaient par une Sortie.
+   */
+  createAtelier(x0: number, y0: number, x1: number, y1: number): Machine | null {
+    const f = this.view;
+    const warn = (text: string) => { this.emit({ type: 'toast', text, tone: 'warn' }); return null; };
+    if (!this.hasMachine('atelier')) return warn('Modules : à débloquer dans l’arbre');
+    // La zone s'agrandit pour contenir entièrement les machines qu'elle touche.
+    let ax = Math.min(x0, x1), bx = Math.max(x0, x1), ay = Math.min(y0, y1), by = Math.max(y0, y1);
+    let machines: Machine[] = [];
+    for (let guard = 0; guard < 8; guard++) {
+      machines = [];
+      for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) { const m = f.machineAt(x, y); if (m && !machines.includes(m)) machines.push(m); }
+      let nx0 = ax, nx1 = bx, ny0 = ay, ny1 = by;
+      for (const m of machines) { nx0 = Math.min(nx0, m.x); ny0 = Math.min(ny0, m.y); nx1 = Math.max(nx1, m.x + m.w - 1); ny1 = Math.max(ny1, m.y + m.h - 1); }
+      if (nx0 === ax && nx1 === bx && ny0 === ay && ny1 === by) break;
+      ax = nx0; bx = nx1; ay = ny0; by = ny1;
+    }
+    if (!machines.length) return warn('Entoure au moins une machine');
+    for (const m of machines) {
+      const d = machineDef(m.type);
+      if (!d.buildable || d.gift || NOT_IN_ATELIER.has(m.type) && m.type !== 'foreuse') return warn(`${d.name} : ne se range pas dans un atelier`);
+      if (m.inner && !this.nesting) return warn('Imbrication : à débloquer pour ranger un atelier dans un atelier');
+      if (d.kind === 'port_in' || d.kind === 'port_out') return warn('Les entrées et sorties restent dans leur atelier');
+    }
+    const W = bx - ax + 1, H = by - ay + 1, size = this.atelierSize;
+    if (W + 2 > size || H + 2 > size) return warn(`Zone trop grande : ${size - 2} × ${size - 2} cases au plus`);
+    const inSel = (x: number, y: number) => x >= ax && x <= bx && y >= ay && y <= by;
+    const selected = new Set(machines);
+    const belts: Belt[] = [];
+    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) { const b = f.beltAt(x, y); if (b) belts.push(b); }
+    // La place de l'atelier : au milieu de la zone, sur des cases qui seront libres.
+    const freeAfter = (x: number, y: number) => {
+      if (!f.inBounds(x, y)) return false;
+      if (inSel(x, y)) return true;
+      return !f.machineAt(x, y) && !f.beltAt(x, y);
+    };
+    let spot: { x: number; y: number } | null = null;
+    const cx = ax + Math.floor((W - 3) / 2), cy = ay + Math.floor((H - 3) / 2);
+    for (let r = 0; r <= 4 && !spot; r++) {
+      for (let dy = -r; dy <= r && !spot; dy++) for (let dx = -r; dx <= r && !spot; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        let ok = true;
+        for (let j = 0; j < 3 && ok; j++) for (let i = 0; i < 3 && ok; i++) ok = freeAfter(cx + dx + i, cy + dy + j);
+        if (ok) spot = { x: cx + dx, y: cy + dy };
+      }
+    }
+    if (!spot) return warn('Pas de place pour l’atelier (3 × 3) ici');
+    if (!this.spend(machineDef('atelier').cost)) return null;
+    // L'intérieur : la zone recentrée, avec une case de marge pour les entrées et les sorties.
+    const ox = Math.floor((size - W) / 2) - ax, oy = Math.floor((size - H) / 2) - ay;
+    const save = f.serialize();
+    const ids = new Set(machines.map((m) => m.id));
+    let nextId = save.nextId;
+    const inner: FactorySave = {
+      nextId,
+      cables: [], lines: [], tunnels: [],
+      belts: save.belts.filter(([x, y]) => inSel(x, y)).map((b) => { const c = [...b] as typeof b; c[0] = b[0] + ox; c[1] = b[1] + oy; c[4] = 1; return c; }),
+      machines: save.machines.filter((m) => ids.has(m.id)).map((m) => {
+        const live = f.machines.get(m.id)!;
+        return { ...m, x: m.x + ox, y: m.y + oy, built: true, links: m.links?.filter((id) => ids.has(id)), ore: live.ore, rate: live.rate };
+      }),
+    };
+    const ports = new Map<string, { type: string; id: number }>();
+    const port = (type: 'entree' | 'sortie', x: number, y: number) => {
+      const k = `${x},${y}`;
+      let p = ports.get(k);
+      if (!p) {
+        p = { type, id: nextId++ };
+        ports.set(k, p);
+        inner.machines.push({ id: p.id, type, x: x + ox, y: y + oy, built: true, inBuf: {}, outBuf: {}, fuel: 0, burn: 0, craft: null, drillT: 0 });
+      }
+      return p;
+    };
+    const outside = (x: number, y: number) => !inSel(x, y) && (!!f.beltAt(x, y) || (!!f.machineAt(x, y) && !selected.has(f.machineAt(x, y)!)));
+    for (const b of belts) {
+      const px = b.x - DX[b.inDir], py = b.y - DY[b.inDir];
+      if (outside(px, py)) port('entree', px, py);
+      for (const [d, jump] of [[b.dir, b.jump ?? 0], [b.split, b.splitJump ?? 0], [b.split2, 0]] as [Dir | undefined, number][]) {
+        if (d === undefined) continue;
+        const nx = b.x + DX[d] * (1 + jump), ny = b.y + DY[d] * (1 + jump);
+        if (!inSel(nx, ny) && outside(nx, ny)) {
+          if (jump) { // le pont sortirait de l'intérieur : la sortie se pose juste à côté
+            const ib = inner.belts.find((c) => c[0] === b.x + ox && c[1] === b.y + oy);
+            if (ib) { if (d === b.dir) ib[8] = 0; else ib[9] = 0; }
+            port('sortie', b.x + DX[d], b.y + DY[d]);
+          } else port('sortie', nx, ny);
+        }
+      }
+    }
+    // Machines reliées directement à un tapis du dehors : une entrée ou une sortie collée, reliée à elle.
+    for (const m of machines) {
+      const im = inner.machines.find((x) => x.id === m.id)!;
+      for (let j = -1; j <= m.h; j++) for (let i = -1; i <= m.w; i++) {
+        const x = m.x + i, y = m.y + j;
+        if (inSel(x, y) || f.inside(m, x, y) || ((i < 0 || i >= m.w) && (j < 0 || j >= m.h))) continue;
+        const b = f.beltAt(x, y);
+        if (!b) continue;
+        if (f.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) === m || (b.feeds ?? []).some((d) => f.machineAt(b.x + DX[d], b.y + DY[d]) === m)) {
+          const p = port('sortie', x, y);
+          im.links = [...(im.links ?? []).filter((id) => id !== p.id), p.id];
+        } else if (f.machineAt(b.x + DX[b.dir] * (1 + (b.jump ?? 0)), b.y + DY[b.dir] * (1 + (b.jump ?? 0))) === m || (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) === m)) {
+          const p = port('entree', x, y);
+          const ip = inner.machines.find((q) => q.id === p.id)!;
+          ip.links = [...(ip.links ?? []).filter((id) => id !== m.id), m.id];
+        }
+      }
+    }
+    inner.nextId = nextId;
+    // On retire la zone de la carte (sans rembourser : tout part dans l'atelier).
+    let coal = 0;
+    for (const m of machines) {
+      coal += m.fuel;
+      for (const t of f.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
+      for (const l of f.linesOf(m)) this.earn(this.linePrice(l));
+      for (const o of f.machines.values()) if (o.links?.includes(m.id)) o.links = o.links.filter((id) => id !== m.id);
+      f.removeMachine(m);
+      this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
+    }
+    for (const b of belts) {
+      f.removeBelt(b);
+      const k = key(b.x, b.y);
+      this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
+    }
+    const a = f.addMachine('atelier', spot.x, spot.y, true);
+    f.makeInner(a, size).load(inner);
+    a.fuel = Math.min(RULES.fuelStack, coal);
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `Atelier créé : ${machines.length} machine${machines.length > 1 ? 's' : ''} rangée${machines.length > 1 ? 's' : ''}`, tone: 'good' });
+    return a;
+  }
   money = RULES.startMoney;
   /** Palier du Noyau (1 au départ) et ce qui a déjà été livré pour la mission en cours. */
   palier = 1;
@@ -561,7 +785,7 @@ export class Game {
   droneRangeMult = 1;
 
   private applyUnlocks(): void {
-    let speed = 1, slots = RULES.chestSlots;
+    let speed = 1, slots = RULES.chestSlots, copy = 1, size = 20, nest = false;
     this.robotSpeedMult = 1;
     this.droneRangeMult = 1;
     for (const id of this.unlocks) {
@@ -570,6 +794,17 @@ export class Game {
       if (e?.kind === 'droneRange') this.droneRangeMult = Math.max(this.droneRangeMult, e.mult);
       if (e?.kind === 'beltSpeed') speed = Math.max(speed, e.mult);
       if (e?.kind === 'chestSlots') slots = Math.max(slots, e.slots);
+      if (e?.kind === 'copyRate') copy = Math.min(copy, e.rate);
+      if (e?.kind === 'atelierSize') size = Math.max(size, e.size);
+      if (e?.kind === 'nesting') nest = true;
+    }
+    this.copyRate = copy;
+    this.nesting = nest;
+    if (size !== this.atelierSize) {
+      this.atelierSize = size;
+      // Les ateliers déjà posés s'agrandissent aussi.
+      const grow = (f: Factory) => { for (const m of f.machines.values()) if (m.inner) { m.size = Math.max(m.size ?? 20, size); m.inner.bounds = m.size; grow(m.inner); } };
+      grow(this.factory);
     }
     this.factory.speedMult = speed;
     this.factory.chestSlots = slots;
@@ -625,11 +860,19 @@ export class Game {
       this.emit({ type: 'toast', text: `${def.name} : à débloquer dans l’arbre`, tone: 'warn' });
       return null;
     }
+    if (this.inAtelier && (NOT_IN_ATELIER.has(type) || (def.kind === 'atelier' && !this.nesting))) {
+      this.emit({ type: 'toast', text: def.kind === 'atelier' ? 'Imbrication : à débloquer dans l’arbre (Modules)' : `${def.name} : pas dans un atelier`, tone: 'warn' });
+      return null;
+    }
+    if (!this.inAtelier && (def.kind === 'port_in' || def.kind === 'port_out')) {
+      this.emit({ type: 'toast', text: `${def.name} : se pose à l’intérieur d’un atelier`, tone: 'warn' });
+      return null;
+    }
     if (def.unique && [...this.factory.machines.values()].some((m) => m.type === type)) {
       this.emit({ type: 'toast', text: `Un seul ${def.name.toLowerCase()} par partie`, tone: 'warn' });
       return null;
     }
-    const check = this.factory.checkMachine(type, x, y, undefined, true);
+    const check = this.view.checkMachine(type, x, y, undefined, true);
     if (!check.ok) {
       this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' });
       return null;
@@ -638,9 +881,9 @@ export class Game {
     // Posée sur un tapis : les cases de tapis dessous disparaissent (remboursées). Le tapis qui arrive
     // devient l'entrée de la machine, celui qui repart devient sa sortie.
     if (check.belts) this.earn(this.clearBeltsUnder(def.w, def.h, x, y));
-    const m = this.factory.addMachine(type, x, y, false);
-    this.pending.push({ kind: 'machine', id: m.id });
-    this.emit({ type: 'factory' });
+    const m = this.view.addMachine(type, x, y, false);
+    if (def.kind === 'atelier') this.view.makeInner(m, this.atelierSize);
+    this.finishPlacement(m);
     return m;
   }
 
@@ -648,7 +891,9 @@ export class Game {
     const fresh = cells.filter((c) => !c.existing);
     const bridges = cells.filter((c) => c.jump).length + (split?.jump ? 1 : 0);
     const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost;
-    if (fresh.length === 0) return false;
+    // Rien de neuf : seulement le bout d'un tapis qui se tourne (vers une machine collée, par exemple).
+    const turns = cells.some((c) => c.existing && this.view.beltAt(c.x, c.y)?.dir !== c.dir);
+    if (fresh.length === 0 && !turns) return false;
     if (split && !this.isUnlocked('separateur')) {
       this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
@@ -658,19 +903,19 @@ export class Game {
       return false;
     }
     if (!this.spend(cost)) return false;
-    if (split) this.factory.setSplit(split.from, split.dir, split.jump ?? 0);
+    if (split) this.view.setSplit(split.from, split.dir, split.jump ?? 0);
     for (const c of cells) {
       if (c.existing) {
-        const b = this.factory.beltAt(c.x, c.y);
+        const b = this.view.beltAt(c.x, c.y);
         if (b) {
-          this.factory.setBeltDir(b, c.dir);
+          this.view.setBeltDir(b, c.dir);
           // Le bout d'un tapis existant peut devenir un pont (vers un tapis voisin à enjamber).
           if (c.jump) b.jump = Math.min(c.jump, RULES.bridgeSpan);
         }
       } else {
-        const nb = this.factory.addBelt(c.x, c.y, c.dir, c.inDir, false);
+        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, !!this.inAtelier);
         if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
-        this.pending.push({ kind: 'belt', k: key(c.x, c.y) });
+        if (!this.inAtelier) this.pending.push({ kind: 'belt', k: key(c.x, c.y) });
       }
     }
     this.emit({ type: 'factory' });
@@ -678,7 +923,7 @@ export class Game {
   }
 
   private refundBelt(b: Belt): number {
-    this.factory.removeBelt(b);
+    this.view.removeBelt(b);
     const k = key(b.x, b.y);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
     return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0);
@@ -687,17 +932,17 @@ export class Game {
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
   /** Pose un compteur de débit sur un tapis (tout de suite). */
   placeMeter(x: number, y: number): boolean {
-    const check = this.factory.checkMachine('compteur', x, y);
+    const check = this.view.checkMachine('compteur', x, y);
     if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return false; }
     if (!this.spend(MACHINES.compteur.cost)) return false;
-    this.factory.addMeter(this.factory.beltAt(x, y)!);
+    this.view.addMeter(this.view.beltAt(x, y)!);
     this.emit({ type: 'factory' });
     return true;
   }
 
   /** Ce que contient un rectangle de cases (bornes incluses) : machines (sauf Noyau et cadeaux), tapis, câbles. */
   areaContents(x0: number, y0: number, x1: number, y1: number): { machines: Machine[]; belts: Belt[]; cables: { x: number; y: number }[] } {
-    const f = this.factory;
+    const f = this.view;
     const [ax, bx] = [Math.min(x0, x1), Math.max(x0, x1)], [ay, by] = [Math.min(y0, y1), Math.max(y0, y1)];
     const machines = new Set<Machine>(), belts: Belt[] = [], cables: { x: number; y: number }[] = [];
     for (let y = ay; y <= by; y++) {
@@ -721,18 +966,18 @@ export class Game {
       this.earn(this.refundBelt(b));
       n++;
     }
-    for (const m of machines) if (this.factory.machines.has(m.id) && this.removeMachine(m)) n++;
-    for (const c of cables) if (this.factory.removeCable(c.x, c.y)) { this.earn(RULES.cableCost); n++; }
+    for (const m of machines) if (this.view.machines.has(m.id) && this.removeMachine(m)) n++;
+    for (const c of cables) if (this.view.removeCable(c.x, c.y)) { this.earn(RULES.cableCost); n++; }
     if (n) this.emit({ type: 'factory' });
     return n;
   }
 
   removeAt(x: number, y: number): boolean {
     // Un pont passe au-dessus : on retire d'abord le pont, le tapis du dessous reste.
-    const over = this.factory.bridgeOver(x, y);
+    const over = this.view.bridgeOver(x, y);
     if (over) {
       if (over.split) {
-        this.factory.clearSplit(over.belt);
+        this.view.clearSplit(over.belt);
         this.earn(RULES.bridgeCost);
       } else {
         this.earn(this.refundBelt(over.belt));
@@ -740,7 +985,7 @@ export class Game {
       this.emit({ type: 'factory' });
       return true;
     }
-    const b = this.factory.beltAt(x, y);
+    const b = this.view.beltAt(x, y);
     // Un compteur sur le tapis : il part d'abord (remboursé), le tapis au coup suivant.
     if (b?.meter) {
       delete b.meter;
@@ -753,10 +998,10 @@ export class Game {
       this.emit({ type: 'factory' });
       return true;
     }
-    const m = this.factory.machineAt(x, y);
+    const m = this.view.machineAt(x, y);
     if (m) return this.removeMachine(m);
     // Le câble en dernier (il passe sous le reste).
-    if (this.factory.removeCable(x, y)) {
+    if (this.view.removeCable(x, y)) {
       this.earn(RULES.cableCost);
       this.emit({ type: 'factory' });
       return true;
@@ -915,18 +1160,19 @@ export class Game {
       return false;
     }
     // Ses tapis souterrains partent avec elle (remboursés).
-    for (const t of this.factory.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
-    for (const l of this.factory.linesOf(m)) this.earn(this.linePrice(l));
-    this.factory.removeMachine(m);
+    for (const t of this.view.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
+    for (const l of this.view.linesOf(m)) this.earn(this.linePrice(l));
+    this.view.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
-    this.earn(def.cost);
+    // Un atelier rend aussi ce qu'il contient (ce qui y circulait est perdu).
+    this.earn(def.cost + (m.inner ? this.contentValue(m.inner) : 0));
     this.emit({ type: 'factory' });
     return true;
   }
 
   removeChain(b: Belt): void {
     let refund = 0;
-    for (const c of this.factory.chainOf(b)) refund += this.refundBelt(c);
+    for (const c of this.view.chainOf(b)) refund += this.refundBelt(c);
     this.earn(refund);
     this.emit({ type: 'factory' });
   }
@@ -952,9 +1198,9 @@ export class Game {
 
   /** Relie deux machines collées : la production de la première passe directement dans la seconde. */
   linkMachines(from: Machine, to: Machine): boolean {
-    if (from === to || !this.factory.touching(from, to)) return false;
+    if (from === to || !this.view.touching(from, to)) return false;
     if (!from.links?.includes(to.id)) from.links = [...(from.links ?? []), to.id];
-    this.factory.markBuilt();
+    this.view.markBuilt();
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${machineDef(from.type).name} → ${machineDef(to.type).name.toLowerCase()} : reliés`, tone: 'good' });
     return true;
@@ -963,15 +1209,15 @@ export class Game {
   unlinkMachines(from: Machine, to?: number): void {
     from.links = to === undefined ? [] : (from.links ?? []).filter((id) => id !== to);
     if (!from.links.length) delete from.links;
-    this.factory.markBuilt();
+    this.view.markBuilt();
     this.emit({ type: 'factory' });
   }
 
   /** Relie une machine au côté d'un tapis qui la longe (sa production y est déposée). */
   linkMachineToBelt(b: Belt, dir: Dir): boolean {
-    const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);
+    const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m) return false;
-    this.factory.addFeed(b, dir);
+    this.view.addFeed(b, dir);
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${machineDef(m.type).name} reliée au tapis`, tone: 'good' });
     return true;
@@ -979,14 +1225,14 @@ export class Game {
 
   /** Le tapis nourrit la machine qu'il longe : un objet sur deux y entre (tout, si le tapis s'arrête là). */
   linkBeltToMachine(b: Belt, dir: Dir): boolean {
-    const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);
+    const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m || dir === b.dir || dir === b.split || dir === b.split2) return false;
     // Le tapis nourrit déjà une machine d'un côté : il peut aussi nourrir celle de l'autre côté (un objet sur trois chacune).
     if (b.split !== undefined) {
-      if (b.split2 !== undefined || b.splitJump || !this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) return false;
-      this.factory.setSplit2(b, dir);
+      if (b.split2 !== undefined || b.splitJump || !this.view.machineAt(b.x + DX[b.split], b.y + DY[b.split])) return false;
+      this.view.setSplit2(b, dir);
     } else {
-      this.factory.setSplit(b, dir);
+      this.view.setSplit(b, dir);
     }
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `Le tapis nourrit ${machineDef(m.type).name.toLowerCase()}`, tone: 'good' });
@@ -995,11 +1241,11 @@ export class Game {
 
   /** Coupe les liaisons d'un tapis avec les machines qu'il longe. */
   unlinkBelt(b: Belt): void {
-    this.factory.clearFeeds(b);
+    this.view.clearFeeds(b);
     if (b.split2 !== undefined) delete b.split2;
-    if (b.split !== undefined && !b.splitJump && this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
+    if (b.split !== undefined && !b.splitJump && this.view.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
       delete b.split;
-      this.factory.markBuilt();
+      this.view.markBuilt();
     }
     this.emit({ type: 'factory' });
   }
@@ -1009,7 +1255,7 @@ export class Game {
     let refund = 0;
     for (let j = 0; j < h; j++) {
       for (let i = 0; i < w; i++) {
-        const b = this.factory.beltAt(x + i, y + j);
+        const b = this.view.beltAt(x + i, y + j);
         if (b) refund += this.refundBelt(b);
       }
     }
@@ -1017,11 +1263,11 @@ export class Game {
   }
 
   moveMachine(m: Machine, x: number, y: number): boolean {
-    const check = this.factory.checkMachine(m.type, x, y, m, true);
+    const check = this.view.checkMachine(m.type, x, y, m, true);
     if (check.ok && check.belts) this.earn(this.clearBeltsUnder(m.w, m.h, x, y));
-    const ok = this.factory.moveMachine(m, x, y);
+    const ok = this.view.moveMachine(m, x, y);
     if (!ok) this.emit({ type: 'toast', text: 'Impossible ici', tone: 'warn' });
-    else { this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
+    else { if (!this.inAtelier) this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
     return ok;
   }
 

@@ -15,6 +15,12 @@ export type UnlockEffect =
   | { kind: 'drone' }
   | { kind: 'robotSpeed'; mult: number }
   | { kind: 'droneRange'; mult: number }
+  /** Modules : prix d'une copie d'atelier (fraction du prix de ce qu'il contient). */
+  | { kind: 'copyRate'; rate: number }
+  /** Modules : côté de l'intérieur d'un atelier, en cases. */
+  | { kind: 'atelierSize'; size: number }
+  /** Modules : un atelier peut contenir d'autres ateliers. */
+  | { kind: 'nesting' }
   /** Acquis d'office (point de départ d'une branche). */
   | { kind: 'base' }
   /** Prévu dans le document de game design, pas encore dans le jeu. */
@@ -122,13 +128,13 @@ export const BRANCHES: Branch[] = [
   },
   {
     id: 'modules', label: 'Modules', nodes: [
-      n('module', 'Modules', 'module', 0, 1, 5, { moteur: 20 }, [], 'Entoure des machines au doigt : elles deviennent un atelier qu’on peut copier.', soon),
-      n('copie75', 'Copie à 75 %', 'copie', 1, 0, 5, { processeur: 10 }, ['module'], 'Une copie coûte 75 % des machines qu’elle contient.', soon),
-      n('place1', 'Place +4', 'place', 1, 2, 5, { cadre: 20 }, ['module'], 'L’intérieur d’un atelier passe de 20 à 24 cases.', soon),
-      n('copie50', 'Copie à 50 %', 'copie', 2, 0, 6, { processeur: 30 }, ['copie75'], 'Une copie coûte la moitié.', soon),
-      n('imbrication', 'Imbrication', 'imbrication', 2, 1, 6, { ordinateur: 10 }, ['module'], 'Un atelier peut contenir d’autres ateliers.', soon),
-      n('place2', 'Place +6', 'place', 2, 2, 6, { cadre: 50 }, ['place1'], 'L’intérieur d’un atelier passe à 30 cases.', soon),
-      n('copie25', 'Copie à 25 %', 'copie', 3, 0, 7, { ordinateur: 20 }, ['copie50'], 'Une copie ne coûte plus qu’un quart.', soon),
+      n('module', 'Modules', 'module', 0, 1, 5, { moteur: 20 }, [], 'Entoure des machines au doigt : elles se rangent dans un atelier de 3 × 3 qui produit pareil. On entre dedans pour les voir ou les modifier (20 × 20 cases), et on peut le copier.', m('atelier')),
+      n('copie75', 'Copie à 75 %', 'copie', 1, 0, 5, { processeur: 10 }, ['module'], 'Une copie coûte 75 % des machines qu’elle contient.', { kind: 'copyRate', rate: 0.75 }),
+      n('place1', 'Place +4', 'place', 1, 2, 5, { cadre: 20 }, ['module'], 'L’intérieur d’un atelier passe de 20 × 20 à 24 × 24 cases.', { kind: 'atelierSize', size: 24 }),
+      n('copie50', 'Copie à 50 %', 'copie', 2, 0, 6, { processeur: 30 }, ['copie75'], 'Une copie coûte la moitié.', { kind: 'copyRate', rate: 0.5 }),
+      n('imbrication', 'Imbrication', 'imbrication', 2, 1, 6, { ordinateur: 10 }, ['module'], 'Un atelier peut contenir d’autres ateliers : une usine dans l’usine dans l’usine.', { kind: 'nesting' }),
+      n('place2', 'Place +6', 'place', 2, 2, 6, { cadre: 50 }, ['place1'], 'L’intérieur d’un atelier passe à 30 × 30 cases.', { kind: 'atelierSize', size: 30 }),
+      n('copie25', 'Copie à 25 %', 'copie', 3, 0, 7, { ordinateur: 20 }, ['copie50'], 'Une copie ne coûte plus qu’un quart.', { kind: 'copyRate', rate: 0.25 }),
     ],
   },
 ];

@@ -87,7 +87,16 @@ export interface Machine {
   /** Électricité (non sauvegardé) : la machine a voulu travailler, et la part de courant qu'elle reçoit (0 à 1). */
   want?: boolean;
   power?: number;
+  /** Atelier (module) : l'usine rangée dedans, et le côté de son intérieur en cases. */
+  inner?: Factory;
+  size?: number;
 }
+
+/** L'intérieur d'un atelier : pas de filons, tout est découvert. */
+const ROOM_WORLD = { patchAt: () => null, isRevealed: () => true } as unknown as World;
+
+/** Objets qu'un atelier garde à l'entrée, en attendant que l'intérieur les prenne. */
+const ATELIER_BUFFER = 40;
 
 /** Un tapis souterrain : d'une machine (ou d'un coffre) à une autre, par un trajet sous le sol. */
 export interface Tunnel {
@@ -203,7 +212,19 @@ export class Factory {
 
   /** Puissance demandée par la machine quand elle travaille, en kW (0 : elle ne se branche pas). */
   powerUse(m: Machine): number {
+    if (m.inner) return this.electric.size ? this.innerKw(m) : 0;
     return this.electric.has(m.type) ? machineDef(m.type).kw ?? 100 : 0;
+  }
+
+  /** Ce que consomment au courant les machines d'un atelier (et des ateliers qu'il contient), en kW. */
+  innerKw(m: Machine): number {
+    let kw = 0;
+    for (const x of m.inner?.machines.values() ?? []) {
+      const d = machineDef(x.type);
+      if (x.inner) kw += this.innerKw(x);
+      else if (d.kind === 'crafter' || d.kind === 'drill') kw += d.kw ?? 60;
+    }
+    return Math.max(kw, 30);
   }
 
   /** Branchée par câble sur un réseau dont un générateur tourne : elle se passe de charbon. */
@@ -218,9 +239,34 @@ export class Factory {
   onDeliver: (m: Machine, item: string) => void = () => {};
 
   readonly world: World;
+  /** Dans un atelier : l'atelier qui contient cette usine (ses ports y prennent et y déposent). */
+  host: Machine | null = null;
+  /** Dans un atelier : côté de l'intérieur (les cases de 0 à bounds - 1) ; 0 = sans limite. */
+  bounds = 0;
+  /** Dans un atelier : les machines ne brûlent rien, c'est l'atelier qui consomme pour elles. */
+  freeEnergy = false;
 
   constructor(world: World) {
     this.world = world;
+  }
+
+  /** Crée l'usine intérieure d'un atelier. */
+  makeInner(m: Machine, size: number): Factory {
+    const f = new Factory(ROOM_WORLD);
+    f.host = m;
+    f.bounds = size;
+    f.freeEnergy = true;
+    f.speedMult = this.speedMult;
+    f.chestSlots = this.chestSlots;
+    f.electric = this.electric;
+    m.inner = f;
+    m.size = size;
+    return f;
+  }
+
+  /** La case est-elle dans l'intérieur (toujours vrai hors d'un atelier) ? */
+  inBounds(x: number, y: number): boolean {
+    return !this.bounds || (x >= 0 && y >= 0 && x < this.bounds && y < this.bounds);
   }
 
   // ---------- Consultation ----------
@@ -235,7 +281,7 @@ export class Factory {
 
   isFree(x: number, y: number): boolean {
     const k = key(x, y);
-    return !this.belts.has(k) && !this.cellMachine.has(k);
+    return this.inBounds(x, y) && !this.belts.has(k) && !this.cellMachine.has(k);
   }
 
   inside(m: Machine, x: number, y: number): boolean {
@@ -354,6 +400,7 @@ export class Factory {
     for (let j = 0; j < def.h; j++) {
       for (let i = 0; i < def.w; i++) {
         const cx = x + i, cy = y + j;
+        if (!this.inBounds(cx, cy)) return { ok: false, reason: 'Hors de l’atelier' };
         const k = key(cx, cy);
         const m = this.cellMachine.get(k);
         if (m && m !== ignore) return { ok: false, reason: 'Place occupée' };
@@ -808,6 +855,7 @@ export class Factory {
    * Sans courant (pas de câble, générateur à l'arrêt) : 1 si elle a de quoi brûler.
    */
   private energy(m: Machine, def: MachineDef, dt: number): number {
+    if (this.freeEnergy) return 1;
     if (this.powerUse(m) && this.netOfMachine.has(m)) {
       m.want = true;
       if ((m.power ?? 0) > 0) return m.power!;
@@ -932,7 +980,7 @@ export class Factory {
   /** Place restante dans la case carburant. */
   fuelRoom(m: Machine): number {
     const def = machineDef(m.type);
-    if (this.selfFed(m) || this.powered(m)) return 0;
+    if (this.freeEnergy || this.selfFed(m) || this.powered(m)) return 0;
     return def.coal ? Math.max(0, this.fuelCap(m) - m.fuel) : 0;
   }
 
@@ -957,7 +1005,7 @@ export class Factory {
 
   /** La machine fait clignoter son voyant : il lui faut du charbon. */
   lowFuel(m: Machine): boolean {
-    return m.built && machineDef(m.type).coal && !this.selfFed(m) && !this.powered(m) && m.fuel <= RULES.lowFuel;
+    return m.built && !this.freeEnergy && machineDef(m.type).coal && !this.selfFed(m) && !this.powered(m) && m.fuel <= RULES.lowFuel;
   }
 
   /** Cases occupées d'un coffre (piles de 10). */
@@ -996,7 +1044,9 @@ export class Factory {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
-    if (isFuel(item) && def.coal && m.fuel < this.fuelCap(m)) return true;
+    if (def.kind === 'port_out') return !!this.host && this.bufCount(this.host.outBuf) < ATELIER_BUFFER;
+    if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) return true;
+    if (def.kind === 'atelier') return this.bufCount(m.inBuf) < ATELIER_BUFFER && this.atelierWants(m, item);
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
@@ -1005,7 +1055,8 @@ export class Factory {
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
-    if (isFuel(item) && def.coal && m.fuel < this.fuelCap(m)) {
+    if (def.kind === 'port_out') { if (this.host) this.host.outBuf[item] = (this.host.outBuf[item] ?? 0) + 1; return; }
+    if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) {
       // Le carburant d'abord ; un fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = def.recipes.some((r) => r.in[item]) && m.fuel >= 3 && (m.inBuf[item] ?? 0) < RULES.machineBuffer;
       if (!asIngredient) { addTo(m, 1, item); return; }
@@ -1169,7 +1220,16 @@ export class Factory {
       m.want = false;
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
-      if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') {
+      else if (def.kind === 'atelier') this.tickAtelier(m, def, dt);
+      else if (def.kind === 'port_in' && this.host) {
+        // Une entrée d'atelier : ce qui est entré dans l'atelier ressort ici, vers ce qui en a l'usage.
+        const buf = this.host.inBuf;
+        this.pushOutputs(m, buf, (b, t) => this.portSends(b, t));
+        if (m.links?.length) this.pushLinks(m, buf, dt);
+        m.status = this.bufCount(buf) ? 'working' : 'idle';
+        for (const k of Object.keys(buf)) if (!buf[k]) delete buf[k];
+      }
+      if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage' || def.kind === 'atelier') {
         this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
         if (m.links?.length) this.pushLinks(m, def.kind === 'storage' ? m.inBuf : m.outBuf, dt);
         if (this.tunnels.size) this.pushTunnels(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
@@ -1295,14 +1355,93 @@ export class Factory {
     return (ox === 0 && oy > 0) || (oy === 0 && ox > 0);
   }
 
-  private pushOutputs(m: Machine, buf: Record<string, number>): void {
+  private bufCount(buf: Record<string, number>): number {
+    let n = 0;
+    for (const v of Object.values(buf)) n += v;
+    return n;
+  }
+
+  // ---------- Ateliers (modules) ----------
+
+  /** La machine au bout d'un tapis (en suivant la chaîne), ou null. */
+  private chainTarget(b: Belt): Machine | null {
+    let cur: Belt = b;
+    for (let i = 0; i < 600; i++) {
+      const n = this.nextOf.get(cur);
+      if (!n) return null;
+      if (n.kind === 'machine') return n.machine;
+      cur = n.belt;
+    }
+    return null;
+  }
+
+  /** Cette machine pourrait-elle prendre cet objet (sans regarder si elle est pleine) ? */
+  private takesType(m: Machine, item: string): boolean {
+    const def = machineDef(m.type);
+    if (def.kind === 'storage' || def.kind === 'port_out') return true;
+    if (def.kind === 'atelier') return true;
+    if (isFuel(item) && def.coal && !this.freeEnergy) return true;
+    return def.kind === 'crafter' && this.acceptSet(def).has(item);
+  }
+
+  /** Une entrée d'atelier peut-elle faire sortir cet objet sur ce tapis ? */
+  private portSends(b: Belt, item: string): boolean {
+    const t = this.chainTarget(b);
+    return !t || this.takesType(t, item);
+  }
+
+  /** L'intérieur de l'atelier a-t-il une entrée qui sait quoi faire de cet objet ? */
+  atelierWants(m: Machine, item: string): boolean {
+    const f = m.inner;
+    if (!f) return false;
+    f.refresh();
+    for (const p of f.machines.values()) {
+      if (machineDef(p.type).kind !== 'port_in' || !p.built) continue;
+      if ((f.outputs.get(p) ?? []).some((b) => f.portSends(b, item))) return true;
+      for (const id of p.links ?? []) { const to = f.machines.get(id); if (to && f.takesType(to, item)) return true; }
+    }
+    return false;
+  }
+
+  /** Un atelier : son usine intérieure tourne tant qu'il a de quoi (charbon ou courant) pour toutes ses machines. */
+  private tickAtelier(m: Machine, def: MachineDef, dt: number): void {
+    const f = m.inner;
+    if (!f) { m.status = 'idle'; return; }
+    f.speedMult = this.speedMult;
+    f.chestSlots = this.chestSlots;
+    f.electric = this.electric;
+    let busy = 0, any = 0;
+    for (const x of f.machines.values()) {
+      const k = machineDef(x.type).kind;
+      if (k !== 'crafter' && k !== 'drill' && k !== 'atelier') continue;
+      any++;
+      if (x.status === 'working') busy++;
+    }
+    let k = 1;
+    if (busy > 0) {
+      // Au charbon, il brûle pour chacune de ses machines qui travaille.
+      k = this.energy(m, def, dt * busy);
+      if (k <= 0) { m.status = this.noEnergy(m); return; }
+    }
+    f.tick(dt * k);
+    m.status = busy > 0 ? 'working' : any ? 'idle' : 'idle';
+    if (busy > 0) {
+      let made = 0;
+      for (const x of f.machines.values()) made += x.made;
+      if (made !== m.drillT) { if (made > m.drillT) m.made++; m.drillT = made; }
+    }
+  }
+
+  private pushOutputs(m: Machine, buf: Record<string, number>, sends?: (b: Belt, item: string) => boolean): void {
     const outs = this.outputs.get(m);
     if (!outs || outs.length === 0) return;
-    const kinds = Object.keys(buf).filter((k) => buf[k] > 0);
-    if (kinds.length === 0) return;
+    const all = Object.keys(buf).filter((k) => buf[k] > 0);
+    if (all.length === 0) return;
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
+      const kinds = sends ? all.filter((k) => sends(b, k)) : all;
+      if (!kinds.length) continue;
       const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
       if (side) {
         if (!this.roomAt(b, 0.5)) continue;
@@ -1312,7 +1451,7 @@ export class Factory {
       }
       const t = kinds[(m.rrOut + s) % kinds.length];
       buf[t]--;
-      if (buf[t] === 0 && buf === m.inBuf) delete buf[t];
+      if (buf[t] === 0 && (buf === m.inBuf || sends)) delete buf[t];
       const it: BeltItem = { t, p: side ? 0.5 : 0 };
       if (side) {
         // Il sort de la machine par le côté du tapis : il part de son bord.
@@ -1339,6 +1478,7 @@ export class Factory {
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
+        ...(m.inner ? { inner: m.inner.serialize(), size: m.size, ore: m.ore, rate: m.rate } : m.ore && this.freeEnergy ? { ore: m.ore, rate: m.rate } : {}),
       })),
     };
   }
@@ -1369,6 +1509,9 @@ export class Factory {
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
       if (sm.links?.length) m.links = [...sm.links];
+      // Dans un atelier, une foreuse garde le filon d'où elle vient.
+      if (sm.ore && !m.ore) { m.ore = sm.ore; m.rate = sm.rate; }
+      if (sm.inner) this.makeInner(m, sm.size ?? 20).load(sm.inner);
     }
     this.nextId = Math.max(this.nextId, s.nextId);
     this.lines.clear();
@@ -1400,6 +1543,7 @@ export interface FactorySave {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
+    inner?: FactorySave; size?: number; ore?: string; rate?: number;
   }[];
 }
 

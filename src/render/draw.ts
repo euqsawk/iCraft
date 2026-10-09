@@ -125,6 +125,21 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
   const ink = PALETTE.ink, coral = PALETTE.coral;
   const st = { width: 3, color: ink, cap: 'round' as const, join: 'round' as const };
   switch (type) {
+    case 'atelier': {
+      // Un module : des carrés emboîtés (l'usine dans l'usine).
+      g.roundRect(-16, -16, 32, 32, 7).stroke({ width: 3, color: ink });
+      g.roundRect(-9, -9, 18, 18, 4).stroke({ width: 2.6, color: coral });
+      g.roundRect(-3.5, -3.5, 7, 7, 2).fill(ink);
+      break;
+    }
+    case 'entree':
+      g.roundRect(-8, -8, 16, 16, 4).fill(0xe3f3dd).stroke({ width: 2, color: PALETTE.green });
+      g.moveTo(-4, 0).lineTo(4, 0).moveTo(1, -3.5).lineTo(4.5, 0).lineTo(1, 3.5).stroke({ width: 2.4, color: PALETTE.green, cap: 'round', join: 'round' });
+      break;
+    case 'sortie':
+      g.roundRect(-8, -8, 16, 16, 4).fill(0xfde3dc).stroke({ width: 2, color: coral });
+      g.moveTo(-4, 0).lineTo(4, 0).moveTo(1, -3.5).lineTo(4.5, 0).lineTo(1, 3.5).stroke({ width: 2.4, color: coral, cap: 'round', join: 'round' });
+      break;
     case 'generateur':
       g.roundRect(-14, -12, 28, 24, 6).fill(ink);
       g.circle(-8, 8, 2).circle(8, 8, 2).fill(PALETTE.ink2);

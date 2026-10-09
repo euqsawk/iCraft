@@ -51,7 +51,9 @@ export class BeltTracer {
       this.startMachine = m;
     } else if (b) {
       const n = factory.next(b);
-      if (!n || n.kind !== 'belt') {
+      // Un bout de tapis libre se prolonge ; s'il donne déjà dans une machine, on part en dérivation
+      // (pour nourrir aussi une machine de l'autre côté, par exemple).
+      if (!n || (n.kind !== 'belt' && !(n.kind === 'machine' && b.built && !b.jump))) {
         this.extend = b;
         this.cells = [{ x: sx, y: sy }];
       } else if (b.built && !b.jump && (b.split === undefined || (b.split2 === undefined && !b.splitJump && factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])))) {
@@ -112,7 +114,14 @@ export class BeltTracer {
     return k && ahead >= k ? k - 1 : 0;
   }
 
+  /** Le bout d'un tapis se tourne simplement vers une machine (ou un tapis) collée, sans case nouvelle. */
+  get turnsOnly(): boolean {
+    return !!this.extend && this.cells.length === 1 && this.endTarget !== null && !this.extend.jump
+      && dirBetween(this.extend.x, this.extend.y, this.endTarget.x, this.endTarget.y) !== this.extend.dir;
+  }
+
   get valid(): boolean {
+    if (this.turnsOnly) return true;
     return this.newCount >= 1 && (this.cells.length >= 2 || this.endTarget !== null || this.startMachine !== null || this.splitFrom !== null);
   }
 
