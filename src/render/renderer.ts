@@ -108,6 +108,8 @@ export class GameRenderer {
   private undergroundOn = false;
   /** Mode électricité (outil Câble) : la surface pâlit, on voit les câbles sous les blocs et les machines alimentées. */
   electric = false;
+  /** Câbles visibles hors du mode électricité (gomme) ; sinon ils restent cachés. */
+  showCables = false;
   private electricOn = false;
   /** Câbles et machines du réseau, par-dessus le voile, en mode électricité. */
   private powerG = new Graphics();
@@ -670,6 +672,7 @@ export class GameRenderer {
   private updateUnderground(): void {
     const on = this.underground;
     const elec = this.electric && !on;
+    this.cableG.visible = this.showCables && !elec;
     const f = this.game.factory;
     if (on !== this.undergroundOn || elec !== this.electricOn) {
       this.undergroundOn = on;
@@ -679,6 +682,7 @@ export class GameRenderer {
       this.actorLayer.alpha = on || elec ? 0.45 : 1;
       this.undergroundTint.visible = on || elec;
       this.powerG.visible = elec;
+      this.cableG.visible = this.showCables && !elec;
       this.drawCables();
       this.tunnelG.visible = on;
       this.tunnelItems.visible = on;

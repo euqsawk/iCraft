@@ -547,6 +547,8 @@ export class Hud implements GestureHandlers {
     this.r.underground = t === 'souterrain';
     // Câble : mode électricité, on voit les câbles sous les blocs et les machines alimentées.
     this.r.electric = t === 'cable';
+    // Hors du mode câble, les câbles sont cachés (sauf avec la gomme, pour voir ce qu'on efface).
+    this.r.showCables = t === 'gomme' || t === 'zone';
     for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t || (id === 'tapis' && t === 'souterrain') || (id === 'gomme' && t === 'zone'));
     this.renderToolOpts();
     this.palette.classList.toggle('hidden', t !== 'machine');
