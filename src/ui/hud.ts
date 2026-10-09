@@ -590,7 +590,7 @@ export class Hud implements GestureHandlers {
         this.game.linkBeltToMachine(this.tracer.splitFrom, this.tracer.intoMachine);
       } else if (this.tool === 'tapis' && this.tracer?.valid) {
         const t = this.tracer;
-        this.game.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir } : undefined);
+        this.game.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir, jump: t.splitJump } : undefined);
       } else if (this.tool === 'machine' && pv?.kind === 'place' && this.machineType) {
         this.game.placeMachine(this.machineType, pv.x, pv.y);
       } else if (this.tool === 'move' && pv?.kind === 'place' && this.moving) {

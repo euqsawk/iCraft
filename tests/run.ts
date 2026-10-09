@@ -151,6 +151,47 @@ test('pont : un tapis passe par-dessus un autre, et les deux continuent de roule
   g2.factory.load(g.factory.serialize());
   assert(g2.factory.beltAt(6, 6)!.jump === 1 && g2.factory.chainOf(g2.factory.beltAt(8, 6)!).length === 6, 'pont rechargé, chaîne entière');
 });
+test('pont depuis un tapis collé à un autre : dérivation ou bout de tapis, par-dessus le voisin', () => {
+  const g = new Game('TEST-B2');
+  g.money = 10000; g.world.reveal(6, 6, 14); g.unlocks.add('pont'); g.unlocks.add('separateur');
+  const row = (y: number): TraceCell[] => [...Array(9)].map((_, i) => ({ x: 2 + i, y, dir: 0, inDir: 0 }));
+  assert(g.placeBelts(row(5)) && g.placeBelts(row(6)), 'deux tapis parallèles');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  // Depuis le milieu du tapis du haut, vers le bas, par-delà celui du bas : une dérivation en pont.
+  const t = new BeltTracer(g.factory, 5.5, 5.5);
+  t.bridges = true;
+  for (let s2 = 1; s2 <= 12; s2++) t.move(5.5, 5.5 + s2 * 0.25);
+  assert(t.splitFrom && t.splitJump === 1 && t.splitDir === 1, `dérivation en pont : ${t.splitJump}`);
+  assert(t.result()[0].x === 5 && t.result()[0].y === 7 && t.valid && !t.blocked, `départ ${JSON.stringify(t.result()[0])}`);
+  // Le doigt revient sur le tapis du bas : plus de pont.
+  t.move(5.5, 6.5);
+  assert(t.splitJump === 0 && t.result().length === 0, 'annulé en revenant');
+  for (let s2 = 1; s2 <= 8; s2++) t.move(5.5, 6.5 + s2 * 0.25);
+  assert(t.splitJump === 1 && t.result().length === 2, 'repris');
+  assert(g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir!, jump: t.splitJump }), 'posé');
+  const top = g.factory.beltAt(5, 5)!;
+  assert(top.split === 1 && top.splitJump === 1, 'séparateur en pont');
+  const chest = g.placeMachine('coffre', 5, 9)!;
+  for (const b of g.factory.belts.values()) b.built = true;
+  chest.built = true; g.pending = []; g.factory.markBuilt();
+  g.factory.beltAt(2, 5)!.items.push({ t: 'cuivre', p: 0 }, { t: 'cuivre', p: 0.6 });
+  g.factory.beltAt(2, 6)!.items.push({ t: 'charbon', p: 0 });
+  run(g, 15);
+  assert(chest.inBuf.cuivre === 1 && !chest.inBuf.charbon, `coffre de la dérivation : ${JSON.stringify(chest.inBuf)}`);
+  assert(g.factory.beltAt(10, 6)!.items.some((i) => i.t === 'charbon'), 'le charbon du tapis du bas est passé dessous');
+  // Depuis le bout du tapis du haut : il tourne et passe par-dessus le bout du tapis du bas.
+  const t2 = new BeltTracer(g.factory, 10.5, 5.5);
+  t2.bridges = true;
+  for (let s2 = 1; s2 <= 12; s2++) t2.move(10.5, 5.5 + s2 * 0.25);
+  const r2 = t2.result();
+  assert(r2[0].existing && r2[0].jump === 1 && r2[0].dir === 1 && r2[1].y === 7, `bout en pont : ${JSON.stringify(r2)}`);
+  assert(g.placeBelts(r2) && g.factory.beltAt(10, 5)!.jump === 1, 'pont posé depuis le bout');
+  // Sauvegarde
+  const g2 = new Game('TEST-B2');
+  g2.factory.load(g.factory.serialize());
+  assert(g2.factory.beltAt(5, 5)!.splitJump === 1 && g2.factory.beltAt(10, 5)!.jump === 1, 'rechargés');
+});
 test('un tapis tracé depuis une machine en sort, et entre dans la machine visée', () => {
   const g = new Game('TEST-4');
   g.money = 10000;

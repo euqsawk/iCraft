@@ -22,6 +22,8 @@ export class BeltTracer {
   cells: { x: number; y: number; jump?: number }[] = [];
   /** Ponts débloqués : en continuant tout droit par-delà un tapis, on passe par-dessus. */
   bridges = false;
+  /** Dérivation qui part en pont (par-dessus un tapis collé) : nombre de cases enjambées. */
+  splitJump = 0;
   /** Machine ou tapis vers lequel pointe la dernière case. */
   endTarget: { x: number; y: number } | null = null;
   /** Le tracé a buté sur un obstacle. */
@@ -79,7 +81,18 @@ export class BeltTracer {
 
   /** Nombre de ponts dans le tracé. */
   get bridgeCount(): number {
-    return this.cells.filter((c) => c.jump).length;
+    return this.cells.filter((c) => c.jump).length + (this.splitJump ? 1 : 0);
+  }
+
+  /** Depuis (x, y), dans le sens d, par-delà des tapis : la première case libre (k cases plus loin), ou 0. */
+  private landing(x: number, y: number, d: Dir): number {
+    for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
+      const cx = x + DX[d] * k, cy = y + DY[d] * k;
+      if (this.usable(cx, cy)) return k >= 2 ? k : 0;
+      // On n'enjambe que des tapis (pas une machine, ni le tracé lui-même, ni le brouillard).
+      if (!this.factory.beltAt(cx, cy) || this.cells.some((p) => p.x === cx && p.y === cy)) return 0;
+    }
+    return 0;
   }
 
   /**
@@ -88,18 +101,13 @@ export class BeltTracer {
    */
   private bridgeOver(c: { x: number; y: number }, step: Dir, tx: number, ty: number): number {
     if (!this.bridges) return 0;
-    // La case de départ doit être neuve et filer tout droit.
-    if (this.extend && this.cells.length === 1) return 0;
+    // On ne repart pas en arrière, et le bout d'un pont existant ne se rallonge pas.
     const cur = this.currentDir();
-    if (cur !== null && cur !== step) return 0;
+    if (cur !== null && step === opposite(cur)) return 0;
+    if (this.extend && this.cells.length === 1 && this.extend.jump) return 0;
     const ahead = (tx - c.x) * DX[step] + (ty - c.y) * DY[step];
-    for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
-      const x = c.x + DX[step] * k, y = c.y + DY[step] * k;
-      if (this.usable(x, y)) return k >= 2 && ahead >= k ? k - 1 : 0;
-      // On n'enjambe que des tapis (pas une machine, ni le tracé lui-même, ni le brouillard).
-      if (!this.factory.beltAt(x, y) || this.cells.some((p) => p.x === x && p.y === y)) return 0;
-    }
-    return 0;
+    const k = this.landing(c.x, c.y, step);
+    return k && ahead >= k ? k - 1 : 0;
   }
 
   get valid(): boolean {
@@ -112,9 +120,15 @@ export class BeltTracer {
   }
 
   move(fx: number, fy: number): void {
-    if (this.blocked && this.cells.length === 0) return;
+    if (this.blocked && this.cells.length === 0 && !this.splitFrom) return;
     const sb = this.splitFrom;
+    // Dérivation en pont : le doigt revient en deçà de la case d'arrivée, on repart de zéro.
+    if (sb && this.splitJump && this.startDir !== null) {
+      const ahead = (fx - (sb.x + 0.5)) * DX[this.startDir] + (fy - (sb.y + 0.5)) * DY[this.startDir];
+      if (ahead < this.splitJump + 0.6) { this.cells = []; this.splitJump = 0; this.endTarget = null; }
+    }
     if (sb && this.cells.length === 0) {
+      this.blocked = false;
       // Dérivation : la première case part sur un côté libre du tapis.
       const dx = fx - (sb.x + 0.5), dy = fy - (sb.y + 0.5);
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.8) return;
@@ -123,7 +137,16 @@ export class BeltTracer {
       if (d === sb.dir || d === opposite(sb.inDir)) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
       if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
-      if (!this.usable(x, y)) { this.blocked = true; return; }
+      if (!this.usable(x, y)) {
+        // Un tapis collé sur ce côté : avec les ponts, la dérivation passe par-dessus quand le doigt va au-delà.
+        const k = this.bridges && this.factory.beltAt(x, y) ? this.landing(sb.x, sb.y, d) : 0;
+        const ahead = (fx - (sb.x + 0.5)) * DX[d] + (fy - (sb.y + 0.5)) * DY[d];
+        if (!k || ahead < k - 0.4) { this.blocked = true; return; }
+        this.startDir = d;
+        this.splitJump = k - 1;
+        this.cells.push({ x: sb.x + DX[d] * k, y: sb.y + DY[d] * k });
+        return;
+      }
       this.startDir = d;
       this.cells.push({ x, y });
     }

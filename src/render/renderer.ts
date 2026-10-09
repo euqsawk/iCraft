@@ -353,7 +353,7 @@ export class GameRenderer {
         // Pont : seule la rampe (jusqu'au milieu de la case) est au sol ; le tablier est dessiné à part, plus haut.
         if (b.jump) { g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy); continue; }
         g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy).lineTo(p[2].x + DX[b.dir] * e2, p[2].y + DY[b.dir] * e2 + dy);
-        if (b.split !== undefined) {
+        if (b.split !== undefined && !b.splitJump) {
           const es = CELL / 2 + under(b, b.split);
           g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * es, p[1].y + DY[b.split] * es + dy);
         }
@@ -412,25 +412,30 @@ export class GameRenderer {
     const g = this.bridgeG;
     g.clear();
     const f = this.game.factory;
-    const decks: { x0: number; y0: number; x1: number; y1: number; b: Belt }[] = [];
-    for (const b of built) {
-      if (!b.jump) continue;
-      const L = span(b);
+    const decks: { x0: number; y0: number; x1: number; y1: number; d: number; jump: number }[] = [];
+    const deck = (b: Belt, d: number, jump: number) => {
+      const L = 1 + jump;
       // Il atterrit dans une machine : le tablier file sous elle.
-      const into = f.machineAt(b.x + DX[b.dir] * L, b.y + DY[b.dir] * L) ? CELL / 2 : 0;
-      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL, e = CELL / 2 + b.jump * CELL + into;
-      decks.push({ x0: cx, y0: cy, x1: cx + DX[b.dir] * e, y1: cy + DY[b.dir] * e, b });
+      const into = f.machineAt(b.x + DX[d] * L, b.y + DY[d] * L) ? CELL / 2 : 0;
+      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL, e = CELL / 2 + jump * CELL + into;
+      decks.push({ x0: cx, y0: cy, x1: cx + DX[d] * e, y1: cy + DY[d] * e, d, jump });
+    };
+    const splitters: Belt[] = [];
+    for (const b of built) {
+      if (b.jump) deck(b, b.dir, b.jump);
+      // Dérivation d'un séparateur qui passe par-dessus un tapis collé.
+      if (b.splitJump && b.split !== undefined) { deck(b, b.split, b.splitJump); splitters.push(b); }
     }
     if (!decks.length) return;
     // Ombre portée au sol (le pont est en hauteur), puis piliers, liseré et tablier blanc.
     for (const d of decks) {
-      const ax = DX[d.b.dir], ay = DY[d.b.dir];
+      const ax = DX[d.d], ay = DY[d.d];
       g.moveTo(d.x0 + ax * CELL * 0.4, d.y0 + ay * CELL * 0.4 + 7).lineTo(d.x1 - ax * CELL * 0.4, d.y1 - ay * CELL * 0.4 + 7);
     }
     g.stroke({ width: 14, color: PALETTE.shadow, alpha: 0.8, cap: 'round' });
     for (const d of decks) {
-      const ax = DX[d.b.dir], ay = DY[d.b.dir], px = -ay, py = ax;
-      for (const k of [0.5, d.b.jump! + 0.5]) {
+      const ax = DX[d.d], ay = DY[d.d], px = -ay, py = ax;
+      for (const k of [0.5, d.jump + 0.5]) {
         const x = d.x0 + ax * k * CELL, y = d.y0 + ay * k * CELL;
         g.moveTo(x + px * 6, y + py * 6).lineTo(x - px * 6, y - py * 6);
       }
@@ -442,13 +447,18 @@ export class GameRenderer {
     g.stroke({ width: 14, color: PALETTE.white, cap: 'round' });
     // Rouleaux du tablier, comme sur un tapis.
     for (const d of decks) {
-      const fx = DX[d.b.dir], fy = DY[d.b.dir], px = -fy, py = fx;
-      for (let k = 1; k <= d.b.jump!; k++) {
+      const fx = DX[d.d], fy = DY[d.d], px = -fy, py = fx;
+      for (let k = 1; k <= d.jump; k++) {
         const cx = d.x0 + fx * k * CELL, cy = d.y0 + fy * k * CELL;
         g.moveTo(cx - fx * 2 + px * 3.2, cy - fy * 2 + py * 3.2).lineTo(cx + fx * 1.2, cy + fy * 1.2).lineTo(cx - fx * 2 - px * 3.2, cy - fy * 2 - py * 3.2);
       }
     }
     g.stroke({ width: 2, color: PALETTE.roller, cap: 'round', join: 'round' });
+    // Le losange du séparateur reste visible au départ de son pont.
+    for (const b of splitters) {
+      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+      g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
+    }
   }
 
   /** Le milieu du bord commun entre deux machines collées, et le sens de a vers b. */
@@ -525,16 +535,17 @@ export class GameRenderer {
     for (const belt of this.game.factory.belts.values()) {
       if (!belt.built || belt.items.length === 0) continue;
       const bx = (belt.x + 0.5) * CELL, by = (belt.y + 0.5) * CELL;
-      const m = belt.jump ? far : 0;
+      const m = belt.jump || belt.splitJump ? far : 0;
       if (bx < b.x0 - m || bx > b.x1 + m || by < b.y0 - m || by > b.y1 + m) continue;
       if (belt.jump) {
-        // Sur un pont, tout droit : de l'arrière de la rampe jusqu'au bord de la case d'arrivée, au-dessus du reste.
-        const L = span(belt) * CELL, x0 = bx - DX[belt.dir] * CELL / 2, y0 = by - DY[belt.dir] * CELL / 2;
+        // Sur un pont : la rampe (de l'arrière jusqu'au milieu), puis le tablier jusqu'à la case d'arrivée, au-dessus du reste.
+        const L = span(belt) * CELL;
         for (const it of belt.items) {
-          const p = Math.min(it.p, 1);
+          const dist = Math.min(it.p, 1) * L, h = CELL / 2;
           const s = sprite(this.bridgePool, this.bridgeItemLayer, usedB++);
           s.texture = this.itemTextures.get(it.t)!;
-          s.position.set(x0 + DX[belt.dir] * p * L, y0 + DY[belt.dir] * p * L);
+          if (dist < h) s.position.set(bx - DX[belt.inDir] * (h - dist), by - DY[belt.inDir] * (h - dist));
+          else s.position.set(bx + DX[belt.dir] * (dist - h), by + DY[belt.dir] * (dist - h));
           s.visible = true;
         }
         continue;
@@ -548,7 +559,16 @@ export class GameRenderer {
         } else {
           const t = (p - 0.5) * 2;
           const d = it.o && belt.split !== undefined ? belt.split : belt.dir;
-          x = bx + DX[d] * t * CELL / 2; y = by + DY[d] * t * CELL / 2;
+          // Dérivation en pont : la seconde moitié file sur le tablier, par-dessus le tapis collé.
+          const reach = it.o && belt.splitJump ? 0.5 + belt.splitJump : 0.5;
+          x = bx + DX[d] * t * CELL * reach; y = by + DY[d] * t * CELL * reach;
+          if (reach > 0.5) {
+            const s = sprite(this.bridgePool, this.bridgeItemLayer, usedB++);
+            s.texture = this.itemTextures.get(it.t)!;
+            s.position.set(x, y);
+            s.visible = true;
+            continue;
+          }
         }
         const s = sprite(this.itemPool, this.itemLayer, used++);
         s.texture = this.itemTextures.get(it.t)!;

@@ -605,9 +605,9 @@ export class Game {
     return m;
   }
 
-  placeBelts(cells: TraceCell[], split?: { from: Belt; dir: Dir }): boolean {
+  placeBelts(cells: TraceCell[], split?: { from: Belt; dir: Dir; jump?: number }): boolean {
     const fresh = cells.filter((c) => !c.existing);
-    const bridges = fresh.filter((c) => c.jump).length;
+    const bridges = cells.filter((c) => c.jump).length + (split?.jump ? 1 : 0);
     const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost;
     if (fresh.length === 0) return false;
     if (split && !this.isUnlocked('separateur')) {
@@ -619,11 +619,15 @@ export class Game {
       return false;
     }
     if (!this.spend(cost)) return false;
-    if (split) this.factory.setSplit(split.from, split.dir);
+    if (split) this.factory.setSplit(split.from, split.dir, split.jump ?? 0);
     for (const c of cells) {
       if (c.existing) {
         const b = this.factory.beltAt(c.x, c.y);
-        if (b) this.factory.setBeltDir(b, c.dir);
+        if (b) {
+          this.factory.setBeltDir(b, c.dir);
+          // Le bout d'un tapis existant peut devenir un pont (vers un tapis voisin à enjamber).
+          if (c.jump) b.jump = Math.min(c.jump, RULES.bridgeSpan);
+        }
       } else {
         const nb = this.factory.addBelt(c.x, c.y, c.dir, c.inDir, false);
         if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
@@ -737,7 +741,7 @@ export class Game {
   /** Coupe les liaisons d'un tapis avec les machines qu'il longe. */
   unlinkBelt(b: Belt): void {
     this.factory.clearFeeds(b);
-    if (b.split !== undefined && this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
+    if (b.split !== undefined && !b.splitJump && this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
       delete b.split;
       this.factory.markBuilt();
     }

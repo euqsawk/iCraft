@@ -32,6 +32,8 @@ export interface Belt {
   feeds?: Dir[];
   /** Pont : nombre de cases enjambées tout droit (la case suivante est jump + 1 plus loin). */
   jump?: number;
+  /** Séparateur dont la dérivation part en pont : nombre de cases enjambées par la dérivation. */
+  splitJump?: number;
 }
 
 /** Longueur parcourue sur une case de tapis, en cases (plus longue sur un pont). */
@@ -273,8 +275,9 @@ export class Factory {
     return b;
   }
 
-  setSplit(b: Belt, dir: Dir): void {
+  setSplit(b: Belt, dir: Dir, jump = 0): void {
     b.split = dir;
+    if (jump > 0) b.splitJump = Math.min(jump, RULES.bridgeSpan); else delete b.splitJump;
     this.dirty = true;
   }
 
@@ -300,8 +303,10 @@ export class Factory {
     this.belts.delete(key(b.x, b.y));
     // Un séparateur dont on retire la dérivation redevient un tapis simple.
     for (let d = 0; d < 4; d++) {
-      const nb = this.beltAt(b.x - DX[d], b.y - DY[d]);
-      if (nb && nb.split === d) delete nb.split;
+      for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
+        const nb = this.beltAt(b.x - DX[d] * k, b.y - DY[d] * k);
+        if (nb && nb.split === d && 1 + (nb.splitJump ?? 0) === k) { delete nb.split; delete nb.splitJump; }
+      }
     }
     this.dirty = true;
   }
@@ -364,7 +369,7 @@ export class Factory {
   /** Ce qui suit une case de tapis dans une direction donnée. */
   private linkFor(b: Belt, dir: Dir): Next {
     // Un pont atterrit plus loin, tout droit.
-    const L = dir === b.dir ? span(b) : 1;
+    const L = dir === b.dir ? span(b) : dir === b.split ? 1 + (b.splitJump ?? 0) : 1;
     const nx = b.x + DX[dir] * L, ny = b.y + DY[dir] * L;
     const nb = this.beltAt(nx, ny);
     if (nb) {
@@ -770,7 +775,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -780,11 +785,12 @@ export class Factory {
 
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear();
-    for (const [x, y, dir, inDir, built, items, split, feed, jump] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
+      if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
       if (feed !== undefined && feed >= 0) {
         b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
@@ -806,7 +812,7 @@ export class Factory {
 
 export interface FactorySave {
   nextId: number;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;
