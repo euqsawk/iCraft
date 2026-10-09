@@ -7,7 +7,7 @@ import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
 import { PICKUP_TIME } from '../sim/game.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
-import { span, type Belt, type Machine, type Tunnel } from '../sim/factory.ts';
+import { span, type Belt, type Line, type Machine, type Tunnel } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
 import { DX, DY, unkey } from '../sim/geom.ts';
 import type { CableTracer } from '../sim/cables.ts';
@@ -53,7 +53,6 @@ export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
   | { kind: 'cable'; tracer: CableTracer }
   | { kind: 'tunnel'; tracer: TunnelTracer }
-  | { kind: 'route'; tracer: TunnelTracer; vehicle: 'camion' | 'train' }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
   | null;
@@ -102,7 +101,7 @@ export class GameRenderer {
   /** Routes et rails (au sol, sous les tapis), et les véhicules qui y roulent. */
   private routeG = new Graphics();
   private routeSig = '';
-  private vehicleViews = new Map<number, { root: Container; parts: Container[]; cargo: Sprite; kind: string }>();
+  private vehicleViews = new Map<string, { root: Container; parts: Container[]; cargo: Sprite; kind: string }>();
   /** Vue du sous-sol (outil Sous-sol) : la surface pâlit, on voit les tapis souterrains et ce qu'ils transportent. */
   underground = false;
   private undergroundOn = false;
@@ -503,15 +502,6 @@ export class GameRenderer {
     }
   }
 
-  /** Le trajet d'une ligne (ou d'un tapis souterrain) : centre de départ, ses cases, centre d'arrivée. */
-  private linePath(fromId: number, toId: number, cells: number[]): { x: number; y: number }[] | null {
-    const f = this.game.factory;
-    const a = f.machines.get(fromId), b = f.machines.get(toId);
-    if (!a || !b) return null;
-    const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
-    return [c(a), ...cells.map((k) => { const [x, y] = unkey(k); return { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL }; }), c(b)];
-  }
-
   /** Un point (et l'angle) à la fraction k d'un trajet. */
   private alongPath(pts: { x: number; y: number }[], k: number): { x: number; y: number; a: number } {
     const seg: number[] = [];
@@ -527,11 +517,17 @@ export class GameRenderer {
   private drawRoutes(): void {
     const g = this.routeG, f = this.game.factory;
     g.clear();
-    for (const r of f.routes.values()) {
-      const pts = this.linePath(r.from, r.to, r.cells);
-      if (!pts) continue;
+    const legs: { kind: string; pts: { x: number; y: number }[] }[] = [];
+    for (const l of f.lines.values()) {
+      for (let i = 0; i < l.stops.length; i++) {
+        if (l.stops.length === 2 && i === 1) break;
+        const pts = this.legPx(l, i);
+        if (pts) legs.push({ kind: l.kind, pts });
+      }
+    }
+    for (const { kind, pts } of legs) {
       const line = () => { g.moveTo(pts[0].x, pts[0].y); for (const p of pts.slice(1)) g.lineTo(p.x, p.y); };
-      if (r.kind === 'camion') {
+      if (kind === 'camion') {
         // Route : bande grise et pointillés blancs au milieu.
         line(); g.stroke({ width: 18, color: 0x8f9aa6, cap: 'round', join: 'round' });
         line(); g.stroke({ width: 15, color: 0xa9b3bd, cap: 'round', join: 'round' });
@@ -600,39 +596,48 @@ export class GameRenderer {
     return { root, parts, cargo, kind };
   }
 
+  /** Le trajet (en pixels) du trajet i d'une ligne : de l'arrêt i à l'arrêt suivant, en L. */
+  private legPx(l: Line, i: number): { x: number; y: number }[] | null {
+    const f = this.game.factory;
+    const a = f.machines.get(l.stops[i % l.stops.length].id), b = f.machines.get(l.stops[(i + 1) % l.stops.length].id);
+    if (!a || !b) return null;
+    return f.legPath(a, b).map((p) => ({ x: p.x * CELL, y: p.y * CELL }));
+  }
+
   private updateRoutes(): void {
     const f = this.game.factory;
     let sig = '';
-    for (const r of f.routes.values()) {
-      const a = f.machines.get(r.from), b = f.machines.get(r.to);
-      sig += `|${r.id}:${a?.x},${a?.y}:${b?.x},${b?.y}`;
+    for (const l of f.lines.values()) {
+      sig += `|${l.id}:${l.stops.map((st) => { const m = f.machines.get(st.id); return `${m?.x},${m?.y}`; }).join(';')}`;
     }
     if (sig !== this.routeSig) { this.routeSig = sig; this.drawRoutes(); }
-    const seen = new Set<number>();
-    for (const r of f.routes.values()) {
-      seen.add(r.id);
-      const pts = this.linePath(r.from, r.to, r.cells);
-      if (!pts) continue;
-      let v = this.vehicleViews.get(r.id);
-      if (!v || v.kind !== r.kind) { v?.root.destroy({ children: true }); v = this.makeVehicle(r.kind); this.vehicleViews.set(r.id, v); }
-      const L = f.routeLength(r);
-      const back = r.state === 'back' || r.state === 'load';
-      // Chaque partie suit la précédente sur le trajet (le train fait 3 wagons).
-      const gap = 19 / Math.max(1, (L - 0) * CELL);
-      v.parts.forEach((part, i) => {
-        const k = r.pos / L + (back ? i : -i) * gap;
-        const p = this.alongPath(pts, k);
-        part.position.set(p.x, p.y);
-        part.rotation = p.a + (back ? Math.PI : 0);
+    const seen = new Set<string>();
+    for (const l of f.lines.values()) {
+      l.vehicles.forEach((v, vi) => {
+        const id = `${l.id}:${vi}`;
+        seen.add(id);
+        const pts = this.legPx(l, v.at);
+        if (!pts) return;
+        let view = this.vehicleViews.get(id);
+        if (!view || view.kind !== l.kind) { view?.root.destroy({ children: true }); view = this.makeVehicle(l.kind); this.vehicleViews.set(id, view); }
+        const a = f.machines.get(l.stops[v.at % l.stops.length].id)!, b = f.machines.get(l.stops[(v.at + 1) % l.stops.length].id)!;
+        const L = Math.max(0.01, f.legLength(a, b));
+        // À l'arrêt, les véhicules se rangent côte à côte ; en route, chaque wagon suit le précédent.
+        const k = v.moving ? v.pos / L : 0;
+        const gap = 19 / (L * CELL);
+        view.parts.forEach((part, i) => {
+          const p = this.alongPath(pts, k - i * gap);
+          part.position.set(p.x + (v.moving ? 0 : 0), p.y + (v.moving ? 0 : (vi - (l.vehicles.length - 1) / 2) * 15));
+          part.rotation = p.a;
+        });
+        const n = f.cargoCount(v);
+        const main = Object.entries(v.cargo).sort((x, y) => y[1] - x[1])[0]?.[0];
+        view.cargo.visible = n > 0 && !!main;
+        if (main) view.cargo.texture = this.itemTextures.get(main)!;
+        const carrier = view.parts[view.parts.length > 1 ? 1 : 0];
+        view.cargo.position.set(carrier.x, carrier.y);
+        view.root.visible = this.inView(view.parts[0].x, view.parts[0].y, CELL * 3);
       });
-      const head = v.parts[0];
-      const n = f.cargoCount(r);
-      const main = Object.entries(r.cargo).sort((a2, b2) => b2[1] - a2[1])[0]?.[0];
-      v.cargo.visible = n > 0 && !!main;
-      if (main) v.cargo.texture = this.itemTextures.get(main)!;
-      const carrier = v.parts[v.parts.length > 1 ? 1 : 0];
-      v.cargo.position.set(carrier.x, carrier.y - (v.parts.length > 1 ? 0 : 0));
-      v.root.visible = this.inView(head.x, head.y, CELL * 3);
     }
     for (const [id, v] of this.vehicleViews) {
       if (seen.has(id)) continue;
@@ -1454,24 +1459,7 @@ export class GameRenderer {
     const g = this.overlay;
     g.clear();
     const pv = this.preview;
-    if (pv?.kind === 'route') {
-      const t = pv.tracer;
-      if (t.source) {
-        const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
-        const pts = [c(t.source), ...t.cells.map((p) => ({ x: (p.x + 0.5) * CELL, y: (p.y + 0.5) * CELL })), ...(t.target ? [c(t.target)] : [])];
-        if (t.target) {
-          const m = t.target;
-          g.roundRect(m.x * CELL + 1, m.y * CELL + 1, m.w * CELL - 2, m.h * CELL - 2, m.w === 1 ? 8 : 15).fill({ color: 0x6cc7a0, alpha: 0.45 }).stroke({ width: 3, color: PALETTE.green });
-        }
-        if (pts.length > 1) {
-          g.moveTo(pts[0].x, pts[0].y);
-          for (const p of pts.slice(1)) g.lineTo(p.x, p.y);
-          g.stroke({ width: 16, color: pv.vehicle === 'train' ? 0x9b7653 : 0xa9b3bd, alpha: 0.9, cap: 'round', join: 'round' });
-          dashedPolyline(g, pts, 5, 5);
-          g.stroke({ width: 2.5, color: t.blocked ? PALETTE.coral : 0xffffff, cap: 'round' });
-        }
-      }
-    } else if (pv?.kind === 'tunnel') {
+    if (pv?.kind === 'tunnel') {
       const t = pv.tracer;
       if (t.source) {
         const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });

@@ -65,6 +65,8 @@ export const RULES = {
   trainSpeed: 7,
   /** Un véhicule attend au plus ce temps (s) au départ pour se remplir, et à l'arrivée pour se vider. */
   vehicleWait: 4,
+  /** Véhicules au plus sur une même ligne. */
+  maxVehicles: 6,
   /** Tapis souterrain : prix par case de trajet. */
   tunnelCost: 4,
   genCoalSeconds: 10,

@@ -741,39 +741,57 @@ test('compteur : posé sur un tapis, il donne le débit des 20 dernières second
   assert(g.removeAt(6, 5) && !g.factory.beltAt(6, 5)!.meter && g.removeAt(6, 5) && !g.factory.beltAt(6, 5), 'gomme : le compteur, puis le tapis');
 });
 
-test('camion et train : chargent au départ, roulent, déchargent à l’arrivée', () => {
+test('dépôts : un camion fait les allers-retours, on ajoute des camions et un troisième arrêt', () => {
   const g = new Game('TEST-V1');
-  g.money = 100000; g.world.reveal(12, 8, 26); g.drones[0].cargo = null;
-  const a = g.placeMachine('coffre', 3, 8)!, b = g.placeMachine('coffre', 22, 8)!;
+  g.money = 100000; g.world.reveal(14, 10, 30); g.drones[0].cargo = null;
+  assert(!g.placeMachine('depot', 3, 8), 'dépôt à débloquer');
+  g.unlocks.add('camion');
+  const a = g.placeMachine('depot', 3, 8)!, b = g.placeMachine('depot', 23, 8)!, c = g.placeMachine('depot', 13, 16)!;
+  const chest = g.placeMachine('coffre', 8, 8)!;
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
-  const t = new TunnelTracer(g.factory, g.world, 3.5, 8.5);
-  for (let i = 1; i <= 80; i++) t.move(3.5 + i * 0.25, 8.5);
-  assert(t.target === b, `route jusqu’au coffre : ${t.cells.length} cases`);
-  assert(!g.placeRoute('camion', a, b, t.cells), 'camions à débloquer');
-  g.unlocks.add('camion');
+  assert(!g.linkStations(a, chest), 'un dépôt se relie à un dépôt');
   const m0 = g.money;
-  assert(g.placeRoute('camion', a, b, t.cells) && m0 - g.money === g.routePrice('camion', t.cells.length), 'ligne posée');
-  g.factory.putInStorage(a, 'fer', 50);
+  const l = g.linkStations(a, b)!;
+  assert(l && l.vehicles.length === 1 && l.stops[0].load && !l.stops[1].load, 'ligne : charge au départ, décharge à l’arrivée');
+  assert(m0 - g.money === g.trackPrice('camion', 20) + RULES.truckCost, `prix ${m0 - g.money}`);
+  // Le dépôt se remplit comme un coffre (tapis, drones) : 300 objets.
+  assert(g.factory.putInStorage(a, 'fer', 1000) === 300, 'dépôt : 300 objets');
   run(g, 3);
-  const r = [...g.factory.routes.values()][0];
-  assert(r.state === 'go' && g.factory.cargoCount(r) === RULES.truckLoad, `chargé : ${r.state} ${g.factory.cargoCount(r)}`);
+  assert(g.factory.cargoCount(l.vehicles[0]) === RULES.truckLoad && l.vehicles[0].moving, 'parti plein');
+  run(g, 12);
+  assert((b.inBuf.fer ?? 0) === RULES.truckLoad, `livré : ${b.inBuf.fer}`);
+  // Deux camions de plus : la ligne va plus vite.
+  assert(g.addVehicle(l.id) && g.addVehicle(l.id) && l.vehicles.length === 3, 'trois camions');
+  const before = b.inBuf.fer;
   run(g, 30);
-  assert((b.inBuf.fer ?? 0) >= RULES.truckLoad, `livré : ${b.inBuf.fer}`);
-  // Train : plus gros, plus rapide.
-  g.unlocks.add('train');
-  const c = g.placeMachine('coffre', 3, 12)!, d = g.placeMachine('coffre', 22, 12)!;
-  c.built = true; d.built = true; g.factory.markBuilt();
-  assert(g.placeRoute('train', c, d, [...Array(18)].map((_, i) => ({ x: 4 + i, y: 12 }))), 'train posé');
-  g.factory.putInStorage(c, 'cuivre', 100);
-  run(g, 20);
-  assert((d.inBuf.cuivre ?? 0) >= RULES.trainLoad, `train livré : ${d.inBuf.cuivre}`);
-  // Sauvegarde, puis suppression : remboursé avec la machine.
+  assert(b.inBuf.fer - before >= 3 * RULES.truckLoad, `plus vite : ${b.inBuf.fer - before} en 30 s`);
+  // Troisième arrêt : A et B chargent, C décharge tout ; les camions passent par les trois.
+  assert(g.addStop(l.id, c) && l.stops.length === 3 && !g.addStop(l.id, c), 'troisième arrêt');
+  g.setStopLoad(l.id, 1, true);
+  run(g, 60);
+  assert((c.inBuf.fer ?? 0) > 0, `le troisième dépôt reçoit aussi : ${c.inBuf.fer}`);
+  // Sauvegarde ; fermer la ligne la rembourse.
   const g2 = new Game('TEST-V1', JSON.parse(JSON.stringify(g.serialize())));
-  assert(g2.factory.routes.size === 2, 'lignes rechargées');
-  const m1 = g.money;
-  g.removeMachine(d);
-  assert(g.factory.routes.size === 1 && g.money - m1 === MACHINES.coffre.cost + g.routePrice('train', 18), 'retirée avec la machine');
+  assert(g2.factory.lines.size === 1 && [...g2.factory.lines.values()][0].vehicles.length === 3, 'rechargée');
+  const m1 = g.money, refund = g.linePrice(l);
+  assert(g.removeVehicle(l.id) && g.money - m1 === RULES.truckCost, 'camion retiré, remboursé');
+  g.removeLine(l.id);
+  assert(g.factory.lines.size === 0 && g.money - m1 === refund, 'ligne fermée, remboursée');
+});
+test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () => {
+  const g = new Game('TEST-V2');
+  g.money = 100000; g.world.reveal(14, 10, 30); g.drones[0].cargo = null;
+  g.unlocks.add('train');
+  const a = g.placeMachine('gare', 3, 8)!, b = g.placeMachine('gare', 23, 12)!;
+  a.built = true; b.built = true; g.pending = []; g.factory.markBuilt();
+  const l = g.linkStations(a, b)!;
+  g.factory.putInStorage(a, 'cuivre', 200);
+  run(g, 20);
+  assert((b.inBuf.cuivre ?? 0) >= RULES.trainLoad, `train livré : ${b.inBuf.cuivre}`);
+  const m1 = g.money, refund = g.linePrice(l);
+  g.removeMachine(b);
+  assert(g.factory.lines.size === 0 && g.money - m1 === MACHINES.gare.cost + refund, 'retirée avec la gare');
 });
 
 console.log('Électricité');

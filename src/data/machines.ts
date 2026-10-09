@@ -155,6 +155,14 @@ export const MACHINES: Record<string, MachineDef> = {
     id: 'grand_coffre', name: 'Grand coffre', kind: 'storage', coal: false, w: 2, h: 2, cost: 50, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 300 objets · 2 × 2',
   },
+  depot: {
+    id: 'depot', name: 'Dépôt', kind: 'storage', coal: false, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde 300 objets ; relie-le à un autre dépôt, un camion fait les allers-retours',
+  },
+  gare: {
+    id: 'gare', name: 'Gare', kind: 'storage', coal: false, w: 2, h: 2, cost: 250, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde 300 objets ; relie-la à une autre gare, un train fait les allers-retours',
+  },
   generateur: {
     id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 5,
     hint: 'Brûle du charbon et alimente les machines reliées par câble',

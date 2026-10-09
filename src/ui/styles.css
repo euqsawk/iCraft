@@ -699,7 +699,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .gauge .g-carb img { width: 13px; height: 13px; }
 
 /* La vraie carte (appui long sur la mini-carte) */
-.map-screen { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg, #E6F0EB); padding: calc(env(safe-area-inset-top, 0px) + 14px) 12px calc(env(safe-area-inset-bottom, 0px) + 14px); animation: trash-in .18s ease-out; }
+.map-screen { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: #E6F0EB; padding: calc(env(safe-area-inset-top, 0px) + 14px) 12px calc(env(safe-area-inset-bottom, 0px) + 14px); animation: map-in .18s ease-out; }
+@keyframes map-in { from { opacity: 0; } }
 .map-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .map-head h2 { margin: 0; font-size: 24px; font-weight: 900; color: var(--ink); }
 .map-head p { margin: 2px 0 0; font-size: 13px; font-weight: 700; color: var(--ink2); }
@@ -714,3 +715,5 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .topt.on { background: var(--ink); color: #fff; }
 .topt.locked { opacity: .5; }
 .topt-hint { padding: 0 6px; font-size: 11px; font-weight: 800; color: var(--ink2); }
+.stop-row .seg { display: flex; gap: 4px; }
+.stop-row .seg .btn { padding: 6px 10px; font-size: 12px; }

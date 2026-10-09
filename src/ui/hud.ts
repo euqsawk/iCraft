@@ -4,7 +4,7 @@ import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import { FLOW_WINDOW, type Machine, type VehicleKind } from '../sim/factory.ts';
+import { FLOW_WINDOW, type Line, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
@@ -348,6 +348,7 @@ export class Hud implements GestureHandlers {
 
   /** Catégorie de la palette où range une machine. */
   private static paletteCat(m: MachineDef): string {
+    if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'drill') return 'extraction';
     if (m.kind === 'generator' || m.power) return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
@@ -364,7 +365,7 @@ export class Hud implements GestureHandlers {
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id)));
     // À partir de 10 machines, un sous-menu : des catégories, puis les machines de la catégorie choisie.
-    const CATS: [string, string][] = [['extraction', 'Extraction'], ['fabrication', 'Fabrication'], ['electricite', 'Électricité'], ['stockage', 'Stockage'], ['outils', 'Outils']];
+    const CATS: [string, string][] = [['extraction', 'Extraction'], ['fabrication', 'Fabrication'], ['electricite', 'Électricité'], ['stockage', 'Stockage'], ['transport', 'Transport'], ['outils', 'Outils']];
     let shown = list;
     if (list.length >= 10) {
       const present = CATS.filter(([id]) => list.some((m) => Hud.paletteCat(m) === id));
@@ -473,22 +474,21 @@ export class Hud implements GestureHandlers {
     if (locked) {
       const msg: Record<string, string> = {
         cable: 'Câbles : débloque le Générateur dans l’arbre (Énergie)',
-        transport: 'Camions : à débloquer dans l’arbre (Logistique, palier 4)',
+        transport: 'Camions : débloque le Dépôt dans l’arbre (Logistique, palier 4)',
         module: 'Modules : bientôt',
       };
       this.toast(msg[id] ?? 'Bientôt', 'info');
       return;
     }
+    // Transport : la liste des lignes de camions et de trains.
+    if (id === 'transport') { this.setTool('none'); this.openLines(); return; }
     const t = id as Tool;
     // Le bouton Tapis couvre aussi le sous-sol : on rouvre toujours sur les tapis normaux.
     const same = this.tool === t || (t === 'tapis' && this.tool === 'souterrain');
     this.setTool(same ? 'none' : t);
   }
 
-  /** Véhicule choisi dans l'outil Transport. */
-  private vehicle: VehicleKind = 'camion';
-
-  /** Les options d'un outil, au-dessus de la barre : Tapis / Sous-sol, Camion / Train. */
+  /** Les options d'un outil, au-dessus de la barre : Tapis / Sous-sol. */
   private renderToolOpts(): void {
     const box = this.toolOpts;
     box.innerHTML = '';
@@ -499,21 +499,12 @@ export class Hud implements GestureHandlers {
         { label: 'Tapis', icon: ICONS.tapis, on: this.tool === 'tapis', locked: false, pick: () => this.setTool('tapis'), why: '' },
         { label: 'Sous-sol', icon: ICONS.sousSol, on: this.tool === 'souterrain', locked: false, pick: () => this.setTool('souterrain'), why: '' },
       ];
-    } else if (this.tool === 'transport') {
-      opts = [
-        { label: 'Camion', icon: ICONS.transport, on: this.vehicle === 'camion', locked: false, pick: () => { this.vehicle = 'camion'; this.renderToolOpts(); }, why: '' },
-        { label: 'Train', icon: ICONS.train, on: this.vehicle === 'train', locked: !g.isUnlocked('train'), pick: () => { this.vehicle = 'train'; this.renderToolOpts(); }, why: 'Trains : à débloquer dans l’arbre (Logistique, palier 5)' },
-      ];
     }
     box.classList.toggle('hidden', !opts.length);
     for (const o of opts) {
       const b = h('button', `topt${o.on ? ' on' : ''}${o.locked ? ' locked' : ''}`, `${o.icon}<span>${o.label}</span>${o.locked ? ICONS.lock : ''}`);
       b.onclick = () => { if (o.locked) { this.toast(o.why, 'info'); return; } o.pick(); };
       box.append(b);
-    }
-    if (this.tool === 'transport') {
-      const hint = h('small', 'topt-hint', this.vehicle === 'train' ? `Rails · ${RULES.trainLoad} objets par voyage` : `Route · ${RULES.truckLoad} objets par voyage`);
-      box.append(hint);
     }
   }
 
@@ -635,7 +626,9 @@ export class Hud implements GestureHandlers {
     b.innerHTML = html;
     b.classList.remove('hidden');
     b.classList.toggle('bad', bad);
-    b.style.left = `${Math.min(window.innerWidth - 70, Math.max(70, x))}px`;
+    // La bulle reste entière à l'écran, même quand le doigt est près du bord.
+    const half = Math.min(window.innerWidth / 2 - 8, b.offsetWidth / 2 + 8);
+    b.style.left = `${Math.min(window.innerWidth - half, Math.max(half, x))}px`;
     b.style.top = `${Math.max(140, y)}px`;
   }
 
@@ -651,16 +644,36 @@ export class Hud implements GestureHandlers {
     this.r.loupe = { fx: sx, fy: sy, x, y: top };
   }
 
+  /** Où est le doigt pendant un tracé (pour faire défiler la carte quand il s'approche du bord). */
+  private dragAt: { x: number; y: number } | null = null;
+
+  private tracing(): boolean {
+    return this.tool === 'tapis' || this.tool === 'souterrain' || this.tool === 'cable';
+  }
+
+  /** Pendant un tracé, le doigt près du bord de l'écran fait défiler la carte, et le tracé suit. */
+  private edgeScroll(dt: number): void {
+    const p = this.dragAt;
+    if (!p || !this.tracing()) return;
+    const W = window.innerWidth, H = window.innerHeight;
+    const zone = (d: number, size: number) => (d < size ? Math.pow(1 - Math.max(0, d) / size, 1.4) : 0);
+    // Bords : un peu plus larges en haut (barre du palier) et en bas (barre d'outils).
+    const vx = zone(W - p.x, 56) - zone(p.x, 56);
+    const vy = zone(H - p.y, 150) - zone(p.y, 150);
+    if (!vx && !vy) return;
+    const cam = this.r.camera, speed = 620 / cam.zoom;
+    cam.x += vx * speed * dt;
+    cam.y += vy * speed * dt;
+    this.r.follow = false;
+    this.toolMove(p.x, p.y);
+  }
+
   toolStart(sx: number, sy: number): void {
     this.closePopover();
-    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain' || this.tool === 'transport') this.updateLoupe(sx, sy);
+    this.dragAt = { x: sx, y: sy };
+    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain') this.updateLoupe(sx, sy);
     const w = this.worldAt(sx, sy);
-    if (this.tool === 'transport') {
-      this.tunnelTracer = new TunnelTracer(this.game.factory, this.game.world, w.x, w.y);
-      this.r.preview = { kind: 'route', tracer: this.tunnelTracer, vehicle: this.vehicle };
-      const src = this.tunnelTracer.source;
-      if (!src || !this.game.canSendUnder(src)) this.showBubble(sx, sy - 56, 'Pars d’un coffre ou d’une machine', true);
-    } else if (this.tool === 'souterrain') {
+    if (this.tool === 'souterrain') {
       this.tunnelTracer = new TunnelTracer(this.game.factory, this.game.world, w.x, w.y);
       this.r.preview = { kind: 'tunnel', tracer: this.tunnelTracer };
       const src = this.tunnelTracer.source;
@@ -682,19 +695,9 @@ export class Hud implements GestureHandlers {
   }
 
   toolMove(sx: number, sy: number): void {
+    this.dragAt = { x: sx, y: sy };
     const w = this.worldAt(sx, sy);
-    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain' || this.tool === 'transport') this.updateLoupe(sx, sy);
-    if (this.tool === 'transport' && this.tunnelTracer) {
-      const t = this.tunnelTracer;
-      if (!t.source || !this.game.canSendUnder(t.source)) return;
-      t.move(w.x, w.y);
-      const price = this.game.routePrice(this.vehicle, t.cells.length);
-      const what = this.vehicle === 'train' ? 'Train' : 'Camion';
-      const name = t.target ? machineDef(t.target.type).name.toLowerCase() : '';
-      const label = t.target ? `${what} jusqu’à ${esc(name)} · ${ICONS.coinSm}${price}` : `${t.cells.length + 1} cases de ${this.vehicle === 'train' ? 'rails' : 'route'} · glisse jusqu’à un coffre ou une machine`;
-      this.showBubble(sx, sy - 56, label, t.blocked || (!!t.target && this.game.money < price));
-      return;
-    }
+    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain') this.updateLoupe(sx, sy);
     if (this.tool === 'souterrain' && this.tunnelTracer) {
       const t = this.tunnelTracer;
       if (!t.source || !this.game.canSendUnder(t.source)) return;
@@ -743,12 +746,11 @@ export class Hud implements GestureHandlers {
   }
 
   toolEnd(cancelled: boolean): void {
+    this.dragAt = null;
     this.bubble.classList.add('hidden');
     const pv = this.r.preview;
     if (!cancelled) {
-      if (this.tool === 'transport' && this.tunnelTracer?.source && this.tunnelTracer.target) {
-        this.game.placeRoute(this.vehicle, this.tunnelTracer.source, this.tunnelTracer.target, this.tunnelTracer.cells);
-      } else if (this.tool === 'souterrain' && this.tunnelTracer?.source && this.tunnelTracer.target) {
+      if (this.tool === 'souterrain' && this.tunnelTracer?.source && this.tunnelTracer.target) {
         this.game.placeTunnel(this.tunnelTracer.source, this.tunnelTracer.target, this.tunnelTracer.cells);
       } else if (this.tool === 'cable' && this.cableTracer) {
         this.game.placeCables(this.cableTracer.cells);
@@ -955,7 +957,7 @@ export class Hud implements GestureHandlers {
   private craftSel: string | null = null;
   private craftQty = 1;
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
-  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | '' = '';
+  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | '' = '';
   private machineId = -1;
   private chestId = -1;
   private liveTimer = 0;
@@ -1489,24 +1491,143 @@ export class Hud implements GestureHandlers {
     this.sheetKind = 'sell';
   }
 
-  /** Les tapis souterrains d'une machine (départs et arrivées), avec de quoi les couper. */
-  private tunnelsCard(m: Machine): HTMLElement | null {
-    const g = this.game, list = g.factory.tunnelsOf(m), routes = g.factory.routesOf(m);
-    if (!list.length && !routes.length) return null;
+  // ---------- Camions et trains ----------
+
+  /** Le nom d'un arrêt : « Dépôt 2 », « Gare 1 » (numérotés dans l'ordre de pose). */
+  private stationName(m: Machine): string {
+    const same = [...this.game.factory.machines.values()].filter((x) => x.type === m.type).sort((a, b) => a.id - b.id);
+    return `${machineDef(m.type).name} ${same.indexOf(m) + 1}`;
+  }
+
+  /** Ce que fait un véhicule, en quelques mots. */
+  private vehicleDoing(l: Line, i: number): string {
+    const f = this.game.factory, v = l.vehicles[i];
+    const here = f.machines.get(l.stops[v.at % l.stops.length].id), next = f.machines.get(l.stops[(v.at + 1) % l.stops.length].id);
+    const n = f.cargoCount(v);
+    const load = n ? ` · ${n} objet${n > 1 ? 's' : ''}` : '';
+    if (v.moving) return `vers ${next ? this.stationName(next) : '?'}${load}`;
+    return `${l.stops[v.at % l.stops.length].load ? 'charge' : 'décharge'} à ${here ? this.stationName(here) : '?'}${load}`;
+  }
+
+  /** Dans la fenêtre d'un dépôt ou d'une gare : ses lignes, et le bouton pour en ouvrir une. */
+  private stationCard(m: Machine): HTMLElement {
+    const g = this.game, f = g.factory, kind = g.stationKind(m)!;
     const card = h('div', 'card');
-    // Camions et trains
-    if (routes.length) card.append(h('p', 'muted', 'Camions et trains'));
-    for (const r of routes) {
-      const out = r.from === m.id;
-      const other = g.factory.machines.get(out ? r.to : r.from);
-      const n = g.factory.cargoCount(r);
-      const doing = { load: 'charge', go: 'en route', unload: 'décharge', back: 'revient' }[r.state];
-      const row = h('div', 'row link-row', `<span>${r.kind === 'train' ? 'Train' : 'Camion'} ${out ? 'vers' : 'depuis'} ${esc(other ? machineDef(other.type).name.toLowerCase() : '?')} · ${doing}${n ? ` · ${n} objet${n > 1 ? 's' : ''}` : ''}</span>`);
-      const cut = h('button', 'btn', 'Retirer');
-      cut.onclick = () => { g.removeRoute(r.id); this.refreshSheet(); };
-      row.append(cut);
+    const word = kind === 'train' ? 'gare' : 'dépôt';
+    card.append(h('p', 'muted', kind === 'train' ? 'Trains' : 'Camions'));
+    for (const l of f.linesOf(m)) {
+      const names = l.stops.map((st) => { const x = f.machines.get(st.id); return x ? this.stationName(x) : '?'; }).join(' → ');
+      const row = h('div', 'row link-row', `<span>${esc(names)} · ${l.vehicles.length} ${kind === 'train' ? 'train' : 'camion'}${l.vehicles.length > 1 ? 's' : ''}</span>`);
+      const open = h('button', 'btn', 'Gérer');
+      open.onclick = () => this.openLine(l.id);
+      row.append(open);
       card.append(row);
     }
+    const others = [...f.machines.values()].filter((x) => x.type === m.type && x !== m);
+    const link = h('button', 'btn primary', `Relier à ${kind === 'train' ? 'une autre gare' : 'un autre dépôt'}`);
+    link.onclick = () => {
+      if (!others.length) { this.toast(`Pose d’abord ${kind === 'train' ? 'une autre gare' : 'un autre dépôt'}`, 'info'); return; }
+      this.closeSheet();
+      this.openMap({
+        title: kind === 'train' ? 'Choisis l’autre gare' : 'Choisis l’autre dépôt',
+        sub: `${this.stationName(m)} : touche l’arrêt d’arrivée`,
+        candidates: others,
+        onPick: (to) => { const l = g.linkStations(m, to); if (l) this.openLine(l.id); },
+      });
+    };
+    card.append(link);
+    if (!f.linesOf(m).length) card.append(h('p', 'muted small', `Remplis ce ${word} par tapis (ou les drones), relie-le : le véhicule charge ici et décharge à l’autre bout.`));
+    return card;
+  }
+
+  /** Toutes les lignes (bouton Transport). */
+  openLines(): void {
+    this.closePopover();
+    this.openSheet((sheet, close) => {
+      const g = this.game, f = g.factory;
+      sheet.append(this.sheetHead('Transport', 'Camions entre dépôts, trains entre gares', close));
+      const card = h('div', 'card');
+      if (!f.lines.size) {
+        card.innerHTML = `<p class="muted">Aucune ligne. Pose deux ${g.isUnlocked('train') ? 'dépôts (ou deux gares)' : 'dépôts'} depuis la palette des machines, remplis le premier par tapis, puis touche-le : « Relier à un autre dépôt ».</p>`;
+      }
+      for (const l of f.lines.values()) {
+        const names = l.stops.map((st) => { const x = f.machines.get(st.id); return x ? this.stationName(x) : '?'; }).join(' → ');
+        const row = h('div', 'row link-row', `<span>${l.kind === 'train' ? 'Train' : 'Camion'} · ${esc(names)} · ${l.vehicles.length} véhicule${l.vehicles.length > 1 ? 's' : ''}</span>`);
+        const open = h('button', 'btn', 'Gérer');
+        open.onclick = () => this.openLine(l.id);
+        row.append(open);
+        card.append(row);
+      }
+      sheet.append(card);
+    }, true);
+    this.sheetKind = 'line';
+  }
+
+  /** Une ligne : ses arrêts (charge ou décharge), ses véhicules, un troisième arrêt. */
+  openLine(id: number): void {
+    this.closePopover();
+    this.openSheet((sheet, close) => {
+      const g = this.game, f = g.factory, l = f.lines.get(id);
+      if (!l) { close(); return; }
+      const truck = l.kind !== 'train';
+      sheet.append(this.sheetHead(truck ? 'Ligne de camions' : 'Ligne de trains', `${l.stops.length} arrêts, parcourus en boucle · ${truck ? RULES.truckLoad : RULES.trainLoad} objets par voyage`, close));
+      // Arrêts
+      const stops = h('div', 'card');
+      stops.append(h('p', 'muted', 'Arrêts · on charge tout ce que l’arrêt garde, ou on y vide tout'));
+      l.stops.forEach((st, i) => {
+        const m = f.machines.get(st.id);
+        const row = h('div', 'row link-row stop-row', `<span><b>${i + 1}.</b> ${esc(m ? this.stationName(m) : '?')}</span>`);
+        const seg = h('div', 'seg');
+        for (const [load, label] of [[true, 'Charge'], [false, 'Décharge']] as const) {
+          const b = h('button', `btn${st.load === load ? ' primary' : ''}`, label);
+          b.onclick = () => { g.setStopLoad(l.id, i, load); this.refreshSheet(); };
+          seg.append(b);
+        }
+        row.append(seg);
+        stops.append(row);
+      });
+      if (l.stops.length < 3) {
+        const cand = [...f.machines.values()].filter((x) => g.stationKind(x) === l.kind && !l.stops.some((st) => st.id === x.id));
+        const add = h('button', 'btn', `Ajouter un arrêt${cand.length ? '' : ` (pose ${truck ? 'un autre dépôt' : 'une autre gare'})`}`);
+        add.disabled = !cand.length;
+        add.onclick = () => {
+          this.closeSheet();
+          this.openMap({
+            title: 'Troisième arrêt', sub: 'Touche l’arrêt à ajouter', candidates: cand,
+            onPick: (m) => { if (!g.addStop(l.id, m)) this.toast('Pas assez de pièces', 'warn'); this.openLine(l.id); },
+          });
+        };
+        stops.append(add);
+      }
+      sheet.append(stops);
+      // Véhicules
+      const vc = h('div', 'card');
+      vc.append(h('p', 'muted', `${truck ? 'Camions' : 'Trains'} · plus il y en a, plus la ligne va vite`));
+      l.vehicles.forEach((_, i) => vc.append(h('div', 'row link-row', `<span>${truck ? 'Camion' : 'Train'} ${i + 1} · ${esc(this.vehicleDoing(l, i))}</span>`)));
+      const row = h('div', 'row');
+      const minus = h('button', 'btn', `Retirer un ${truck ? 'camion' : 'train'}`);
+      minus.disabled = l.vehicles.length <= 1;
+      minus.onclick = () => { g.removeVehicle(l.id); this.refreshSheet(); };
+      const plus = h('button', 'btn primary', `Ajouter · ${ICONS.coinSm}${g.vehiclePrice(l.kind)}`);
+      plus.disabled = l.vehicles.length >= RULES.maxVehicles;
+      plus.onclick = () => { if (!g.addVehicle(l.id)) this.toast('Pas assez de pièces', 'warn'); this.refreshSheet(); };
+      row.append(minus, plus);
+      vc.append(row);
+      sheet.append(vc);
+      const end = h('div', 'row');
+      const shut = h('button', 'btn danger', `Fermer la ligne · rend ${g.linePrice(l)}`);
+      shut.onclick = () => { g.removeLine(l.id); close(); };
+      end.append(shut);
+      sheet.append(end);
+    }, true);
+    this.sheetKind = 'line';
+  }
+
+  /** Les tapis souterrains d'une machine (départs et arrivées), avec de quoi les couper. */
+  private tunnelsCard(m: Machine): HTMLElement | null {
+    const g = this.game, list = g.factory.tunnelsOf(m);
+    if (!list.length) return null;
+    const card = h('div', 'card');
     if (list.length) card.append(h('p', 'muted', 'Tapis souterrains'));
     for (const t of list) {
       const out = t.from === m.id;
@@ -1544,6 +1665,8 @@ export class Hud implements GestureHandlers {
       sheet.append(c1, swap, c2);
       const bar = this.invBar(chest);
       if (bar) { bar.classList.add('floating'); sheet.append(bar); }
+      // Dépôt ou gare : ses lignes, et de quoi le relier à un autre.
+      if (g.stationKind(chest)) sheet.append(this.stationCard(chest));
       const tc = this.tunnelsCard(chest);
       if (tc) sheet.append(tc);
       const acts = h('div', 'row');
@@ -1972,7 +2095,7 @@ export class Hud implements GestureHandlers {
   // ---------- Mini-carte ----------
 
   /** La vraie carte (appui long sur la mini-carte) : tout ce qui a été exploré ; toucher un endroit y emmène la caméra. */
-  openMap(): void {
+  openMap(pick?: { title: string; sub: string; candidates: Machine[]; onPick: (m: Machine) => void }): void {
     this.closePopover();
     this.root.querySelector('.map-screen')?.remove();
     const g = this.game, w = g.world;
@@ -2004,7 +2127,7 @@ export class Hud implements GestureHandlers {
     }
     bctx.putImageData(img, 0, 0);
     const screen = h('div', 'map-screen');
-    const head = h('div', 'map-head', '<div><h2>Carte</h2><p>Touche un endroit pour y aller</p></div>');
+    const head = h('div', 'map-head', pick ? `<div><h2>${esc(pick.title)}</h2><p>${esc(pick.sub)}</p></div>` : '<div><h2>Carte</h2><p>Touche un endroit pour y aller</p></div>');
     const x = h('button', 'round', ICONS.close);
     x.setAttribute('aria-label', 'Fermer');
     const close = () => screen.remove();
@@ -2038,9 +2161,30 @@ export class Hud implements GestureHandlers {
     ctx.strokeRect(px(cam.x0 / CELL), py(cam.y0 / CELL), (cam.x1 - cam.x0) / CELL * scale, (cam.y1 - cam.y0) / CELL * scale);
     ctx.fillStyle = '#FFC857'; ctx.strokeStyle = '#2E3A4B'; ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(px(g.robot.x), py(g.robot.y), Math.max(5, scale * 1.2), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // Choisir un arrêt : les dépôts (ou gares) possibles sont entourés et numérotés.
+    if (pick) {
+      pick.candidates.forEach((m, i) => {
+        const cx = px(m.x + m.w / 2), cy = py(m.y + m.h / 2), rad = Math.max(12, scale * 2.2);
+        ctx.fillStyle = 'rgba(255,200,87,.35)'; ctx.strokeStyle = '#2E3A4B'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#2E3A4B'; ctx.font = '900 12px Nunito, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(String(i + 1), cx, cy - rad - 9);
+      });
+    }
     canvas.onclick = (e) => {
       const r = canvas.getBoundingClientRect();
       const wx = x0 + (e.clientX - r.left) / scale, wy = y0 + (e.clientY - r.top) / scale;
+      if (pick) {
+        // Le plus proche des arrêts possibles (à quelques cases près).
+        let best: Machine | null = null, bd = Infinity;
+        for (const m of pick.candidates) {
+          const d = Math.hypot(m.x + m.w / 2 - wx, m.y + m.h / 2 - wy);
+          if (d < bd) { bd = d; best = m; }
+        }
+        if (best && bd * scale < Math.max(28, scale * 4)) { close(); pick.onPick(best); }
+        else this.toast('Touche un des arrêts entourés', 'info');
+        return;
+      }
       this.r.follow = false;
       this.r.camera.x = wx * CELL; this.r.camera.y = wy * CELL;
       close();
@@ -2085,6 +2229,7 @@ export class Hud implements GestureHandlers {
 
   /** Appelé à chaque image. */
   update(dt: number): void {
+    this.edgeScroll(dt);
     this.tips.setHidden(!!this.r.loupe || !!this.overlay || this.tree.isOpen || !!this.root.querySelector('.gift-card, .move-banner'));
     this.tips.update(dt);
     this.popTimer += dt;
@@ -2105,7 +2250,7 @@ export class Hud implements GestureHandlers {
         if (job && bar) bar.style.width = `${(job.t / job.total) * 100}%`;
       });
       this.liveTimer += dt;
-      if (this.liveTimer > 1 && (this.sheetKind === 'robot' || this.sheetKind === 'sell' || this.sheetKind === 'machine')) { this.liveTimer = 0; this.sheetDirty = true; }
+      if (this.liveTimer > 1 && (this.sheetKind === 'robot' || this.sheetKind === 'sell' || this.sheetKind === 'machine' || this.sheetKind === 'line' || this.sheetKind === 'chest')) { this.liveTimer = 0; this.sheetDirty = true; }
     }
     this.refreshTimer += dt;
     if (this.refreshTimer > 0.8 && !this.pressing) {

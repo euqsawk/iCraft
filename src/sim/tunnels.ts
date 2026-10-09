@@ -17,10 +17,45 @@ export class TunnelTracer {
   private world: World;
   private startDir: Dir | null = null;
 
-  constructor(factory: Factory, world: World, fx: number, fy: number) {
+  /**
+   * Départ sur un sol libre (routes et rails seulement) : un coffre y sera posé. C'est alors la première case du tracé.
+   * Arrivée sur un sol libre : la dernière case recevra un coffre.
+   */
+  readonly start: { x: number; y: number } | null = null;
+
+  constructor(factory: Factory, world: World, fx: number, fy: number, free = false) {
     this.factory = factory;
     this.world = world;
-    this.source = factory.machineAt(Math.floor(fx), Math.floor(fy)) ?? null;
+    const x = Math.floor(fx), y = Math.floor(fy);
+    this.source = factory.machineAt(x, y) ?? null;
+    if (!this.source && free && world.isRevealed(x, y) && factory.isFree(x, y)) {
+      this.start = { x, y };
+      this.cells = [{ x, y }];
+    }
+  }
+
+  /** Un coffre est à poser au départ ou à l'arrivée (cases du tracé qui ne sont pas du chemin). */
+  get chestStart(): { x: number; y: number } | null {
+    return this.start;
+  }
+
+  get chestEnd(): { x: number; y: number } | null {
+    if (this.target || this.blocked) return null;
+    const last = this.cells[this.cells.length - 1];
+    if (!last || (this.start && this.cells.length < 2)) return null;
+    if (!this.factory.isFree(last.x, last.y)) return null;
+    return last;
+  }
+
+  /** Les cases du chemin lui-même (sans les cases où un coffre sera posé). */
+  get pathCells(): { x: number; y: number }[] {
+    return this.cells.slice(this.start ? 1 : 0, this.chestEnd ? -1 : undefined);
+  }
+
+  /** Le tracé peut être posé (vers une machine, ou vers un coffre à poser). */
+  get ready(): boolean {
+    if (!this.source && !this.start) return false;
+    return !!this.target || !!this.chestEnd;
   }
 
   private dir(): Dir | null {
@@ -31,12 +66,13 @@ export class TunnelTracer {
 
   move(fx: number, fy: number): void {
     const m = this.source;
-    if (!m) return;
+    if (!m && !this.start) return;
     const cx = Math.floor(fx), cy = Math.floor(fy);
     this.target = null;
     this.blocked = false;
-    if (this.factory.inside(m, cx, cy)) { this.cells = []; return; }
-    if (!this.cells.length) {
+    if (m && this.factory.inside(m, cx, cy)) { this.cells = []; return; }
+    if (this.start && cx === this.start.x && cy === this.start.y) { this.cells = [this.start]; return; }
+    if (m && !this.cells.length) {
       // Première case : contre le bord de la machine, du côté du doigt.
       let x = Math.min(Math.max(cx, m.x), m.x + m.w - 1);
       let y = Math.min(Math.max(cy, m.y), m.y + m.h - 1);

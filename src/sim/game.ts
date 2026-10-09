@@ -4,7 +4,7 @@ import { MACHINES, machineDef } from '../data/machines.ts';
 import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
 import { addTo, burnOne, moveFuel } from './fuel.ts';
 import { World } from '../world/world.ts';
-import { Factory, type Belt, type FactorySave, type Machine, type VehicleKind } from './factory.ts';
+import { Factory, type Belt, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
@@ -723,30 +723,92 @@ export class Game {
     return false;
   }
 
-  /** Prix d'une ligne : la route (ou les rails) et le véhicule. */
-  routePrice(kind: VehicleKind, cells: number): number {
-    return kind === 'train' ? (cells + 1) * RULES.railCost + RULES.trainCost : (cells + 1) * RULES.roadCost + RULES.truckCost;
+  /** Le véhicule d'un arrêt : camion pour un dépôt, train pour une gare. */
+  stationKind(m: Machine): VehicleKind | null {
+    return m.type === 'depot' ? 'camion' : m.type === 'gare' ? 'train' : null;
   }
 
-  /** Une ligne de camion ou de train entre deux coffres ou machines. */
-  placeRoute(kind: VehicleKind, from: Machine, to: Machine, cells: { x: number; y: number }[]): boolean {
-    if (!this.isUnlocked(kind)) {
-      this.emit({ type: 'toast', text: kind === 'train' ? 'Trains : à débloquer dans l’arbre (Logistique, palier 5)' : 'Camions : à débloquer dans l’arbre (Logistique, palier 4)', tone: 'warn' });
-      return false;
+  /** Prix des véhicules et de la route (ou des rails), à la case. */
+  vehiclePrice(kind: VehicleKind): number {
+    return kind === 'train' ? RULES.trainCost : RULES.truckCost;
+  }
+
+  trackPrice(kind: VehicleKind, cells: number): number {
+    return Math.ceil(cells) * (kind === 'train' ? RULES.railCost : RULES.roadCost);
+  }
+
+  /** Ce que rendrait une ligne : sa route et ses véhicules. */
+  linePrice(l: Line): number {
+    return this.trackPrice(l.kind, this.factory.lineLength(l)) + l.vehicles.length * this.vehiclePrice(l.kind);
+  }
+
+  /** Relie deux dépôts (ou deux gares) : la route est posée, un premier véhicule part du premier. */
+  linkStations(from: Machine, to: Machine): Line | null {
+    const kind = this.stationKind(from);
+    if (!kind || from === to || this.stationKind(to) !== kind) {
+      this.emit({ type: 'toast', text: kind === 'train' ? 'Une gare se relie à une autre gare' : 'Un dépôt se relie à un autre dépôt', tone: 'warn' });
+      return null;
     }
-    if (from === to || !this.canSendUnder(from)) return false;
-    if (!this.spend(this.routePrice(kind, cells.length))) return false;
-    this.factory.addRoute(kind, from, to, cells);
+    const price = this.trackPrice(kind, this.factory.legLength(from, to)) + this.vehiclePrice(kind);
+    if (!this.spend(price)) return null;
+    const l = this.factory.addLine(kind, from, to);
+    l.vehicles.push(this.factory.newVehicle());
     this.emit({ type: 'factory' });
-    this.emit({ type: 'toast', text: `${kind === 'train' ? 'Train' : 'Camion'} : ${machineDef(from.type).name.toLowerCase()} → ${machineDef(to.type).name.toLowerCase()}`, tone: 'good' });
+    this.emit({ type: 'toast', text: `${kind === 'train' ? 'Train' : 'Camion'} : la ligne est ouverte`, tone: 'good' });
+    return l;
+  }
+
+  /** Prix d'un troisième arrêt : la route en plus. */
+  stopPrice(l: Line, m: Machine): number {
+    const before = this.factory.lineLength(l);
+    const after = this.factory.lineLength({ ...l, stops: [...l.stops, { id: m.id, load: false }] });
+    return this.trackPrice(l.kind, Math.max(0, after - before));
+  }
+
+  /** Ajoute un arrêt à une ligne (3 au plus). */
+  addStop(lineId: number, m: Machine): boolean {
+    const l = this.factory.lines.get(lineId);
+    if (!l || l.stops.length >= 3 || this.stationKind(m) !== l.kind || l.stops.some((st) => st.id === m.id)) return false;
+    if (!this.spend(this.stopPrice(l, m))) return false;
+    l.stops.push({ id: m.id, load: false });
+    this.emit({ type: 'factory' });
     return true;
   }
 
-  /** Retire une ligne (remboursée ; ce que transporte le véhicule est perdu). */
-  removeRoute(id: number): void {
-    const r = this.factory.removeRoute(id);
-    if (!r) return;
-    this.earn(this.routePrice(r.kind, r.cells.length));
+  /** Ajoute un véhicule sur la ligne (6 au plus) : il part du premier arrêt. */
+  addVehicle(lineId: number): boolean {
+    const l = this.factory.lines.get(lineId);
+    if (!l || l.vehicles.length >= RULES.maxVehicles) return false;
+    if (!this.spend(this.vehiclePrice(l.kind))) return false;
+    l.vehicles.push(this.factory.newVehicle());
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Retire un véhicule (il en reste au moins un ; remboursé, sa cargaison est perdue). */
+  removeVehicle(lineId: number): boolean {
+    const l = this.factory.lines.get(lineId);
+    if (!l || l.vehicles.length <= 1) return false;
+    l.vehicles.pop();
+    this.earn(this.vehiclePrice(l.kind));
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Un arrêt charge (on y remplit le véhicule) ou décharge (il y vide sa cargaison). */
+  setStopLoad(lineId: number, i: number, load: boolean): void {
+    const st = this.factory.lines.get(lineId)?.stops[i];
+    if (!st) return;
+    st.load = load;
+    this.emit({ type: 'factory' });
+  }
+
+  /** Ferme une ligne (route et véhicules remboursés). */
+  removeLine(id: number): void {
+    const l = this.factory.lines.get(id);
+    if (!l) return;
+    this.earn(this.linePrice(l));
+    this.factory.removeLine(id);
     this.emit({ type: 'factory' });
   }
 
@@ -813,7 +875,7 @@ export class Game {
     }
     // Ses tapis souterrains partent avec elle (remboursés).
     for (const t of this.factory.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
-    for (const r of this.factory.routesOf(m)) this.earn(this.routePrice(r.kind, r.cells.length));
+    for (const l of this.factory.linesOf(m)) this.earn(this.linePrice(l));
     this.factory.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
     this.earn(def.cost);

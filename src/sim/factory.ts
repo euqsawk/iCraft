@@ -100,19 +100,28 @@ export interface Tunnel {
 
 export type VehicleKind = 'camion' | 'train';
 
-/** Une ligne de transport : une route (camion) ou des rails (train) entre deux coffres ou machines, et son véhicule. */
-export interface Route {
+/** Un arrêt d'une ligne : un dépôt (camions) ou une gare (trains), où l'on charge ou décharge. */
+export interface LineStop {
   id: number;
-  kind: VehicleKind;
-  from: number;
-  to: number;
-  cells: number[];
-  /** Le véhicule : sa position sur le trajet (en cases), ce qu'il fait, ce qu'il transporte. */
+  load: boolean;
+}
+
+/** Un camion ou un train d'une ligne : l'arrêt où il est (ou qu'il vient de quitter), sa position sur le trajet suivant. */
+export interface Vehicle {
+  at: number;
   pos: number;
-  state: 'load' | 'go' | 'unload' | 'back';
-  /** Temps passé à charger ou décharger. */
+  moving: boolean;
+  /** Temps passé à l'arrêt. */
   t: number;
   cargo: Record<string, number>;
+}
+
+/** Une ligne : 2 ou 3 arrêts parcourus en boucle, et ses véhicules. La route ou les rails sont posés en L entre deux arrêts. */
+export interface Line {
+  id: number;
+  kind: VehicleKind;
+  stops: LineStop[];
+  vehicles: Vehicle[];
 }
 
 /** Un réseau électrique : les câbles reliés entre eux et les machines qui les touchent. */
@@ -149,8 +158,8 @@ export class Factory {
   readonly belts = new Map<number, Belt>();
   readonly machines = new Map<number, Machine>();
   /** Lignes de camions et de trains. */
-  readonly routes = new Map<number, Route>();
-  private nextRoute = 1;
+  readonly lines = new Map<number, Line>();
+  private nextLine = 1;
   /** Tapis souterrains (sous tout le reste). */
   readonly tunnels = new Map<number, Tunnel>();
   private nextTunnel = 1;
@@ -380,7 +389,7 @@ export class Factory {
     this.unindexMachine(m);
     this.machines.delete(m.id);
     for (const t of [...this.tunnels.values()]) if (t.from === m.id || t.to === m.id) this.tunnels.delete(t.id);
-    for (const r of [...this.routes.values()]) if (r.from === m.id || r.to === m.id) this.routes.delete(r.id);
+    for (const l of [...this.lines.values()]) if (l.stops.some((st) => st.id === m.id)) this.lines.delete(l.id);
     this.dirty = true;
   }
 
@@ -431,77 +440,102 @@ export class Factory {
     this.dirty = true;
   }
 
-  // ---------- Véhicules ----------
+  // ---------- Camions et trains ----------
 
-  routeLength(r: Route): number {
-    return r.cells.length + 1;
+  /** Le trajet entre deux arrêts : en L (d'abord à l'horizontale), d'un centre à l'autre, en cases. */
+  legPath(a: Machine, b: Machine): { x: number; y: number }[] {
+    const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
+    return [{ x: ax, y: ay }, { x: bx, y: ay }, { x: bx, y: by }];
   }
 
-  addRoute(kind: VehicleKind, from: Machine, to: Machine, cells: { x: number; y: number }[], id?: number): Route {
-    const r: Route = { id: id ?? this.nextRoute++, kind, from: from.id, to: to.id, cells: cells.map((c) => key(c.x, c.y)), pos: 0, state: 'load', t: 0, cargo: {} };
-    this.nextRoute = Math.max(this.nextRoute, r.id + 1);
-    this.routes.set(r.id, r);
-    return r;
+  legLength(a: Machine, b: Machine): number {
+    return Math.abs(b.x + b.w / 2 - (a.x + a.w / 2)) + Math.abs(b.y + b.h / 2 - (a.y + a.h / 2));
   }
 
-  removeRoute(id: number): Route | null {
-    const r = this.routes.get(id);
-    if (r) this.routes.delete(id);
-    return r ?? null;
-  }
-
-  routesOf(m: Machine): Route[] {
-    return [...this.routes.values()].filter((r) => r.from === m.id || r.to === m.id);
-  }
-
-  /** Ce que contient le véhicule. */
-  cargoCount(r: Route): number {
+  /** Longueur totale d'une ligne (tous ses trajets, en cases). */
+  lineLength(l: Line): number {
     let n = 0;
-    for (const v of Object.values(r.cargo)) n += v;
+    for (let i = 0; i < l.stops.length; i++) {
+      const a = this.machines.get(l.stops[i].id), b = this.machines.get(l.stops[(i + 1) % l.stops.length].id);
+      if (a && b && (l.stops.length > 2 || i === 0)) n += this.legLength(a, b);
+    }
     return n;
   }
 
-  /** Les véhicules : chargent au départ, roulent, déchargent à l'arrivée, reviennent. */
-  private tickRoutes(dt: number): void {
-    for (const r of this.routes.values()) {
-      const a = this.machines.get(r.from), b = this.machines.get(r.to);
-      if (!a || !b || !a.built || !b.built) continue;
-      const cap = r.kind === 'train' ? RULES.trainLoad : RULES.truckLoad;
-      const speed = r.kind === 'train' ? RULES.trainSpeed : RULES.truckSpeed;
-      const L = this.routeLength(r);
-      if (r.state === 'load') {
-        r.t += dt;
-        // Il prend dans le départ ce que l'arrivée accepte, un objet tous les dixièmes de seconde.
-        const buf = machineDef(a.type).kind === 'storage' ? a.inBuf : a.outBuf;
-        while (this.cargoCount(r) < cap && r.t >= 0.1) {
-          const k = Object.keys(buf).find((x) => buf[x] > 0 && this.canAccept(b, x));
-          if (!k) break;
-          buf[k]--;
-          if (buf[k] === 0 && buf === a.inBuf) delete buf[k];
-          r.cargo[k] = (r.cargo[k] ?? 0) + 1;
-          r.t -= 0.1;
+  addLine(kind: VehicleKind, from: Machine, to: Machine, id?: number): Line {
+    const l: Line = { id: id ?? this.nextLine++, kind, stops: [{ id: from.id, load: true }, { id: to.id, load: false }], vehicles: [] };
+    this.nextLine = Math.max(this.nextLine, l.id + 1);
+    this.lines.set(l.id, l);
+    return l;
+  }
+
+  newVehicle(): Vehicle {
+    return { at: 0, pos: 0, moving: false, t: 0, cargo: {} };
+  }
+
+  removeLine(id: number): Line | null {
+    const l = this.lines.get(id);
+    if (l) this.lines.delete(id);
+    return l ?? null;
+  }
+
+  /** Les lignes qui passent par cet arrêt. */
+  linesOf(m: Machine): Line[] {
+    return [...this.lines.values()].filter((l) => l.stops.some((s) => s.id === m.id));
+  }
+
+  cargoCount(v: Vehicle): number {
+    let n = 0;
+    for (const k of Object.values(v.cargo)) n += k;
+    return n;
+  }
+
+  /**
+   * Les véhicules : à un arrêt de chargement, ils prennent tout ce que le dépôt garde (jusqu'à leur charge) ;
+   * à un arrêt de déchargement, ils y vident leur cargaison ; puis ils roulent jusqu'à l'arrêt suivant (en boucle).
+   */
+  private tickLines(dt: number): void {
+    for (const l of this.lines.values()) {
+      const cap = l.kind === 'train' ? RULES.trainLoad : RULES.truckLoad;
+      const speed = (l.kind === 'train' ? RULES.trainSpeed : RULES.truckSpeed);
+      const n = l.stops.length;
+      for (const v of l.vehicles) {
+        const stop = l.stops[v.at % n];
+        const here = this.machines.get(stop.id);
+        const next = this.machines.get(l.stops[(v.at + 1) % n].id);
+        if (!here || !next) continue;
+        if (v.moving) {
+          v.pos += speed * dt;
+          if (v.pos >= this.legLength(here, next)) { v.at = (v.at + 1) % n; v.pos = 0; v.moving = false; v.t = 0; }
+          continue;
         }
-        const n = this.cargoCount(r);
-        if (n >= cap || (n > 0 && r.t >= RULES.vehicleWait)) { r.state = 'go'; r.t = 0; }
-        if (n === 0) r.t = Math.min(r.t, 0.1);
-      } else if (r.state === 'go') {
-        r.pos = Math.min(L, r.pos + speed * dt);
-        if (r.pos >= L) { r.state = 'unload'; r.t = 0; }
-      } else if (r.state === 'unload') {
-        r.t += dt;
-        let k = Object.keys(r.cargo).find((x) => r.cargo[x] > 0 && this.canAccept(b, x));
-        while (k && r.t >= 0.1) {
-          r.cargo[k]--;
-          if (!r.cargo[k]) delete r.cargo[k];
-          this.give(b, k);
-          r.t -= 0.1;
-          k = Object.keys(r.cargo).find((x) => r.cargo[x] > 0 && this.canAccept(b, x));
+        if (!here.built) continue;
+        v.t += dt;
+        if (stop.load) {
+          while (this.cargoCount(v) < cap && v.t >= 0.1) {
+            const k = Object.keys(here.inBuf).find((x) => here.inBuf[x] > 0);
+            if (!k) break;
+            here.inBuf[k]--;
+            if (!here.inBuf[k]) delete here.inBuf[k];
+            v.cargo[k] = (v.cargo[k] ?? 0) + 1;
+            v.t -= 0.1;
+          }
+          const c = this.cargoCount(v);
+          // Il part plein, ou après un moment s'il a quelque chose ; vide, il attend.
+          if (c >= cap || (c > 0 && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; }
+          if (c === 0) v.t = Math.min(v.t, 0.1);
+        } else {
+          let k = Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && this.storageRoom(here, x) > 0);
+          while (k && v.t >= 0.1) {
+            v.cargo[k]--;
+            if (!v.cargo[k]) delete v.cargo[k];
+            here.inBuf[k] = (here.inBuf[k] ?? 0) + 1;
+            v.t -= 0.1;
+            k = Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && this.storageRoom(here, x) > 0);
+          }
+          // Vide (ou le dépôt est plein depuis un moment) : il repart.
+          if (this.cargoCount(v) === 0 || (!k && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; }
         }
-        // Vide, ou plus rien n'entre depuis un moment : il repart (ce qui reste fait l'aller-retour).
-        if (this.cargoCount(r) === 0 || (!k && r.t >= RULES.vehicleWait)) { r.state = 'back'; r.t = 0; }
-      } else {
-        r.pos = Math.max(0, r.pos - speed * dt);
-        if (r.pos <= 0) { r.state = 'load'; r.t = 0; }
       }
     }
   }
@@ -829,7 +863,7 @@ export class Factory {
   /** Cases occupées d'un coffre (piles de 10). */
   /** Nombre de cases d'un coffre (30 pour un grand coffre). */
   slotsOf(m: Machine): number {
-    return m.type === 'grand_coffre' ? RULES.bigChestSlots : this.chestSlots;
+    return m.type === 'grand_coffre' || m.type === 'depot' || m.type === 'gare' ? RULES.bigChestSlots : this.chestSlots;
   }
 
   storageSlots(m: Machine): number {
@@ -1035,7 +1069,7 @@ export class Factory {
       }
     }
     if (this.tunnels.size) this.tickTunnels(dt);
-    if (this.routes.size) this.tickRoutes(dt);
+    if (this.lines.size) this.tickLines(dt);
   }
 
   private outCount(m: Machine): number {
@@ -1175,7 +1209,7 @@ export class Factory {
     return {
       nextId: this.nextId,
       cables: [...this.cables],
-      routes: [...this.routes.values()].map((r) => ({ ...r, cells: [...r.cells], cargo: { ...r.cargo } })),
+      lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0]),
       machines: [...this.machines.values()].map((m) => ({
@@ -1211,12 +1245,12 @@ export class Factory {
       if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);
-    this.routes.clear();
-    this.nextRoute = 1;
-    for (const sr of s.routes ?? []) {
-      if (!this.machines.has(sr.from) || !this.machines.has(sr.to)) continue;
-      this.routes.set(sr.id, { ...sr, cells: [...sr.cells], cargo: { ...sr.cargo } });
-      this.nextRoute = Math.max(this.nextRoute, sr.id + 1);
+    this.lines.clear();
+    this.nextLine = 1;
+    for (const sl of s.lines ?? []) {
+      if (!sl.stops.every((st) => this.machines.has(st.id))) continue;
+      this.lines.set(sl.id, { id: sl.id, kind: sl.kind, stops: sl.stops.map((st) => ({ ...st })), vehicles: sl.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) });
+      this.nextLine = Math.max(this.nextLine, sl.id + 1);
     }
     this.tunnels.clear();
     this.nextTunnel = 1;
@@ -1233,7 +1267,7 @@ export class Factory {
 export interface FactorySave {
   nextId: number;
   cables?: number[];
-  routes?: Route[];
+  lines?: Line[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?][];
   machines: {

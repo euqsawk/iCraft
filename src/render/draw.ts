@@ -199,6 +199,22 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       }
       g.circle(0, 0, 3).fill(ink);
       break;
+    case 'depot':
+      // Un camion de profil : benne, cabine, roues, sur un quai.
+      g.roundRect(-15, 9, 30, 4, 2).fill(PALETTE.ink2);
+      g.roundRect(-14, -7, 18, 13, 2.5).fill(0xc98a4b).stroke({ width: 2, color: ink });
+      g.moveTo(4, 6).lineTo(4, -3).lineTo(10, -3).lineTo(14, 2).lineTo(14, 6).closePath().fill(PALETTE.yellow).stroke({ width: 2, color: ink, join: 'round' });
+      g.circle(-8, 7, 3).circle(9, 7, 3).fill(ink);
+      break;
+    case 'gare':
+      // Une locomotive de profil sur ses rails.
+      g.moveTo(-16, 11).lineTo(16, 11).stroke({ width: 2.5, color: PALETTE.ink2, cap: 'round' });
+      g.roundRect(-13, -4, 20, 11, 3).fill(PALETTE.coral).stroke({ width: 2, color: ink });
+      g.roundRect(3, -11, 9, 18, 2.5).fill(PALETTE.coral).stroke({ width: 2, color: ink });
+      g.roundRect(5, -8, 5, 5, 1.2).fill(0xbfe3f2);
+      g.rect(-10, -10, 4, 6).fill(ink);
+      g.circle(-7, 8, 3).circle(1, 8, 3).circle(9, 8, 3).fill(ink);
+      break;
     case 'compteur':
       // Un petit cadran : arc, aiguille, et un tapis dessous.
       g.moveTo(-12, 10).lineTo(12, 10).stroke({ width: 5, color: PALETTE.white, cap: 'round' });
