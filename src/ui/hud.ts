@@ -24,7 +24,7 @@ import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
 
-type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'move' | 'cable' | 'souterrain' | 'transport';
+type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'move' | 'cable' | 'souterrain' | 'transport';
 
 const STATUS_TEXT: Record<string, string> = {
   idle: 'En attente',
@@ -92,6 +92,8 @@ export class Hud implements GestureHandlers {
   private tunnelTracer: TunnelTracer | null = null;
   /** Cases déjà gommées pendant ce geste. */
   private erased = new Set<string>();
+  /** Gomme en zone : le rectangle tracé (cases), en attente de confirmation une fois le doigt levé. */
+  private zone: { x0: number; y0: number; x1: number; y1: number } | null = null;
   private itemIcons = new Map<string, string>();
   private machineIcons = new Map<string, string>();
 
@@ -485,7 +487,7 @@ export class Hud implements GestureHandlers {
     if (id === 'transport') { this.setTool('none'); this.openLines(); return; }
     const t = id as Tool;
     // Le bouton Tapis couvre aussi le sous-sol : on rouvre toujours sur les tapis normaux.
-    const same = this.tool === t || (t === 'tapis' && this.tool === 'souterrain');
+    const same = this.tool === t || (t === 'tapis' && this.tool === 'souterrain') || (t === 'gomme' && this.tool === 'zone');
     this.setTool(same ? 'none' : t);
   }
 
@@ -499,6 +501,12 @@ export class Hud implements GestureHandlers {
       opts = [
         { label: 'Tapis', icon: ICONS.tapis, on: this.tool === 'tapis', locked: false, pick: () => this.setTool('tapis'), why: '' },
         { label: 'Sous-sol', icon: ICONS.sousSol, on: this.tool === 'souterrain', locked: false, pick: () => this.setTool('souterrain'), why: '' },
+      ];
+    }
+    if (this.tool === 'gomme' || this.tool === 'zone') {
+      opts = [
+        { label: 'Gomme', icon: ICONS.gomme, on: this.tool === 'gomme', locked: false, pick: () => this.setTool('gomme'), why: '' },
+        { label: 'Zone', icon: ICONS.zone, on: this.tool === 'zone', locked: false, pick: () => this.setTool('zone'), why: '' },
       ];
     }
     box.classList.toggle('hidden', !opts.length);
@@ -529,6 +537,7 @@ export class Hud implements GestureHandlers {
   }
 
   private setTool(t: Tool): void {
+    this.clearZone();
     if (t !== 'move') {
       this.r.movingId = null;
       this.root.querySelector('.move-banner')?.remove();
@@ -536,7 +545,7 @@ export class Hud implements GestureHandlers {
     this.tool = t;
     // Sous-sol : la surface pâlit, on voit les tapis souterrains.
     this.r.underground = t === 'souterrain';
-    for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t || (id === 'tapis' && t === 'souterrain'));
+    for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t || (id === 'tapis' && t === 'souterrain') || (id === 'gomme' && t === 'zone'));
     this.renderToolOpts();
     this.palette.classList.toggle('hidden', t !== 'machine');
     if (t === 'machine' && !this.machineType) {
@@ -649,7 +658,7 @@ export class Hud implements GestureHandlers {
   private dragAt: { x: number; y: number } | null = null;
 
   private tracing(): boolean {
-    return this.tool === 'tapis' || this.tool === 'souterrain' || this.tool === 'cable';
+    return this.tool === 'tapis' || this.tool === 'souterrain' || this.tool === 'cable' || (this.tool === 'zone' && !!this.zone && !this.root.querySelector('.zone-banner'));
   }
 
   /** Pendant un tracé, le doigt près du bord de l'écran fait défiler la carte, et le tracé suit. */
@@ -692,7 +701,62 @@ export class Hud implements GestureHandlers {
       this.lastErase = null;
       this.erased.clear();
       this.erase(w.x, w.y);
+    } else if (this.tool === 'zone') {
+      this.clearZone();
+      const x = Math.floor(w.x), y = Math.floor(w.y);
+      this.zone = { x0: x, y0: y, x1: x, y1: y };
+      this.r.preview = { kind: 'eraseRect', ...this.zone };
+      this.zoneBubble(sx, sy);
     }
+  }
+
+  /** Bulle de la gomme en zone : ce qui partira. */
+  private zoneBubble(sx: number, sy: number): void {
+    const z = this.zone;
+    if (!z) return;
+    const n = this.zoneCount();
+    this.showBubble(sx, sy - 56, n ? `${n} élément${n > 1 ? 's' : ''} dans la zone` : 'Glisse pour encadrer ce qu’il faut supprimer', false);
+  }
+
+  private zoneCount(): number {
+    const z = this.zone;
+    if (!z) return 0;
+    const c = this.game.areaContents(z.x0, z.y0, z.x1, z.y1);
+    return c.machines.length + c.belts.length + c.cables.length;
+  }
+
+  /** Doigt levé : un bandeau demande confirmation, la zone reste affichée. */
+  private confirmZone(): void {
+    const z = this.zone;
+    const n = this.zoneCount();
+    if (!z || !n) { this.clearZone(); return; }
+    const c = this.game.areaContents(z.x0, z.y0, z.x1, z.y1);
+    const parts = [
+      c.machines.length ? `${c.machines.length} machine${c.machines.length > 1 ? 's' : ''}` : '',
+      c.belts.length ? `${c.belts.length} tapis` : '',
+      c.cables.length ? `${c.cables.length} câble${c.cables.length > 1 ? 's' : ''}` : '',
+    ].filter(Boolean).join(', ');
+    const banner = h('div', 'move-banner zone-banner');
+    banner.innerHTML = `<span class="mb-ico">${ICONS.zone}</span><div><b>Supprimer ${n} élément${n > 1 ? 's' : ''} ?</b><small>${esc(parts)} · remboursé, mais ce que contiennent les machines est perdu</small></div>`;
+    const no = h('button', 'btn', 'Annuler');
+    no.onclick = () => this.clearZone();
+    const yes = h('button', 'btn danger', `${ICONS.trash}Supprimer`);
+    yes.onclick = () => {
+      const zz = this.zone;
+      this.clearZone();
+      if (!zz) return;
+      const k = this.game.removeArea(zz.x0, zz.y0, zz.x1, zz.y1);
+      if (k) this.toast(`${k} élément${k > 1 ? 's' : ''} supprimé${k > 1 ? 's' : ''}`, 'info');
+    };
+    banner.append(no, yes);
+    this.root.append(banner);
+    this.r.preview = { kind: 'eraseRect', ...z };
+  }
+
+  private clearZone(): void {
+    this.zone = null;
+    this.root.querySelector('.zone-banner')?.remove();
+    if (this.r.preview?.kind === 'eraseRect') this.r.preview = null;
   }
 
   toolMove(sx: number, sy: number): void {
@@ -743,6 +807,11 @@ export class Hud implements GestureHandlers {
       this.updatePlacement(sx, sy);
     } else if (this.tool === 'gomme') {
       this.erase(w.x, w.y);
+    } else if (this.tool === 'zone' && this.zone) {
+      this.zone.x1 = Math.floor(w.x);
+      this.zone.y1 = Math.floor(w.y);
+      this.r.preview = { kind: 'eraseRect', ...this.zone };
+      this.zoneBubble(sx, sy);
     }
   }
 
@@ -777,6 +846,9 @@ export class Hud implements GestureHandlers {
     this.r.preview = null;
     this.r.guides = [];
     this.r.loupe = null;
+    if (this.tool === 'zone') {
+      if (cancelled) this.clearZone(); else this.confirmZone();
+    }
   }
 
   private erase(wx: number, wy: number): void {
@@ -1453,6 +1525,7 @@ export class Hud implements GestureHandlers {
           row.append(b);
         }
         top.append(row);
+        if (cur === 'carburant') top.append(h('p', 'muted small', 'Elle remplit d’abord sa propre case carburant avec ce qu’elle produit : plus besoin de la recharger.'));
       }
       sheet.append(top);
       // Ce que la machine contient : en attente, et prêt à sortir

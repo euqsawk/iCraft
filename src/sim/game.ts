@@ -695,6 +695,38 @@ export class Game {
     return true;
   }
 
+  /** Ce que contient un rectangle de cases (bornes incluses) : machines (sauf Noyau et cadeaux), tapis, câbles. */
+  areaContents(x0: number, y0: number, x1: number, y1: number): { machines: Machine[]; belts: Belt[]; cables: { x: number; y: number }[] } {
+    const f = this.factory;
+    const [ax, bx] = [Math.min(x0, x1), Math.max(x0, x1)], [ay, by] = [Math.min(y0, y1), Math.max(y0, y1)];
+    const machines = new Set<Machine>(), belts: Belt[] = [], cables: { x: number; y: number }[] = [];
+    for (let y = ay; y <= by; y++) {
+      for (let x = ax; x <= bx; x++) {
+        const m = f.machineAt(x, y);
+        if (m) { const d = machineDef(m.type); if (d.buildable && !d.gift) machines.add(m); }
+        const b = f.beltAt(x, y);
+        if (b) belts.push(b);
+        if (f.hasCable(x, y)) cables.push({ x, y });
+      }
+    }
+    return { machines: [...machines], belts, cables };
+  }
+
+  /** Gomme en zone : tout ce qui est dans le rectangle part (remboursé). Renvoie le nombre d'éléments supprimés. */
+  removeArea(x0: number, y0: number, x1: number, y1: number): number {
+    const { machines, belts, cables } = this.areaContents(x0, y0, x1, y1);
+    let n = 0;
+    for (const b of belts) {
+      if (b.meter) this.earn(MACHINES.compteur.cost);
+      this.earn(this.refundBelt(b));
+      n++;
+    }
+    for (const m of machines) if (this.factory.machines.has(m.id) && this.removeMachine(m)) n++;
+    for (const c of cables) if (this.factory.removeCable(c.x, c.y)) { this.earn(RULES.cableCost); n++; }
+    if (n) this.emit({ type: 'factory' });
+    return n;
+  }
+
   removeAt(x: number, y: number): boolean {
     // Un pont passe au-dessus : on retire d'abord le pont, le tapis du dessous reste.
     const over = this.factory.bridgeOver(x, y);

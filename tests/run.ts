@@ -806,6 +806,42 @@ test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () =
   assert(g.factory.lines.size === 0 && g.money - m1 === MACHINES.gare.cost + refund, 'retirée avec la gare');
 });
 
+test('raffinerie à carburant : elle se sert d’abord dans ce qu’elle produit', () => {
+  const g = new Game('TEST-F3');
+  g.money = 100000; g.world.reveal(8, 8, 20); g.drones[0].cargo = null;
+  g.unlocks.add('raffinerie');
+  const r = g.placeMachine('raffinerie', 9, 4)!;
+  r.built = true; g.pending = []; g.factory.markBuilt();
+  r.fuel = 0; r.burn = 0;
+  r.inBuf = { petrole: 10 };
+  run(g, 5);
+  assert(r.status === 'noinput' || r.status === 'idle' || r.fuel === 0, 'en plastique, sans charbon : rien');
+  assert(!(r.outBuf.plastique > 0), 'pas de plastique sans charbon');
+  g.factory.setChoice(r, 'carburant');
+  assert(g.factory.selfFed(r) && g.factory.fuelRoom(r) === 0 && !g.factory.lowFuel(r), 'les drones ne la rechargent pas');
+  run(g, 12);
+  assert((r.carb ?? 0) > 0 && r.fuel === r.carb, `case carburant remplie d’abord : ${r.fuel}/${r.carb}`);
+  assert(!(r.outBuf.carburant > 0), `rien ne sort tant que la case n’est pas pleine : ${r.outBuf.carburant}`);
+  r.inBuf = { petrole: 10 };
+  run(g, 25);
+  assert(r.fuel === g.factory.fuelCap(r) && (r.outBuf.carburant ?? 0) > 0, `puis le reste sort : case ${r.fuel}, sortie ${r.outBuf.carburant}`);
+});
+test('gomme en zone : tout ce qui est dans le rectangle part, remboursé ; le Noyau reste', () => {
+  const g = new Game('TEST-Z1');
+  g.money = 100000; g.world.reveal(4, 4, 20); g.unlocks.add('generateur');
+  const c = g.placeMachine('coffre', 8, 8)!;
+  const f4 = g.placeMachine('four', 10, 8)!;
+  assert(g.placeBelts(trace(g, [[8.5, 6.5], [12.5, 6.5]]).result()), 'tapis');
+  g.placeCables([{ x: 8, y: 11 }, { x: 9, y: 11 }]);
+  const inside = g.areaContents(8, 6, 11, 11);
+  assert(inside.machines.length === 2 && inside.belts.length === 4 && inside.cables.length === 2, `contenu : ${inside.machines.length} ${inside.belts.length} ${inside.cables.length}`);
+  const m0 = g.money;
+  const n = g.removeArea(11, 11, 8, 6);
+  assert(n === 8 && !g.factory.machines.has(c.id) && !g.factory.machines.has(f4.id), `supprimés : ${n}`);
+  assert(g.factory.beltAt(12, 6) && !g.factory.beltAt(11, 6), 'le tapis hors zone reste');
+  assert(g.money > m0, 'remboursé');
+  assert(g.areaContents(-2, -2, 6, 6).machines.length === 0 && g.removeArea(-2, -2, 6, 6) === 0 && g.factory.machines.has(g.noyau.id), 'le Noyau reste');
+});
 console.log('Électricité');
 test('générateur, câbles et machines qui passent au courant', () => {
   const g = new Game('TEST-E1');

@@ -55,6 +55,7 @@ export type Preview =
   | { kind: 'tunnel'; tracer: TunnelTracer }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
+  | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number }
   | null;
 
 export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number } | { kind: 'robot' } | null;
@@ -1530,6 +1531,16 @@ export class GameRenderer {
       g.roundRect(x + 1, y + 1, W - 2, H - 2, 15).fill({ color: pv.ok ? PALETTE.white : 0xffd9d0, alpha: 0.85 });
       dashedPolyline(g, roundRectPoints(x + 1, y + 1, W - 2, H - 2, 15), 6, 5, true);
       g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.6 });
+    } else if (pv?.kind === 'eraseRect') {
+      // Gomme en zone : le rectangle, et ce qui partira cerclé de corail.
+      const x0 = Math.min(pv.x0, pv.x1) * CELL, y0 = Math.min(pv.y0, pv.y1) * CELL;
+      const w = (Math.abs(pv.x1 - pv.x0) + 1) * CELL, hh = (Math.abs(pv.y1 - pv.y0) + 1) * CELL;
+      const c = this.game.areaContents(pv.x0, pv.y0, pv.x1, pv.y1);
+      for (const m of c.machines) g.roundRect(m.x * CELL + 2, m.y * CELL + 2, m.w * CELL - 4, m.h * CELL - 4, 12).fill({ color: PALETTE.coral, alpha: 0.3 });
+      for (const b of c.belts) g.rect(b.x * CELL + 3, b.y * CELL + 3, CELL - 6, CELL - 6).fill({ color: PALETTE.coral, alpha: 0.3 });
+      g.roundRect(x0, y0, w, hh, 6).fill({ color: PALETTE.coral, alpha: 0.1 });
+      dashedPolyline(g, roundRectPoints(x0, y0, w, hh, 6), 7, 5, true);
+      g.stroke({ width: 2.5, color: PALETTE.coral, alpha: 0.9 });
     } else if (pv?.kind === 'erase') {
       g.circle((pv.x + 0.5) * CELL, (pv.y + 0.5) * CELL, CELL * 0.8).fill({ color: PALETTE.coral, alpha: 0.25 }).stroke({ width: 2, color: PALETTE.coral });
     }

@@ -878,9 +878,10 @@ export class Factory {
     return def.coal ? Math.max(0, this.fuelCap(m) - m.fuel) : 0;
   }
 
-  /** Une foreuse au charbon posée sur du charbon s'alimente elle-même : personne n'a besoin de la recharger. */
+  /** S'alimente elle-même (foreuse au charbon sur du charbon, raffinerie réglée sur le carburant) : personne n'a besoin de la recharger. */
   selfFed(m: Machine): boolean {
     const def = machineDef(m.type);
+    if (m.type === 'raffinerie' && m.choice === 'carburant') return true;
     return m.ore === 'charbon' && def.kind === 'drill' && def.coal;
   }
 
@@ -1153,15 +1154,32 @@ export class Factory {
     if (m.craft) {
       const rec = def.recipes[m.craft.ri];
       if (m.craft.t < rec.time) {
-        const k = this.energy(m, def, dt);
+        let k = this.energy(m, def, dt);
+        // Une raffinerie à carburant démarre même à vide : elle brûlera ce qu'elle produit.
+        if (k <= 0 && this.selfFed(m)) k = 1;
         if (k <= 0) { m.status = this.noEnergy(m); return; }
         m.craft.t += dt * k;
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
-      for (const [k, v] of Object.entries(rec.out)) {
-        if ((m.outBuf[k] ?? 0) + v > RULES.machineBuffer) { m.status = 'blocked'; m.craft.t = rec.time; return; }
+      // Le carburant qu'elle produit remplit d'abord sa propre case carburant.
+      const own: Record<string, number> = {};
+      if (this.selfFed(m)) {
+        for (const [k, v] of Object.entries(rec.out)) {
+          if (!isFuel(k)) continue;
+          const put = Math.max(0, Math.min(v, this.fuelCap(m) - m.fuel));
+          if (put > 0) own[k] = put;
+        }
       }
-      for (const [k, v] of Object.entries(rec.out)) { m.outBuf[k] = (m.outBuf[k] ?? 0) + v; this.flow(m, k, v, true); }
+      for (const [k, v] of Object.entries(rec.out)) {
+        if ((m.outBuf[k] ?? 0) + v - (own[k] ?? 0) > RULES.machineBuffer) { m.status = 'blocked'; m.craft.t = rec.time; return; }
+      }
+      for (const [k, n] of Object.entries(own)) { addTo(m, n, k); this.flow(m, k, n, true); }
+      for (const [k, v] of Object.entries(rec.out)) {
+        const left = v - (own[k] ?? 0);
+        if (left <= 0) continue;
+        m.outBuf[k] = (m.outBuf[k] ?? 0) + left;
+        this.flow(m, k, left, true);
+      }
       m.made++;
       m.craft = null;
     }
