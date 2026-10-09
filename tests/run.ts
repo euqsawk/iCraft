@@ -117,6 +117,17 @@ test('un tapis tracé depuis une machine en sort, et entre dans la machine visé
   assert(t.endTarget && g.factory.machineAt(t.endTarget.x, t.endTarget.y) === four, 'pas branché sur le four');
 });
 
+test('repasser sur le tracé le reprend de là', () => {
+  const g = new Game('TEST-3B');
+  const t = trace(g, [[4.5, 8.5], [10.5, 8.5], [10.5, 12.5]]);
+  assert(t.result().length === 11, `avant : ${t.result().length}`);
+  t.move(6.5, 8.5); // le doigt saute sur la 3e case
+  assert(t.result().length === 3 && t.result()[2].x === 6, `après : ${t.result().length}`);
+  for (let s = 1; s <= 6; s++) t.move(6.5, 8.5 + s * 0.5);
+  const r = t.result();
+  assert(r.length === 6 && r[5].x === 6 && r[5].y === 11, `nouvelle branche : ${JSON.stringify(r[r.length - 1])}`);
+});
+
 console.log('Usine');
 function buildIronLine(g: Game): void {
   g.money = 10000;

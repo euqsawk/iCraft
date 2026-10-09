@@ -21,7 +21,7 @@ Pendant la partie, quelques **conseils** courts expliquent les débuts (charbon,
 
 | Geste | Sans outil | Avec un outil |
 | --- | --- | --- |
-| Glisser un doigt | Déplace la caméra | Trace un tapis, pose une machine ou gomme |
+| Glisser un doigt | Déplace la caméra | Trace un tapis (repasser sur le tracé le reprend de là), pose une machine ou gomme |
 | Toucher le sol | Envoie le robot | Pose la machine (outil Machine) ou gomme une case |
 | Toucher une construction | Ouvre sa bulle (Déplacer, Supprimer) | — |
 | Toucher le Noyau | Ouvre sa mission | — |

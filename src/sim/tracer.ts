@@ -125,6 +125,16 @@ export class BeltTracer {
     }
     if (this.cells.length === 0) return;
 
+    // Le doigt repasse sur une case déjà tracée : le tracé reprend de là (inutile de revenir case par case).
+    const fx0 = Math.floor(fx), fy0 = Math.floor(fy);
+    const back = this.cells.findIndex((c) => c.x === fx0 && c.y === fy0);
+    if (back >= 0 && back < this.cells.length - 1) {
+      this.cells.length = back + 1;
+      this.blocked = false;
+      this.endTarget = null;
+      return;
+    }
+
     // Cible avec hystérésis : on reste sur la ligne tant que le doigt ne s'en écarte pas franchement.
     let tx = Math.floor(fx), ty = Math.floor(fy);
     const last = this.cells[this.cells.length - 1];
