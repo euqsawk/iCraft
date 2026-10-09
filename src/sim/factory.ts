@@ -444,6 +444,9 @@ export class Factory {
 
   /** Le trajet entre deux arrêts : en L (d'abord à l'horizontale), d'un centre à l'autre, en cases. */
   legPath(a: Machine, b: Machine): { x: number; y: number }[] {
+    // Le même L dans les deux sens (on part toujours de l'arrêt au plus petit numéro) : à l'aller comme au retour,
+    // le véhicule reste sur la route dessinée.
+    if (a.id > b.id) return this.legPath(b, a).reverse();
     const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
     return [{ x: ax, y: ay }, { x: bx, y: ay }, { x: bx, y: by }];
   }

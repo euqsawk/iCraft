@@ -526,33 +526,33 @@ export class GameRenderer {
       }
     }
     for (const { kind, pts } of legs) {
-      const line = () => { g.moveTo(pts[0].x, pts[0].y); for (const p of pts.slice(1)) g.lineTo(p.x, p.y); };
       if (kind === 'camion') {
-        // Route : bande grise et pointillés blancs au milieu.
-        line(); g.stroke({ width: 18, color: 0x8f9aa6, cap: 'round', join: 'round' });
-        line(); g.stroke({ width: 15, color: 0xa9b3bd, cap: 'round', join: 'round' });
-        dashedPolyline(g, pts, 5, 6);
-        g.stroke({ width: 1.8, color: 0xffffff, alpha: 0.9 });
+        // Route à deux voies : bas-côtés, chaussée, lignes de rive et ligne du milieu en pointillés.
+        const line = (o: number) => { const q = offsetPath(pts, o); g.moveTo(q[0].x, q[0].y); for (const p of q.slice(1)) g.lineTo(p.x, p.y); };
+        line(0); g.stroke({ width: 32, color: 0x8f9aa6, cap: 'round', join: 'miter' });
+        line(0); g.stroke({ width: 28, color: 0xa9b3bd, cap: 'round', join: 'miter' });
+        for (const o of [-11.5, 11.5]) { line(o); g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.75, join: 'miter' }); }
+        dashedPolyline(g, pts, 6, 6);
+        g.stroke({ width: 2, color: 0xffffff, alpha: 0.95 });
       } else {
-        // Rails : traverses en bois, puis deux rails.
-        for (let i = 1; i < pts.length; i++) {
-          const a = pts[i - 1], b = pts[i], d = Math.hypot(b.x - a.x, b.y - a.y);
-          const ux = (b.x - a.x) / (d || 1), uy = (b.y - a.y) / (d || 1), px = -uy, py = ux;
-          for (let s = 0; s < d; s += 8) {
-            const x = a.x + ux * s, y = a.y + uy * s;
-            g.moveTo(x + px * 9, y + py * 9).lineTo(x - px * 9, y - py * 9);
+        // Double voie : traverses, puis deux rails par voie.
+        for (const o of [-8, 8]) {
+          const q = offsetPath(pts, o);
+          for (let i = 1; i < q.length; i++) {
+            const a2 = q[i - 1], b2 = q[i], d = Math.hypot(b2.x - a2.x, b2.y - a2.y);
+            const ux = (b2.x - a2.x) / (d || 1), uy = (b2.y - a2.y) / (d || 1), px = -uy, py = ux;
+            for (let s2 = 0; s2 < d; s2 += 8) {
+              const x = a2.x + ux * s2, y = a2.y + uy * s2;
+              g.moveTo(x + px * 6.5, y + py * 6.5).lineTo(x - px * 6.5, y - py * 6.5);
+            }
           }
-        }
-        g.stroke({ width: 3.5, color: 0x9b7653, cap: 'round' });
-        for (const o of [-5, 5]) {
-          g.moveTo(pts[0].x, pts[0].y);
-          for (let i = 1; i < pts.length; i++) {
-            const a = pts[i - 1], b = pts[i], d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-            const px = -(b.y - a.y) / d, py = (b.x - a.x) / d;
-            if (i === 1) g.moveTo(a.x + px * o, a.y + py * o);
-            g.lineTo(b.x + px * o, b.y + py * o);
+          g.stroke({ width: 3, color: 0x9b7653, cap: 'round' });
+          for (const r of [-3.5, 3.5]) {
+            const rq = offsetPath(pts, o + r);
+            g.moveTo(rq[0].x, rq[0].y);
+            for (const p of rq.slice(1)) g.lineTo(p.x, p.y);
+            g.stroke({ width: 1.8, color: 0x56606b, join: 'miter' });
           }
-          g.stroke({ width: 2.2, color: 0x56606b, join: 'round' });
         }
       }
     }
@@ -601,7 +601,9 @@ export class GameRenderer {
     const f = this.game.factory;
     const a = f.machines.get(l.stops[i % l.stops.length].id), b = f.machines.get(l.stops[(i + 1) % l.stops.length].id);
     if (!a || !b) return null;
-    return f.legPath(a, b).map((p) => ({ x: p.x * CELL, y: p.y * CELL }));
+    // Deux arrêts alignés : le coin du L se confond avec un bout, on l'enlève.
+    return f.legPath(a, b).map((p) => ({ x: p.x * CELL, y: p.y * CELL }))
+      .filter((p, i, arr) => i === 0 || Math.hypot(p.x - arr[i - 1].x, p.y - arr[i - 1].y) > 0.5);
   }
 
   private updateRoutes(): void {
@@ -627,7 +629,10 @@ export class GameRenderer {
         const gap = 19 / (L * CELL);
         view.parts.forEach((part, i) => {
           const p = this.alongPath(pts, k - i * gap);
-          part.position.set(p.x + (v.moving ? 0 : 0), p.y + (v.moving ? 0 : (vi - (l.vehicles.length - 1) / 2) * 15));
+          // Chacun sa voie : on roule à droite (8 px du milieu), on se croise sans se toucher.
+          const lane = l.kind === 'train' ? 8 : 6.5;
+          const ox = -Math.sin(p.a) * lane, oy = Math.cos(p.a) * lane;
+          part.position.set(p.x + ox, p.y + oy + (v.moving ? 0 : (vi - (l.vehicles.length - 1) / 2) * 15));
           part.rotation = p.a;
         });
         const n = f.cargoCount(v);
@@ -1886,4 +1891,19 @@ function drawShape(g: Graphics, s: Shape, ox: number, oy: number): void {
 /** Ordre d'affichage d'une machine : de haut en bas, puis de gauche à droite. */
 function zOf(m: { x: number; y: number; h: number }): number {
   return (m.y + m.h) * 4096 + m.x;
+}
+
+/** Un trajet décalé de o pixels sur sa droite (coins en onglet : un L reste un L). */
+function offsetPath(pts: { x: number; y: number }[], o: number): { x: number; y: number }[] {
+  const n = pts.length;
+  const norm = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { x: -(b.y - a.y) / d, y: (b.x - a.x) / d };
+  };
+  return pts.map((p, i) => {
+    const n1 = i > 0 ? norm(pts[i - 1], p) : null, n2 = i < n - 1 ? norm(p, pts[i + 1]) : null;
+    if (!n1 || !n2) { const m = (n1 ?? n2)!; return { x: p.x + m.x * o, y: p.y + m.y * o }; }
+    const k = 1 + n1.x * n2.x + n1.y * n2.y;
+    return k < 1e-6 ? { x: p.x + n1.x * o, y: p.y + n1.y * o } : { x: p.x + (n1.x + n2.x) * o / k, y: p.y + (n1.y + n2.y) * o / k };
+  });
 }
