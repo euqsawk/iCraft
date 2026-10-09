@@ -143,6 +143,10 @@ export const MACHINES: Record<string, MachineDef> = {
     hint: 'Uranium → uranium enrichi',
     recipes: [r({ uranium: 1 }, { uranium_enrichi: 1 }, 3)],
   },
+  grand_coffre: {
+    id: 'grand_coffre', name: 'Grand coffre', kind: 'storage', coal: false, w: 2, h: 2, cost: 50, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde 300 objets · 2 × 2',
+  },
   generateur: {
     id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 5,
     hint: 'Brûle du charbon et alimente les machines reliées par câble',

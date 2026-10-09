@@ -81,6 +81,17 @@ export interface Machine {
   power?: number;
 }
 
+/** Un tapis souterrain : d'une machine (ou d'un coffre) à une autre, par un trajet sous le sol. */
+export interface Tunnel {
+  id: number;
+  from: number;
+  to: number;
+  /** Cases du trajet sous terre (entre les deux machines), dans l'ordre. */
+  cells: number[];
+  /** Objets en route : p de 0 (départ) à la longueur du trajet (arrivée), en cases. */
+  items: { t: string; p: number }[];
+}
+
 /** Un réseau électrique : les câbles reliés entre eux et les machines qui les touchent. */
 export interface PowerNet {
   id: number;
@@ -114,6 +125,9 @@ const DRILL_BASE_RATE = 0.5;
 export class Factory {
   readonly belts = new Map<number, Belt>();
   readonly machines = new Map<number, Machine>();
+  /** Tapis souterrains (sous tout le reste). */
+  readonly tunnels = new Map<number, Tunnel>();
+  private nextTunnel = 1;
   /** Câbles électriques (une couche à part : ils passent sous les tapis et les machines). */
   readonly cables = new Set<number>();
   private cellMachine = new Map<number, Machine>();
@@ -304,6 +318,7 @@ export class Factory {
   removeMachine(m: Machine): void {
     this.unindexMachine(m);
     this.machines.delete(m.id);
+    for (const t of [...this.tunnels.values()]) if (t.from === m.id || t.to === m.id) this.tunnels.delete(t.id);
     this.dirty = true;
   }
 
@@ -352,6 +367,67 @@ export class Factory {
 
   markBuilt(): void {
     this.dirty = true;
+  }
+
+  // ---------- Tapis souterrains ----------
+
+  /** Longueur d'un trajet souterrain, en cases (une de plus que ses cases : on sort de la machine). */
+  tunnelLength(t: Tunnel): number {
+    return t.cells.length + 1;
+  }
+
+  addTunnel(from: Machine, to: Machine, cells: { x: number; y: number }[], id?: number): Tunnel {
+    const t: Tunnel = { id: id ?? this.nextTunnel++, from: from.id, to: to.id, cells: cells.map((c) => key(c.x, c.y)), items: [] };
+    this.nextTunnel = Math.max(this.nextTunnel, t.id + 1);
+    this.tunnels.set(t.id, t);
+    return t;
+  }
+
+  removeTunnel(id: number): Tunnel | null {
+    const t = this.tunnels.get(id);
+    if (!t) return null;
+    this.tunnels.delete(id);
+    return t;
+  }
+
+  /** Les tapis souterrains qui partent de cette machine ou y arrivent. */
+  tunnelsOf(m: Machine): Tunnel[] {
+    return [...this.tunnels.values()].filter((t) => t.from === m.id || t.to === m.id);
+  }
+
+  /** Une machine pousse ce qu'elle produit (ou ce que garde un coffre) dans ses tapis souterrains. */
+  private pushTunnels(m: Machine, buf: Record<string, number>): void {
+    for (const t of this.tunnels.values()) {
+      if (t.from !== m.id) continue;
+      const to = this.machines.get(t.to);
+      if (!to || !to.built) continue;
+      const rear = t.items[t.items.length - 1];
+      if (rear && rear.p < RULES.beltGap) continue;
+      // Ce que la machine d'arrivée accepte (en comptant ce qui est déjà en route).
+      const k = Object.keys(buf).find((x) => buf[x] > 0 && this.canAccept(to, x) && t.items.filter((i) => i.t === x).length < 4);
+      if (!k) continue;
+      buf[k]--;
+      if (buf[k] === 0 && buf === m.inBuf) delete buf[k];
+      t.items.push({ t: k, p: 0 });
+    }
+  }
+
+  private tickTunnels(dt: number): void {
+    const speed = RULES.beltSpeed * this.speedMult * dt, gap = RULES.beltGap;
+    for (const t of this.tunnels.values()) {
+      const L = this.tunnelLength(t);
+      const to = this.machines.get(t.to);
+      for (let i = 0; i < t.items.length; i++) {
+        const it = t.items[i];
+        const limit = i === 0 ? L : t.items[i - 1].p - gap;
+        if (it.p < limit) it.p = Math.min(it.p + speed, limit);
+      }
+      const first = t.items[0];
+      if (first && first.p >= L && to?.built && this.canAccept(to, first.t)) {
+        t.items.shift();
+        this.give(to, first.t);
+      }
+    }
   }
 
   // ---------- Électricité ----------
@@ -610,6 +686,11 @@ export class Factory {
   }
 
   /** Cases occupées d'un coffre (piles de 10). */
+  /** Nombre de cases d'un coffre (30 pour un grand coffre). */
+  slotsOf(m: Machine): number {
+    return m.type === 'grand_coffre' ? RULES.bigChestSlots : this.chestSlots;
+  }
+
   storageSlots(m: Machine): number {
     let n = 0;
     for (const v of Object.values(m.inBuf)) n += Math.ceil(v / RULES.invStack);
@@ -620,7 +701,7 @@ export class Factory {
   storageRoom(m: Machine, item: string): number {
     const have = m.inBuf[item] ?? 0;
     const partial = have % RULES.invStack ? RULES.invStack - (have % RULES.invStack) : 0;
-    return partial + Math.max(0, this.chestSlots - this.storageSlots(m)) * RULES.invStack;
+    return partial + Math.max(0, this.slotsOf(m) - this.storageSlots(m)) * RULES.invStack;
   }
 
   /** Brûle du charbon pour travailler dt secondes ; faux s'il n'y en a plus. */
@@ -813,8 +894,10 @@ export class Factory {
       if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') {
         this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
         if (m.links?.length) this.pushLinks(m, def.kind === 'storage' ? m.inBuf : m.outBuf, dt);
+        if (this.tunnels.size) this.pushTunnels(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
       }
     }
+    if (this.tunnels.size) this.tickTunnels(dt);
   }
 
   private outCount(m: Machine): number {
@@ -954,6 +1037,7 @@ export class Factory {
     return {
       nextId: this.nextId,
       cables: [...this.cables],
+      tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
@@ -986,6 +1070,14 @@ export class Factory {
       if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);
+    this.tunnels.clear();
+    this.nextTunnel = 1;
+    for (const st of s.tunnels ?? []) {
+      if (!this.machines.has(st.from) || !this.machines.has(st.to)) continue;
+      const t: Tunnel = { id: st.id, from: st.from, to: st.to, cells: [...st.cells], items: st.items.map(([t2, p]) => ({ t: t2, p })) };
+      this.tunnels.set(t.id, t);
+      this.nextTunnel = Math.max(this.nextTunnel, t.id + 1);
+    }
     this.dirty = true;
   }
 }
@@ -993,6 +1085,7 @@ export class Factory {
 export interface FactorySave {
   nextId: number;
   cables?: number[];
+  tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;

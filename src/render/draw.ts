@@ -199,6 +199,15 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       }
       g.circle(0, 0, 3).fill(ink);
       break;
+    case 'grand_coffre':
+      // Deux coffres empilés, plus larges.
+      g.roundRect(-15, -12, 30, 11, 3).fill(0xc98a4b);
+      g.rect(-15, -8.5, 30, 1.8).fill(0x8a5a2b);
+      g.roundRect(-15, 1, 30, 11, 3).fill(0xb67a3f);
+      g.rect(-15, 4.5, 30, 1.8).fill(0x8a5a2b);
+      g.roundRect(-2.2, -9.8, 4.4, 4.4, 1.2).fill(PALETTE.yellow).stroke({ width: 1.2, color: ink });
+      g.roundRect(-2.2, 3.2, 4.4, 4.4, 1.2).fill(PALETTE.yellow).stroke({ width: 1.2, color: ink });
+      break;
     case 'coffre':
       g.roundRect(-7.5, -5, 15, 11, 2.5).fill(0xc98a4b);
       g.rect(-7.5, -1.5, 15, 1.6).fill(0x8a5a2b);

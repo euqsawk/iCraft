@@ -693,6 +693,43 @@ export class Game {
     return false;
   }
 
+  /** Prix d'un tapis souterrain : par case de trajet. */
+  tunnelPrice(cells: number): number {
+    return (cells + 1) * RULES.tunnelCost;
+  }
+
+  /** Une machine peut-elle envoyer quelque chose sous terre (coffre, foreuse, machine qui fabrique) ? */
+  canSendUnder(m: Machine): boolean {
+    const k = machineDef(m.type).kind;
+    return k === 'storage' || k === 'crafter' || k === 'drill';
+  }
+
+  /** Relie deux machines par un tapis souterrain (posé tout de suite). */
+  placeTunnel(from: Machine, to: Machine, cells: { x: number; y: number }[]): boolean {
+    if (!this.isUnlocked('souterrain')) {
+      this.emit({ type: 'toast', text: 'Tapis souterrains : à débloquer dans l’arbre (Logistique, palier 5)', tone: 'warn' });
+      return false;
+    }
+    if (from === to || !this.canSendUnder(from)) return false;
+    if (this.factory.tunnelsOf(from).some((t) => t.from === from.id && t.to === to.id)) {
+      this.emit({ type: 'toast', text: 'Ces deux-là sont déjà reliés sous terre', tone: 'info' });
+      return false;
+    }
+    if (!this.spend(this.tunnelPrice(cells.length))) return false;
+    this.factory.addTunnel(from, to, cells);
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `${machineDef(from.type).name} → ${machineDef(to.type).name.toLowerCase()} : relié sous terre`, tone: 'good' });
+    return true;
+  }
+
+  /** Retire un tapis souterrain (remboursé ; ce qui était en route est perdu). */
+  removeTunnel(id: number): void {
+    const t = this.factory.removeTunnel(id);
+    if (!t) return;
+    this.earn(this.tunnelPrice(t.cells.length));
+    this.emit({ type: 'factory' });
+  }
+
   /** Pose des câbles (tout de suite, sans chantier) sur les cases révélées ; les cases déjà câblées sont gratuites. */
   placeCables(cells: { x: number; y: number }[]): boolean {
     if (!this.isUnlocked('generateur')) {
@@ -717,6 +754,8 @@ export class Game {
       this.emit({ type: 'toast', text: `${def.name} : un cadeau du Noyau. On peut le déplacer, pas le supprimer.`, tone: 'info' });
       return false;
     }
+    // Ses tapis souterrains partent avec elle (remboursés).
+    for (const t of this.factory.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
     this.factory.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
     this.earn(def.cost);
@@ -1254,7 +1293,7 @@ export class Game {
     }
     let best: Source | null = null, bd = Infinity;
     for (const m of this.factory.machines.values()) {
-      if (m.type !== 'coffre' || !m.built || !(m.inBuf[item] > 0)) continue;
+      if (machineDef(m.type).kind !== 'storage' || !m.built || !(m.inBuf[item] > 0)) continue;
       const c = this.center(m);
       if (!this.near(c, this.anchor.supply)) continue;
       const dist = Math.hypot(c.x - d.x, c.y - d.y);

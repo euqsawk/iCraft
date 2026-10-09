@@ -52,6 +52,8 @@ export const RULES = {
   beltCost: 1,
   /** Électricité : prix d'une case de câble ; un charbon fait tourner un générateur à pleine charge pendant 10 s. */
   cableCost: 2,
+  /** Tapis souterrain : prix par case de trajet. */
+  tunnelCost: 4,
   genCoalSeconds: 10,
   /** Pont : un tapis passe par-dessus d'autres tapis, sur 4 cases au plus ; prix en plus des cases. */
   bridgeSpan: 4,
@@ -80,6 +82,8 @@ export const RULES = {
   invStack: 10,
   robotSlots: 5,
   chestSlots: 10,
+  /** Grand coffre (2 × 2) : 30 cases, 300 objets. */
+  bigChestSlots: 30,
   /** Sans charbon, le robot avance au quart de sa vitesse ; les drones se posent sur lui. */
   robotNoFuelSpeed: 0.25,
   /** Minage du robot : objets par seconde sur un filon normal. */

@@ -2,6 +2,7 @@
 import { Game } from '../src/sim/game.ts';
 import { BeltTracer, type TraceCell } from '../src/sim/tracer.ts';
 import { CableTracer } from '../src/sim/cables.ts';
+import { TunnelTracer } from '../src/sim/tunnels.ts';
 import { World } from '../src/world/world.ts';
 import { producibleItems, generateChoices } from '../src/sim/orders.ts';
 import { item, ITEM_LIST } from '../src/data/items.ts';
@@ -605,6 +606,51 @@ test('sans charbon, le robot ralentit et le drone se pose sur lui', () => {
 });
 
 
+test('tapis souterrain : d’un coffre à un four, sous un tapis et une machine', () => {
+  const g = new Game('TEST-U1');
+  g.money = 100000; g.world.reveal(10, 8, 20); g.drones[0].cargo = null;
+  const chest = g.placeMachine('coffre', 3, 8)!;
+  const four = g.placeMachine('four', 14, 8)!;
+  const mid = g.placeMachine('four', 8, 7)!;
+  g.placeBelts([...Array(7)].map((_, i) => ({ x: 6, y: 4 + i, dir: 1, inDir: 1 })) as TraceCell[]);
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  // Tracé au doigt : du coffre vers la droite (sous le tapis), la presse arrête le tracé.
+  const t = new TunnelTracer(g.factory, g.world, 3.5, 8.5);
+  for (let i = 1; i <= 24; i++) t.move(3.5 + i * 0.25, 8.5);
+  assert(t.target === mid && t.cells.length === 4, `arrêt sur la machine du milieu : ${t.cells.length} cases, ${t.target?.type}`);
+  // En contournant par le bas jusqu'au four.
+  const t2 = new TunnelTracer(g.factory, g.world, 3.5, 8.5);
+  for (const [x, y] of [[4.5, 8.5], [5.5, 8.5], [6.5, 8.5], [7.5, 8.5], [7.5, 9.5], [7.5, 10.5], [8.5, 10.5], [10.5, 10.5], [12.5, 10.5], [13.5, 10.5], [13.5, 9.5], [14.5, 9.5]]) t2.move(x, y);
+  assert(t2.target === four && !t2.blocked, `arrivée au four : ${t2.target?.type} ${JSON.stringify(t2.cells)}`);
+  assert(!g.placeTunnel(chest, four, t2.cells), 'à débloquer');
+  g.unlocks.add('souterrain');
+  const m0 = g.money;
+  assert(g.placeTunnel(chest, four, t2.cells) && m0 - g.money === g.tunnelPrice(t2.cells.length), 'posé');
+  g.factory.putInStorage(chest, 'fer', 5);
+  g.factory.putInStorage(chest, 'cuivre', 3);
+  four.fuel = 10;
+  run(g, 30);
+  assert((four.outBuf.lingot_fer ?? 0) + (four.inBuf.fer ?? 0) + (four.craft ? 1 : 0) >= 4 && !chest.inBuf.fer, `fer arrivé : ${JSON.stringify(four)}`);
+  // Sauvegarde, puis suppression d'une machine : le tunnel part avec, remboursé.
+  const g2 = new Game('TEST-U1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.tunnels.size === 1, 'rechargé');
+  const m1 = g.money;
+  g.removeMachine(four);
+  assert(g.factory.tunnels.size === 0 && g.money - m1 === MACHINES.four.cost + g.tunnelPrice(t2.cells.length), 'retiré avec la machine');
+});
+
+test('grand coffre : 2 × 2, 300 objets ; un coffre simple en garde 100', () => {
+  const g = new Game('TEST-GC');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  g.unlocks.add('grand_coffre');
+  const big = g.placeMachine('grand_coffre', 4, 4)!, small = g.placeMachine('coffre', 8, 4)!;
+  assert(big.w === 2 && big.h === 2, 'taille 2 × 2');
+  big.built = true; small.built = true;
+  assert(g.factory.putInStorage(big, 'fer', 1000) === 300 && g.factory.putInStorage(small, 'fer', 1000) === 100, 'contenances');
+});
+
 console.log('Électricité');
 test('générateur, câbles et machines électriques', () => {
   const g = new Game('TEST-E1');
@@ -765,7 +811,7 @@ test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   g.lab = { lingot_fer: 100, plaque_fer: 200, fil_cuivre: 100 };
   assert(g.unlock('presse') && g.hasMachine('presse'), 'presse');
   assert(g.unlock('rapide') && g.factory.speedMult === 2, 'tapis rapide');
-  assert(g.unlock('separateur') && g.unlock('grand_coffre') && g.factory.chestSlots === 30, 'grand coffre');
+  assert(g.unlock('separateur') && g.unlock('grand_coffre') && g.hasMachine('grand_coffre') && g.factory.chestSlots === 10, 'grand coffre : une machine à part');
   assert(g.unlock('drone2') && g.drones.length === 2, 'deuxième drone');
   g.setDronePriority(1, 'noyau');
   const s = JSON.parse(JSON.stringify(g.serialize()));

@@ -479,7 +479,7 @@ export class Hud implements GestureHandlers {
     if (m?.type === 'noyau') { this.closePopover(); this.openNoyau(); return; }
     if (m?.built && m.type === 'comptoir') { this.closePopover(); this.openOrders(); return; }
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
-    if (m?.built && m.type === 'coffre') { this.openChest(m); return; }
+    if (m?.built && machineDef(m.type).kind === 'storage') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
     if (m?.built && ['crafter', 'drill', 'station', 'generator'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
@@ -836,7 +836,7 @@ export class Hud implements GestureHandlers {
       let left = n;
       while (left > 0) { const k = Math.min(RULES.invStack, left); cells.push({ t, n: k }); left -= k; }
     }
-    while (cells.length < this.game.factory.chestSlots) cells.push(null);
+    while (cells.length < this.game.factory.slotsOf(m)) cells.push(null);
     return cells;
   }
 
@@ -1347,9 +1347,9 @@ export class Hud implements GestureHandlers {
       let total = 0;
       for (const v of Object.values(chest.inBuf)) total += v;
       sheet.classList.add('inv-sheet');
-      sheet.append(this.sheetHead('Coffre', `${fmt(total)} / ${g.factory.chestSlots * RULES.invStack} objets · les tapis le remplissent et le vident, les drones s’y servent`, close));
+      sheet.append(this.sheetHead(machineDef(chest.type).name, `${fmt(total)} / ${g.factory.slotsOf(chest) * RULES.invStack} objets · les tapis le remplissent et le vident, les drones s’y servent`, close));
       const c1 = h('div', 'card');
-      c1.innerHTML = `<p class="muted">Coffre</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
+      c1.innerHTML = `<p class="muted">${esc(machineDef(chest.type).name)}</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
       const swap = h('div', 'inv-swap', `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 V15 M3 12 L6 15 L9 12 M12 15 V3 M9 6 L12 3 L15 6"/></svg>Touche une pile pour la déplacer`);
       const c2 = h('div', 'card');
       c2.innerHTML = `<p class="muted">Inventaire de ${esc(g.look.name)}</p>${this.gridHtml(g.robot.inv.slots, 'robot')}`;
