@@ -484,16 +484,18 @@ export class GameRenderer {
         const { x: ex, y: ey, d } = this.linkEdge(a, b);
         const ax = DX[d], ay = DY[d], px = -ay, py = ax;
         const ghost = !a.built || !b.built;
-        // Un vrai bout de tapis (ombre + bande blanche) à cheval sur le bord commun, par-dessus les machines,
-        // court pour ne pas cacher leur dessin, puis le chevron vert par-dessus.
-        const L = 11, al = ghost ? 0.5 : 1;
-        lg.moveTo(ex - ax * L, ey - ay * L + 3).lineTo(ex + ax * L, ey + ay * L + 3)
-          .stroke({ width: 14, color: PALETTE.shadow, alpha: al, cap: 'butt' });
-        // Liseré de la couleur de l'ombre : le tapis se détache même sur le blanc des machines.
-        lg.moveTo(ex - ax * L, ey - ay * L).lineTo(ex + ax * L, ey + ay * L)
-          .stroke({ width: 17, color: PALETTE.shadow, alpha: al, cap: 'butt' });
-        lg.moveTo(ex - ax * (L + 1), ey - ay * (L + 1)).lineTo(ex + ax * (L + 1), ey + ay * (L + 1))
-          .stroke({ width: 13, color: PALETTE.white, alpha: al, cap: 'butt' });
+        // Le même tapis que partout ailleurs (ombre, bande blanche, bouts arrondis), posé dans une petite
+        // encoche couleur du sol entre les deux machines, pour qu'il se voie comme un vrai bout de tapis.
+        const al = ghost ? 0.5 : 1;
+        const small = a.w === 1 || b.w === 1;
+        const half = small ? 1 : 4, notch = half + 7 + 2;
+        const ground = BIOME_COLORS[this.game.world.biomeAt(Math.floor(ex / CELL - ax * 0.5), Math.floor(ey / CELL - ay * 0.5))];
+        const nw = ax ? notch * 2 : 22, nh = ay ? notch * 2 : 22;
+        lg.roundRect(ex - nw / 2, ey - nh / 2, nw, nh, 5).fill({ color: ground, alpha: al });
+        lg.moveTo(ex - ax * half, ey - ay * half + 3).lineTo(ex + ax * half, ey + ay * half + 3)
+          .stroke({ width: 14, color: PALETTE.shadow, alpha: al, cap: 'round' });
+        lg.moveTo(ex - ax * half, ey - ay * half).lineTo(ex + ax * half, ey + ay * half)
+          .stroke({ width: 14, color: PALETTE.white, alpha: al, cap: 'round' });
         g.moveTo(ex - ax * 2.5 + px * 4.5, ey - ay * 2.5 + py * 4.5).lineTo(ex + ax * 2, ey + ay * 2).lineTo(ex - ax * 2.5 - px * 4.5, ey - ay * 2.5 - py * 4.5)
           .stroke({ width: 2.6, color: PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
       }
