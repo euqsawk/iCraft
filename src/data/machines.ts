@@ -78,7 +78,7 @@ export const MACHINES: Record<string, MachineDef> = {
     ],
   },
   haut_fourneau: {
-    id: 'haut_fourneau', name: 'Haut-fourneau', kind: 'crafter', coal: true, w: 2, h: 2, cost: 120, unlock: 4, buildable: true,
+    id: 'haut_fourneau', name: 'Fourneau nu', kind: 'crafter', coal: true, w: 2, h: 2, cost: 120, unlock: 4, buildable: true,
     hint: 'Lingot de fer + charbon → acier',
     recipes: [r({ lingot_fer: 1, charbon: 1 }, { acier: 1 }, 2)],
   },

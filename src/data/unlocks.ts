@@ -55,7 +55,7 @@ export const BRANCHES: Branch[] = [
       n('trefileuse', 'Tréfileuse', 'trefileuse', 1, 2, 1, { lingot_cuivre: 20 }, ['four'], 'Étire les lingots en fil, enroulé en bobines.', m('trefileuse'), ['Lingot de cuivre → Fil de cuivre', 'Lingot d’or → Fil d’or']),
       n('melangeur', 'Mélangeur', 'melangeur', 2, 0, 3, { vis: 40, acier: 40 }, ['broyeur'], 'Mélange deux matières.', m('melangeur'), ['Ciment + Sable → Béton']),
       n('tour', 'Tour', 'tour', 2, 1, 2, { plaque_fer: 40, fil_cuivre: 20 }, ['presse'], 'Tourne le métal pour faire des vis et des tuyaux.', m('tour'), ['Lingot de fer → Vis', 'Acier → Tuyau d’acier']),
-      n('haut_fourneau', 'Haut-fourneau', 'haut_fourneau', 2, 2, 2, { lingot_fer: 60, plaque_fer: 40 }, ['presse'], 'Allie le fer et le charbon.', m('haut_fourneau'), ['Lingot de fer + Charbon → Acier']),
+      n('haut_fourneau', 'Fourneau nu', 'haut_fourneau', 2, 2, 2, { lingot_fer: 60, plaque_fer: 40 }, ['presse'], 'Allie le fer et le charbon.', m('haut_fourneau'), ['Lingot de fer + Charbon → Acier']),
       n('raffinerie', 'Raffinerie', 'raffinerie', 3, 0, 4, { engrenage: 60, tuyau_acier: 40 }, ['melangeur'], 'Traite la bauxite et le pétrole.', m('raffinerie'), ['Bauxite → Aluminium', 'Pétrole → Plastique ou Carburant']),
       n('assembleur', 'Assembleur', 'assembleur', 3, 1, 3, { vis: 60, acier: 40 }, ['tour'], 'Combine deux pièces en une pièce travaillée.', m('assembleur'), ['Plaque de fer + Vis → Engrenage', 'Engrenage + Fil → Rotor']),
       n('centrifugeuse', 'Centrifugeuse', 'centrifugeuse', 3, 2, 6, { moteur: 20, processeur: 30 }, ['haut_fourneau'], 'Enrichit l’uranium des cratères.', m('centrifugeuse'), ['Uranium → Uranium enrichi']),
