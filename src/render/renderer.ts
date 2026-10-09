@@ -1399,7 +1399,19 @@ export class GameRenderer {
     v.root.position.set(r.x * CELL, r.y * CELL);
     v.shadow.position.set(r.x * CELL, r.y * CELL);
     v.spin.scale.x = Math.cos(this.time * 18);
-    v.flip.scale.x = Math.cos(r.heading) < -0.1 ? -1 : 1;
+    // Le robot se tourne là où il roule : il regarde à gauche ou à droite, et penche vers le haut ou le bas.
+    if (r.moving) {
+      let d = r.heading - this.robotFace;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      this.robotFace += d * Math.min(1, this.frameDt * 9);
+    }
+    const left = Math.cos(this.robotFace) < -0.05;
+    v.flip.scale.x = left ? -1 : 1;
+    let tilt = left ? this.robotFace - Math.PI : this.robotFace;
+    while (tilt > Math.PI) tilt -= Math.PI * 2;
+    while (tilt < -Math.PI) tilt += Math.PI * 2;
+    v.flip.rotation = Math.max(-0.55, Math.min(0.55, tilt)) * (r.moving ? 1 : 0.6);
     v.body.y = r.moving ? Math.abs(Math.sin(this.time * 14)) * -1.5 : 0;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * (Math.PI * 2 / 1.8));
     v.beam.alpha = 0.5 + 0.35 * pulse;
@@ -2085,14 +2097,30 @@ export class GameRenderer {
     const rb = this.game.robot;
     const rx = rb.x * CELL, ry = (rb.y - 0.6) * CELL;
     glow(rx, ry, CELL * 2.4, 0xfff0d0, 0.9);
-    // Le faisceau de sa lampe, devant lui.
-    const dir = Math.cos(rb.heading) < -0.1 ? -1 : 1;
-    for (let i = 1; i <= 4; i++) glow(rx + dir * CELL * (0.6 + i * 0.85), ry - CELL * 0.3 * i, CELL * (0.6 + i * 0.4), 0xfff4dc, 0.75 - i * 0.12);
+    // Le faisceau de sa lampe, dans la direction où il roule.
+    const fx = Math.cos(this.robotFace), fy = Math.sin(this.robotFace);
+    for (let i = 1; i <= 4; i++) glow(rx + fx * CELL * (0.5 + i * 0.9), ry + fy * CELL * (0.5 + i * 0.9), CELL * (0.55 + i * 0.42), 0xfff4dc, 0.78 - i * 0.12);
+    // Camions et trains : deux gros phares devant, et un faisceau qui éclaire la route.
+    for (const vv of this.vehicleViews.values()) {
+      if (!vv.root.visible) continue;
+      const lead = vv.parts[0];
+      const ca = Math.cos(lead.rotation), sa = Math.sin(lead.rotation);
+      const big = vv.kind === 'train' ? 1.35 : 1;
+      const nose = (vv.kind === 'train' ? 14 : 12);
+      for (const side of [-1, 1]) glow(lead.x + ca * nose - sa * side * 5, lead.y + sa * nose + ca * side * 5, CELL * 0.55 * big, 0xffffff, 1);
+      for (let i = 1; i <= 4; i++) glow(lead.x + ca * (nose + CELL * i * 0.95 * big), lead.y + sa * (nose + CELL * i * 0.95 * big), CELL * (0.6 + i * 0.45) * big, 0xfff6e0, 0.85 - i * 0.13);
+      for (const part of vv.parts) glow(part.x, part.y, CELL * 0.9 * big, 0xffd8a0, 0.35);
+    }
     for (let i = used; i < this.glowPool.length; i++) this.glowPool[i].visible = false;
     this.app.renderer.render({ container: this.nightLayer, target: this.lightRT, clear: true, clearColor: amb });
   }
 
+  /** Direction du robot à l'écran (lissée), et la durée de la dernière image. */
+  private robotFace = 0;
+  private frameDt = 1 / 60;
+
   render(dt: number): void {
+    this.frameDt = dt;
     if (this.game.view !== this.shownFactory) this.switchView();
     this.drawRoom();
     this.time += dt;
