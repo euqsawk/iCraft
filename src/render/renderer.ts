@@ -832,9 +832,10 @@ export class GameRenderer {
     this.updatePops();
     this.game.drones.forEach((d, i) => {
       const dv = this.droneViews[i];
-      if (d.state === 'parked') {
+      if (d.state === 'parked' || d.state === 'rest') {
+        // Posé sur le robot : en panne de charbon (pâle), ou simplement au repos.
         dv.position.set(r.x * CELL + (i - (this.game.drones.length - 1) / 2) * 14, r.y * CELL + v.body.y - 40);
-        dv.alpha = 0.75;
+        dv.alpha = d.state === 'parked' ? 0.75 : 1;
       } else {
         dv.position.set(d.x * CELL, d.y * CELL - 22 + Math.sin(this.time * 4 + i) * 2.5);
         dv.alpha = 1;
@@ -962,7 +963,8 @@ export class GameRenderer {
       seen.add(id);
       let v = this.stationViews.get(id);
       if (!v) { v = this.makeDroneView(); this.stationViews.set(id, v); }
-      v.position.set(d.x * CELL, d.y * CELL - (d.state === 'parked' ? 10 : 22) + (d.state === 'parked' ? 0 : Math.sin(this.time * 4 + id) * 2.5));
+      const down = d.state === 'parked' || d.state === 'rest';
+      v.position.set(d.x * CELL, d.y * CELL - (down ? 10 : 22) + (down ? 0 : Math.sin(this.time * 4 + id) * 2.5));
       v.alpha = d.state === 'parked' ? 0.75 : 1;
       v.visible = this.inView(v.x, v.y, CELL);
       const cargo = v.getChildByLabel('cargo') as Sprite;

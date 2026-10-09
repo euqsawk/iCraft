@@ -438,6 +438,25 @@ test('scanner : les 3 filons les plus proches, du plus proche au plus loin', () 
   assert(g.scan('licorne').length === 0, 'matière inconnue');
 });
 
+test('un drone sans travail se pose sur le robot et ne brûle plus de charbon', () => {
+  const g = new Game('TEST-R1');
+  g.world.reveal(0, 0, 30); g.drones[0].cargo = null;
+  run(g, 10);
+  const d = g.drones[0];
+  assert(d.state === 'rest', `posé : ${d.state}`);
+  const f0 = d.fuel + d.burn / RULES.coalDroneSeconds;
+  g.sendRobot(12, 6);
+  run(g, 20);
+  const f1 = d.fuel + d.burn / RULES.coalDroneSeconds;
+  assert(d.state === 'rest' && Math.abs(f1 - f0) < 1e-9, `charbon ${f0} → ${f1}`);
+  assert(Math.hypot(d.x - g.robot.x, d.y - g.robot.y) < 1.5, 'il voyage sur le robot');
+  // Du travail : il décolle.
+  g.money = 1000;
+  const a = g.placeMachine('coffre', Math.floor(g.robot.x) + 3, Math.floor(g.robot.y) + 2);
+  const b = g.placeMachine('coffre', Math.floor(g.robot.x) - 3, Math.floor(g.robot.y) + 2);
+  run(g, 1);
+  assert(a && b && d.state !== 'rest', `il repart : ${d.state}`);
+});
 test('station : son drone travaille autour d’elle, loin du robot', () => {
   const g = new Game('TEST-19');
   g.money = 10000; g.world.reveal(30, 2, 26);

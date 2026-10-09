@@ -75,7 +75,8 @@ export interface Drone {
   /** Drone d'une station (numéro de la station) : il travaille autour d'elle, pas autour du robot. */
   station?: number;
   /** home : en vol stationnaire près du robot ; fly : en mission ; parked : posé sur le robot, sans charbon. */
-  state: 'home' | 'fly' | 'work' | 'parked';
+  /** rest : posé sur le robot ou sur sa station, sans rien à faire (il ne brûle rien). */
+  state: 'home' | 'fly' | 'work' | 'parked' | 'rest';
   task: DroneTask | null;
   t: number;
   /** Angle de rangement autour du robot. */
@@ -1419,9 +1420,6 @@ export class Game {
     for (const d of this.allDrones()) {
       this.useAnchor(d);
       const st = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
-      const home = st
-        ? { x: this.anchor.x + Math.cos(this.time * 0.9 + d.station!) * 0.7, y: this.anchor.y - 0.9 + Math.sin(this.time * 0.9 + d.station!) * 0.25 }
-        : { x: r.x + Math.cos(d.slot + this.time * 0.8) * 1.1, y: r.y - 1.4 + Math.sin(d.slot + this.time * 0.8) * 0.35 };
       if (d.state === 'parked' && st) {
         // Posé sur sa station : il repart dès qu'elle a du charbon dans sa case carburant.
         d.x = this.anchor.x; d.y = this.anchor.y - 0.6;
@@ -1437,9 +1435,17 @@ export class Game {
         if (got > 0) { r.fuel -= got; d.fuel += got; d.state = 'home'; }
         continue;
       }
+      // Sans travail, il se pose sur le robot (qui le porte) ou sur sa station : il ne brûle plus de charbon.
+      const restAt = st ? { x: this.anchor.x, y: this.anchor.y - 0.6 } : { x: r.x, y: r.y - 0.9 };
+      if (d.state === 'rest') {
+        d.x = restAt.x; d.y = restAt.y;
+        d.task = this.pickTask(d);
+        if (!d.task) continue;
+        d.state = 'home';
+      }
       if (d.task && !this.taskPos(d.task)) d.task = null;
       if (!d.task && d.state !== 'work') d.task = this.pickTask(d);
-      const target = d.task ? this.taskPos(d.task)! : home;
+      const target = d.task ? this.taskPos(d.task)! : restAt;
       const dist = Math.hypot(target.x - d.x, target.y - d.y);
       if (d.state === 'work' && d.task?.kind === 'build') {
         d.t += dt;
@@ -1464,8 +1470,8 @@ export class Game {
         if (dist <= step) { d.x = target.x; d.y = target.y; }
         else { d.x += ((target.x - d.x) / dist) * step; d.y += ((target.y - d.y) / dist) * step; }
       } else if (!d.task) {
-        d.state = 'home';
-        d.x = home.x; d.y = home.y;
+        d.state = 'rest';
+        d.x = restAt.x; d.y = restAt.y;
       }
       if (d.task && Math.hypot(target.x - d.x, target.y - d.y) < 0.05) {
         if (d.task.kind === 'build') { d.state = 'work'; d.t = 0; }
