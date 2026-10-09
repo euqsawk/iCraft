@@ -807,3 +807,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .stop-del { flex: none; width: 34px; min-height: 30px; padding: 0; font-size: 18px; }
 .rule-seg { display: flex; gap: 6px; margin-bottom: 4px; }
 .rule-seg .btn { flex: 1 1 0; }
+.node .tile.mystery { background: #E3ECE7; border: 2.5px dashed #C3D1CA; }
+.node.locked .tile.mystery .ico, .node.soon .tile.mystery .ico { opacity: 1; }
+.node.locked .lbl, .node.soon .lbl { letter-spacing: .5px; }
+.ts-icon.mystery { background: #E3ECE7; }

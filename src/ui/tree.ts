@@ -10,6 +10,10 @@ const STAR_INK = '<svg width="10" height="10" viewBox="0 0 18 18" aria-hidden="t
 const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.5 L5 9 L9.5 3.5"/></svg>';
 const LOCK = '<svg width="11" height="11" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="4.5" width="8" height="5.5" rx="1.5" fill="currentColor"/><path d="M3 4.5 V3.2 A2 2 0 0 1 7 3.2 V4.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 
+// Un nœud pas encore ouvert garde son cadre mais cache ce qu'il débloque : la surprise donne envie d'avancer.
+const MYSTERY = '<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M14.5 15 a5.5 5.5 0 1 1 8.2 4.8 c-1.8 1-2.7 2.1-2.7 4.2 v1" fill="none" stroke="#9AAAA2" stroke-width="3.6" stroke-linecap="round"/><circle cx="20" cy="30.5" r="2.3" fill="#9AAAA2"/></svg>';
+const HIDDEN_NAME = '???';
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
 export class TreeScreen {
@@ -58,6 +62,12 @@ export class TreeScreen {
     this.el?.remove();
     this.el = null;
     this.onClose();
+  }
+
+  /** Caché tant qu'il n'est pas ouvert (verrouillé ou à venir). */
+  private hidden(x: UnlockNode): boolean {
+    const st = this.game.nodeState(x);
+    return st === 'locked' || st === 'soon';
   }
 
   private firstAvailable(nodes: UnlockNode[]): UnlockNode | undefined {
@@ -128,15 +138,16 @@ export class TreeScreen {
     }
     for (const x of br.nodes) {
       const st = g.nodeState(x);
+      const hide = this.hidden(x);
       const first = Object.entries(x.cost)[0];
       const badge = st === 'owned' ? `<span class="nb-owned">${CHECK}</span>`
         : st === 'available' ? (g.canAfford(x) ? `<span class="nb-cost ready">${STAR_INK}Prêt</span>` : first ? `<span class="nb-cost"><img src="${this.icons.get(first[0])}" alt="">${first[1]}</span>` : '')
         : st === 'soon' ? '<span class="nb-soon">Bientôt</span>'
         : x.palier > g.palier ? `<span class="nb-level">Palier ${x.palier}</span>`
         : `<span class="nb-lock">${LOCK}</span>`;
-      html += `<button class="node ${st}${x.id === this.sel ? ' sel' : ''}" data-id="${x.id}" style="left:${cols[x.col] - 50}px;top:${top(x.row)}px" aria-label="${esc(x.name)}">
-        <span class="tile"><span class="ico">${NODE_ICONS[x.icon] ?? ''}</span>${badge}</span>
-        <span class="lbl">${esc(x.name)}</span></button>`;
+      html += `<button class="node ${st}${x.id === this.sel ? ' sel' : ''}" data-id="${x.id}" style="left:${cols[x.col] - 50}px;top:${top(x.row)}px" aria-label="${hide ? 'Déblocage caché' : esc(x.name)}">
+        <span class="tile${hide ? ' mystery' : ''}"><span class="ico">${hide ? MYSTERY : NODE_ICONS[x.icon] ?? ''}</span>${badge}</span>
+        <span class="lbl">${hide ? HIDDEN_NAME : esc(x.name)}</span></button>`;
     }
     canvas.innerHTML = html;
     canvas.querySelectorAll<HTMLButtonElement>('.node').forEach((b) => {
@@ -147,20 +158,28 @@ export class TreeScreen {
     // Fiche du nœud choisi
     const sn = NODE[this.sel] ?? br.nodes[0];
     const st = g.nodeState(sn);
-    const names = (ids: string[]) => ids.map((p) => NODE[p]?.name ?? p).join(', ');
+    const hide = this.hidden(sn);
+    // On ne nomme que ce qu'on voit déjà : un parent encore caché reste « un déblocage caché ».
+    const names = (ids: string[]) => {
+      const shown = ids.filter((p) => NODE[p] && !this.hidden(NODE[p])).map((p) => NODE[p].name);
+      const n = ids.length - shown.length;
+      if (n) shown.push(n > 1 ? `${n} déblocages cachés` : 'un déblocage caché');
+      return shown.join(', ');
+    };
     let requires = sn.parents.length ? `Après : ${names(sn.parents)}` : 'Point de départ de la branche';
     if (sn.palier > 1) requires += ` · palier ${sn.palier}`;
     const costs = Object.entries(sn.cost);
     let label: string, enabled = false;
     if (st === 'owned') label = costs.length === 0 ? 'Disponible dès le début' : 'Déjà débloqué';
     else if (st === 'soon') label = 'Bientôt dans le jeu';
+    else if (hide && sn.palier > g.palier && sn.parents.every((p) => g.isUnlocked(p))) label = `S’ouvre au palier ${sn.palier}`;
     else if (st === 'locked') {
       const missing = sn.parents.filter((p) => !g.isUnlocked(p));
       label = missing.length ? `Débloque d’abord : ${names(missing)}` : `S’ouvre au palier ${sn.palier}`;
     } else if (!g.hasLab()) label = 'Construis un Laboratoire';
     else if (!g.canAfford(sn)) label = 'Il manque des objets au Laboratoire';
     else { label = 'Débloquer'; enabled = true; }
-    const costHtml = costs.length && st !== 'owned'
+    const costHtml = costs.length && st !== 'owned' && !hide
       ? `<div class="ts-costs">${costs.map(([k, v]) => {
           const have = Math.min(g.lab[k] ?? 0, v);
           return `<div class="ts-cost${have >= v ? ' done' : ''}"><img src="${this.icons.get(k)}" alt=""><span>${esc(item(k).name)}</span><b>${have} / ${v}</b><span class="ts-bar"><span style="width:${(have / v) * 100}%"></span></span></div>`;
@@ -169,10 +188,10 @@ export class TreeScreen {
     const tag = st === 'owned' ? ['Débloqué', 'owned'] : st === 'available' ? ['Disponible', 'available'] : st === 'soon' ? ['Bientôt', 'soon'] : ['Verrouillé', 'locked'];
     const sheet = el.querySelector<HTMLElement>('.tree-sheet')!;
     sheet.innerHTML = `
-      <div class="ts-head"><div class="ts-icon">${NODE_ICONS[sn.icon] ?? ''}</div>
-        <div class="ts-name"><span class="ts-tag ${tag[1]}">${tag[0]}</span><b>${esc(sn.name)}</b></div></div>
-      <p>${esc(sn.hint)}</p>
-      ${sn.recipes.length ? `<div class="chips">${sn.recipes.map((r) => `<span class="chip plain">${esc(r)}</span>`).join('')}</div>` : ''}
+      <div class="ts-head"><div class="ts-icon${hide ? ' mystery' : ''}">${hide ? MYSTERY : NODE_ICONS[sn.icon] ?? ''}</div>
+        <div class="ts-name"><span class="ts-tag ${tag[1]}">${tag[0]}</span><b>${hide ? 'Déblocage caché' : esc(sn.name)}</b></div></div>
+      <p>${hide ? 'Continue de progresser pour découvrir ce qui se cache ici.' : esc(sn.hint)}</p>
+      ${sn.recipes.length && !hide ? `<div class="chips">${sn.recipes.map((r) => `<span class="chip plain">${esc(r)}</span>`).join('')}</div>` : ''}
       ${costHtml}
       <div class="ts-req"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 7 H12 M8 3 L12 7 L8 11"/></svg>${esc(requires)}</div>
       <button class="btn ${enabled ? 'primary' : ''} ts-btn" ${enabled ? '' : 'disabled'}>${esc(label)}</button>`;
