@@ -1278,7 +1278,7 @@ export class Hud implements GestureHandlers {
   private craftSel: string | null = null;
   private craftQty = 1;
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
-  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | '' = '';
+  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | 'stop' | '' = '';
   private machineId = -1;
   private chestId = -1;
   private liveTimer = 0;
@@ -2042,7 +2042,8 @@ export class Hud implements GestureHandlers {
       const ok = h('button', 'btn primary', 'Terminé');
       ok.onclick = back;
       sheet.append(ok);
-    });
+    }, true);
+    this.sheetKind = 'stop';
     void picked;
   }
 
