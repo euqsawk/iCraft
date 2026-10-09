@@ -1035,6 +1035,10 @@ export class GameRenderer {
     this.dots.width = Math.ceil((b.x1 - x0) / CELL) * CELL;
     this.dots.height = Math.ceil((b.y1 - y0) / CELL) * CELL;
     this.dots.visible = cam.zoom > 0.5;
+    // Les chevrons des raccords s'effacent dès qu'on dézoome un peu.
+    const portA = Math.min(1, Math.max(0, (cam.zoom - 0.75) / 0.15));
+    this.portG.alpha = portA;
+    this.portG.visible = portA > 0;
     this.updateChunks();
     if (this.beltsDirty) this.redrawBelts();
     this.updateMachines(dt);
