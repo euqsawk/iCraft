@@ -1,6 +1,6 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
 import { BIOME_COLORS, CELL, PALETTE, RULES } from '../config.ts';
-import { item, itemLabel, ITEM_LIST } from '../data/items.ts';
+import { item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
@@ -910,7 +910,7 @@ export class Hud implements GestureHandlers {
     this.wireGrid(inv, null);
     const bar = this.invBar(null);
     if (bar) inv.append(bar);
-    sheet.append(inv, this.craftCard());
+    sheet.append(inv, this.scanCard(close), this.craftCard());
     // Drones et leurs priorités.
     const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
     const dr = h('div', 'card');
@@ -919,6 +919,28 @@ export class Hud implements GestureHandlers {
       : '<p class="muted">Pas encore de drone.</p>';
     dr.querySelectorAll<HTMLButtonElement>('[data-drone]').forEach((b) => { b.onclick = () => this.openPriorities(Number(b.dataset.drone)); });
     sheet.append(dr);
+  }
+
+  /** Scanner : choisir une matière, des flèches montrent les 3 filons les plus proches pendant 10 s. */
+  private scanCard(close: () => void): HTMLElement {
+    const g = this.game;
+    const card = h('div', 'card');
+    card.innerHTML = `<p class="muted">Scanner · trouve les 3 filons les plus proches, même sous le brouillard</p>`;
+    const grid = h('div', 'scan-grid');
+    for (const id of RAW_IDS) {
+      const b = h('button', 'scan-opt', `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()))}</small>`);
+      b.onclick = () => {
+        const found = g.scan(id, 3);
+        if (!found.length) { this.toast(`Aucun filon de ${item(id).name.toLowerCase()} à portée du scanner`, 'warn'); return; }
+        close();
+        this.r.startScan(id, found);
+        this.r.centerOnRobot();
+        this.toast(`Scanner : ${found.length} filon${found.length > 1 ? 's' : ''} de ${item(id).name.toLowerCase()} · le plus proche à ${Math.round(found[0].d)} cases`, 'good');
+      };
+      grid.append(b);
+    }
+    card.append(grid);
+    return card;
   }
 
   /** Fabrication à la main : ce qui est en cours, puis ce qu'on peut faire avec l'inventaire. */

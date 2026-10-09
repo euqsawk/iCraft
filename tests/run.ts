@@ -324,6 +324,14 @@ test('un tapis entre deux machines : relié des deux côtés, et il peut nourrir
   assert((bas.inBuf.fer ?? 0) + bas.made > 0, `la machine du bas n'a rien reçu : ${JSON.stringify(bas.inBuf)}`);
 });
 
+test('scanner : les 3 filons les plus proches, du plus proche au plus loin', () => {
+  const g = new Game('TEST-18');
+  const res = g.scan('sable', 3);
+  assert(res.length === 3 && res[0].d <= res[1].d && res[1].d <= res[2].d, JSON.stringify(res));
+  for (const f of res) assert(g.world.patchAt(Math.floor(f.x), Math.floor(f.y))?.type === 'sable', 'pas un filon de sable');
+  assert(g.scan('licorne').length === 0, 'matière inconnue');
+});
+
 console.log('Charbon');
 test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => {
   const g = new Game('TEST-20');

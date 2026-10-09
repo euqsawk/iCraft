@@ -1,5 +1,5 @@
 // L'état complet d'une partie : monde, usine, robot, drones, argent, paliers, laboratoire et commandes.
-import { RULES } from '../config.ts';
+import { CHUNK, RULES } from '../config.ts';
 import { machineDef } from '../data/machines.ts';
 import { item, itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
@@ -665,6 +665,25 @@ export class Game {
     for (const c of this.factory.chainOf(b)) refund += this.refundBelt(c);
     this.earn(refund);
     this.emit({ type: 'factory' });
+  }
+
+  /**
+   * Scanner du robot : les filons de cette matière les plus proches, même sous le brouillard
+   * (jusqu'à 8 chunks autour du robot). Distance au bord du filon, en cases.
+   */
+  scan(type: string, n = 3, reach = 8): { x: number; y: number; r: number; d: number }[] {
+    const r = this.robot;
+    const ccx = Math.floor(r.x / CHUNK), ccy = Math.floor(r.y / CHUNK);
+    const found: { x: number; y: number; r: number; d: number }[] = [];
+    for (let j = -reach; j <= reach; j++) {
+      for (let i = -reach; i <= reach; i++) {
+        for (const p of this.world.patchesInChunk(ccx + i, ccy + j)) {
+          if (p.type !== type) continue;
+          found.push({ x: p.cx, y: p.cy, r: p.r, d: Math.max(0, Math.hypot(p.cx - r.x, p.cy - r.y) - p.r) });
+        }
+      }
+    }
+    return found.sort((a, b) => a.d - b.d).slice(0, n);
   }
 
   /** Relie une machine au côté d'un tapis qui la longe (sa production y est déposée). */

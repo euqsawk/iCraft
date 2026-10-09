@@ -654,3 +654,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .flow-row.out .flow-bar > span { background: var(--green); }
 .btn.danger.armed { background: var(--coral); color: #fff; }
 .btn.danger.armed svg { color: #fff; }
+.scan-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+.scan-opt { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 6px; border-radius: 14px; background: #F4F8F6; color: var(--ink); }
+.scan-opt img { width: 26px; height: 26px; }
+.scan-opt small { font-size: 10.5px; font-weight: 800; }
+.scan-opt:active { background: var(--yellow); }

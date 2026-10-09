@@ -118,7 +118,7 @@ export class GameRenderer {
   constructor(app: Application, game: Game) {
     this.app = app;
     this.game = game;
-    app.stage.addChild(this.worldLayer);
+    app.stage.addChild(this.worldLayer, this.scanLayer);
     this.worldLayer.addChild(this.groundLayer);
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
@@ -974,6 +974,63 @@ export class GameRenderer {
     it.done();
   }
 
+  // ---------- Scanner du robot : flèches vers les filons les plus proches ----------
+
+  private scanLayer = new Container();
+  private scanG = new Graphics();
+  private scanTexts: Text[] = [];
+  private scanState: { item: string; targets: { x: number; y: number; r: number }[]; t: number } | null = null;
+  static readonly SCAN_TIME = 10;
+
+  /** Affiche pendant 10 s une flèche autour du robot vers chaque filon trouvé, avec sa distance. */
+  startScan(itemId: string, targets: { x: number; y: number; r: number }[]): void {
+    this.scanState = { item: itemId, targets, t: 0 };
+    if (!this.scanG.parent) this.scanLayer.addChild(this.scanG);
+  }
+
+  private stepScan(dt: number): void {
+    const g = this.scanG;
+    g.clear();
+    const st = this.scanState;
+    if (!st) { for (const t of this.scanTexts) t.visible = false; return; }
+    st.t += dt;
+    if (st.t > GameRenderer.SCAN_TIME) { this.scanState = null; for (const t of this.scanTexts) t.visible = false; return; }
+    const a = Math.min(1, (GameRenderer.SCAN_TIME - st.t) / 1.5) * Math.min(1, st.t / 0.25);
+    const cam = this.camera, r = this.game.robot;
+    const rs = cam.worldToScreen(r.x * CELL, (r.y - 0.6) * CELL);
+    const color = item(st.item).patch ?? item(st.item).color;
+    const pulse = 0.5 + 0.5 * Math.sin(st.t * 6);
+    st.targets.forEach((tg, i) => {
+      const dx = tg.x - r.x, dy = tg.y - r.y;
+      const dist = Math.hypot(dx, dy);
+      const ux = dist > 0 ? dx / dist : 1, uy = dist > 0 ? dy / dist : 0;
+      const px = -uy, py = ux;
+      const R = 58 + i * 4;
+      const cx = rs.x + ux * R, cy = rs.y + uy * R;
+      // La flèche : un triangle arrondi, couleur du filon, cerclé d'encre.
+      g.poly([cx + ux * 13, cy + uy * 13, cx - ux * 7 + px * 10, cy - uy * 7 + py * 10, cx - ux * 3, cy - uy * 3, cx - ux * 7 - px * 10, cy - uy * 7 - py * 10])
+        .fill({ color, alpha: a }).stroke({ width: 2.5, color: PALETTE.ink, alpha: a, join: 'round' });
+      // Sur le filon lui-même (s'il est à l'écran) : un anneau qui pulse.
+      const ts = cam.worldToScreen(tg.x * CELL, tg.y * CELL);
+      if (ts.x > -40 && ts.y > -40 && ts.x < cam.width + 40 && ts.y < cam.height + 40) {
+        g.circle(ts.x, ts.y, (16 + pulse * 8) * Math.max(0.6, cam.zoom)).stroke({ width: 3, color: PALETTE.ink, alpha: a * (0.4 + 0.4 * pulse) });
+      }
+      let t = this.scanTexts[i];
+      if (!t) {
+        t = new Text({ text: '', style: { fontFamily: FONT, fontSize: 12, fontWeight: '900', fill: PALETTE.ink, stroke: { color: 0xffffff, width: 4 } }, resolution: 3 });
+        t.anchor.set(0.5);
+        this.scanLayer.addChild(t);
+        this.scanTexts[i] = t;
+      }
+      const cells = Math.max(0, Math.round(dist - tg.r));
+      t.text = `${cells} cases`;
+      t.position.set(cx + ux * 30, cy + uy * 30);
+      t.alpha = a;
+      t.visible = true;
+    });
+    for (let i = st.targets.length; i < this.scanTexts.length; i++) this.scanTexts[i].visible = false;
+  }
+
   // ---------- Caméra guidée et bâtiment mis en avant ----------
 
   private focus: { fx: number; fy: number; fz: number; tx: number; ty: number; tz: number; t: number; dur: number } | null = null;
@@ -1025,6 +1082,7 @@ export class GameRenderer {
     this.time += dt;
     if (this.intro) this.stepIntro(dt);
     this.stepFocus(dt);
+    this.stepScan(dt);
     const cam = this.camera;
     cam.setSize(this.app.screen.width, this.app.screen.height);
     this.worldLayer.scale.set(cam.zoom);
