@@ -35,7 +35,7 @@ Pour poser une machine : touche sa carte puis la carte du jeu, ou fais glisser s
 ### La première usine
 
 1. Envoie le robot sur le filon de charbon (gris foncé) : à l'arrêt, il mine tout seul.
-2. **Machine → Foreuse** sur le charbon, et un **Coffre** à côté, relié par un tapis. Le premier drone apporte ses 10 charbons de départ à la foreuse.
+2. **Machine → Foreuse** sur le charbon, et un **Coffre** à côté, relié par un tapis. Une foreuse sur du charbon s'alimente toute seule : elle remplit d'abord sa propre case carburant avec ce qu'elle extrait, puis envoie le reste.
 3. **Machine → Foreuse** sur le fer (gris-bleu), puis un **Four**.
 4. **Tapis** : du fer jusqu'au four, puis du four jusqu'au Noyau.
 5. Le robot construit chaque fantôme à son tour. Le drone va chercher le charbon dans le coffre et recharge les machines dont le voyant clignote. Le Noyau reçoit les lingots : sa mission avance.

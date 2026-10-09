@@ -361,6 +361,17 @@ test('station : son drone travaille autour d’elle, loin du robot', () => {
 });
 
 console.log('Charbon');
+test('une foreuse sur du charbon s’alimente toute seule', () => {
+  const g = new Game('TEST-27');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const m = g.placeMachine('foreuse', -12, 9)!;
+  run(g, 25);
+  assert(m.built && g.factory.fuelRoom(m) === 0 && !g.factory.lowFuel(m), 'pas de voyant, personne ne la recharge');
+  run(g, 40);
+  assert(m.made > 0 && m.fuel + (m.burn > 0 ? 1 : 0) >= 5, `charbon ${m.fuel}, extraits ${m.made}`);
+  run(g, 40);
+  assert((m.outBuf.charbon ?? 0) > 0, 'une fois sa case pleine, elle envoie le reste');
+});
 test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => {
   const g = new Game('TEST-20');
   g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;

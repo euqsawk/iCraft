@@ -28,7 +28,7 @@ export const TIPS: Tip[] = [
   },
   {
     id: 'foreuse', title: 'Une foreuse sur le charbon',
-    text: () => 'Outil Machine, puis Foreuse : pose-la sur le charbon. Ton drone lui apporte ses 10 charbons.',
+    text: () => 'Outil Machine, puis Foreuse : pose-la sur le charbon. Elle brûle son propre charbon, rien à lui apporter.',
     goal: (g) => machines(g).some((m) => m.type === 'foreuse' && m.ore === 'charbon'),
   },
   {

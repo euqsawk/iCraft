@@ -390,7 +390,13 @@ export class Factory {
   /** Place restante dans la case carburant. */
   fuelRoom(m: Machine): number {
     const def = machineDef(m.type);
+    if (this.selfFed(m)) return 0;
     return def.coal ? Math.max(0, RULES.fuelStack - m.fuel) : 0;
+  }
+
+  /** Une foreuse sur du charbon s'alimente elle-même : personne n'a besoin de la recharger. */
+  selfFed(m: Machine): boolean {
+    return m.ore === 'charbon' && machineDef(m.type).kind === 'drill';
   }
 
   /** Ajoute du charbon dans la case carburant ; renvoie la quantité ajoutée. */
@@ -402,7 +408,7 @@ export class Factory {
 
   /** La machine fait clignoter son voyant : il lui faut du charbon. */
   lowFuel(m: Machine): boolean {
-    return m.built && machineDef(m.type).coal && m.fuel <= RULES.lowFuel;
+    return m.built && machineDef(m.type).coal && !this.selfFed(m) && m.fuel <= RULES.lowFuel;
   }
 
   /** Cases occupées d'un coffre (piles de 10). */
@@ -614,14 +620,19 @@ export class Factory {
   private tickDrill(m: Machine, dt: number): void {
     if (!m.ore || !m.rate) { m.status = 'noore'; return; }
     if (this.outCount(m) >= RULES.machineBuffer) { m.status = 'blocked'; m.drillT = Math.min(m.drillT, 1); return; }
-    if (!this.useFuel(m, machineDef(m.type), dt)) { m.status = 'nofuel'; return; }
+    // Sur du charbon, elle démarre même à vide : elle brûlera ce qu'elle extrait.
+    if (!this.useFuel(m, machineDef(m.type), dt) && !this.selfFed(m)) { m.status = 'nofuel'; return; }
     m.status = 'working';
     m.drillT += dt * m.rate;
     if (m.drillT >= 1) {
       m.drillT -= 1;
-      m.outBuf[m.ore] = (m.outBuf[m.ore] ?? 0) + 1;
-      this.flow(m, m.ore, 1, true);
       m.made++;
+      if (this.selfFed(m) && m.fuel < RULES.fuelStack) {
+        m.fuel++; // sa propre case carburant d'abord
+      } else {
+        m.outBuf[m.ore] = (m.outBuf[m.ore] ?? 0) + 1;
+        this.flow(m, m.ore, 1, true);
+      }
     }
   }
 
