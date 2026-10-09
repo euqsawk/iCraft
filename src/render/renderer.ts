@@ -315,17 +315,24 @@ export class GameRenderer {
     g.clear(); gg.clear();
     const built: Belt[] = [], ghosts: Belt[] = [];
     for (const b of this.game.factory.belts.values()) (b.built ? built : ghosts).push(b);
+    // Là où le tapis touche une machine, il file sous elle (la machine est dessinée par-dessus) :
+    // pas de bout arrondi qui laisserait un vide contre ses coins arrondis.
+    const f = this.game.factory;
+    const under = (b: Belt, d: number) => (f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
     const line = (list: Belt[], dy: number) => {
       for (const b of list) {
         const p = this.beltPath(b);
-        g.moveTo(p[0].x, p[0].y + dy).lineTo(p[1].x, p[1].y + dy).lineTo(p[2].x, p[2].y + dy);
+        const back = (b.inDir + 2) % 4;
+        const e0 = under(b, back), e2 = under(b, b.dir);
+        g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy).lineTo(p[2].x + DX[b.dir] * e2, p[2].y + DY[b.dir] * e2 + dy);
         if (b.split !== undefined) {
-          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * CELL / 2, p[1].y + DY[b.split] * CELL / 2 + dy);
+          const es = CELL / 2 + under(b, b.split);
+          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * es, p[1].y + DY[b.split] * es + dy);
         }
-        // Liaison de côté avec une machine : un bout de tapis jusqu'à son bord.
+        // Liaison de côté avec une machine : un bout de tapis qui file sous elle.
         for (const fd of b.feeds ?? []) {
-          if (!this.game.factory.machineAt(b.x + DX[fd], b.y + DY[fd])) continue;
-          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[fd] * CELL / 2, p[1].y + DY[fd] * CELL / 2 + dy);
+          if (!f.machineAt(b.x + DX[fd], b.y + DY[fd])) continue;
+          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[fd] * CELL, p[1].y + DY[fd] * CELL + dy);
         }
       }
     };
