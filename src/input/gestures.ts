@@ -31,6 +31,11 @@ export class Gestures {
     el.addEventListener('pointermove', (e) => this.move(e));
     el.addEventListener('pointerup', (e) => this.up(e, false));
     el.addEventListener('pointercancel', (e) => this.up(e, true));
+    el.addEventListener('lostpointercapture', (e) => this.up(e, true));
+    // En quittant l'appli, iOS peut avaler la fin d'un toucher : on oublie tous les doigts.
+    document.addEventListener('visibilitychange', () => this.reset());
+    window.addEventListener('pagehide', () => this.reset());
+    window.addEventListener('blur', () => this.reset());
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       const r = this.el.getBoundingClientRect();
@@ -46,9 +51,18 @@ export class Gestures {
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   }
 
+  /** Oublie les doigts en cours (un toucher dont on n'a jamais reçu la fin). */
+  reset(): void {
+    if (this.mode === 'tool') this.h.toolEnd(true);
+    this.pointers.clear();
+    this.mode = 'idle';
+  }
+
   private down(e: PointerEvent): void {
     const p = this.local(e);
     if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    // Premier doigt d'un nouveau geste : s'il reste un doigt « fantôme », il n'existe plus.
+    if (e.isPrimary && this.pointers.size > 0) this.reset();
     this.el.setPointerCapture?.(e.pointerId);
     this.pointers.set(e.pointerId, { x: p.x, y: p.y, sx: p.x, sy: p.y, t: e.timeStamp });
     if (this.pointers.size === 1) {

@@ -101,8 +101,9 @@ async function boot(): Promise<void> {
   });
   new Gestures(app.canvas, renderer.camera, hud);
 
-  let acc = 0, saveTimer = 0;
+  let acc = 0, saveTimer = 0, frames = 0;
   app.ticker.add((ticker) => {
+    frames++;
     const dt = Math.min(ticker.deltaMS / 1000, 0.25);
     acc += dt;
     let steps = 0;
@@ -120,9 +121,28 @@ async function boot(): Promise<void> {
     const report = game.catchUp(awayMs);
     if (report) { hud.showAway(report); save(); }
   };
+  // Écran noir au retour : iOS a pu reprendre le contexte graphique pendant l'absence.
+  // On sauvegarde et on relance directement la partie (sans passer par le menu).
+  let reloading = false;
+  const relaunch = async () => {
+    if (reloading) return;
+    reloading = true;
+    await save();
+    leaving = true;
+    try { sessionStorage.setItem(RESUME, String(slot)); } catch { /* rien */ }
+    location.reload();
+  };
+  const gl = (app.renderer as unknown as { gl?: WebGLRenderingContext }).gl;
+  let contextLost = false;
+  app.canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); contextLost = true; save(); });
+  app.canvas.addEventListener('webglcontextrestored', () => { relaunch(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { hiddenAt = Date.now(); save(); }
-    else if (hiddenAt) { comeBack(Date.now() - hiddenAt); hiddenAt = 0; }
+    if (document.hidden) { hiddenAt = Date.now(); save(); return; }
+    if (contextLost || gl?.isContextLost?.()) { relaunch(); return; }
+    if (hiddenAt) { comeBack(Date.now() - hiddenAt); hiddenAt = 0; }
+    // Si plus aucune image n'est dessinée après le retour, on relance aussi.
+    const f0 = frames;
+    setTimeout(() => { if (!document.hidden && frames === f0) relaunch(); }, 2500);
   });
   window.addEventListener('pagehide', () => { save(); });
   loading.remove();

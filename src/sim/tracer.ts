@@ -22,6 +22,9 @@ export class BeltTracer {
   /** Le tracé a buté sur un obstacle. */
   blocked = false;
   readonly startMachine: Machine | null = null;
+  /** Depuis une machine vers un tapis qui la longe : une liaison de côté, sans nouvelle case. */
+  linkBelt: Belt | null = null;
+  linkDir: Dir | null = null;
   readonly extend: Belt | null = null;
   /** Tapis existant d'où part une dérivation (il devient un séparateur). */
   readonly splitFrom: Belt | null = null;
@@ -91,6 +94,8 @@ export class BeltTracer {
     const m = this.startMachine;
     if (m && this.cells.length === 0) {
       const cx = Math.floor(fx), cy = Math.floor(fy);
+      this.linkBelt = null;
+      this.linkDir = null;
       if (this.factory.inside(m, cx, cy)) return;
       // Première case : collée au bord de la machine, du côté du doigt.
       let x = Math.min(Math.max(cx, m.x), m.x + m.w - 1);
@@ -101,6 +106,16 @@ export class BeltTracer {
       else y = cy < m.y ? m.y - 1 : m.y + m.h;
       const inside = { x: Math.min(Math.max(x, m.x), m.x + m.w - 1), y: Math.min(Math.max(y, m.y), m.y + m.h - 1) };
       this.startDir = dirBetween(inside.x, inside.y, x, y);
+      // Un tapis longe la machine à cet endroit : on propose de les relier par le côté.
+      const lb = this.factory.beltAt(x, y);
+      if (lb) {
+        const toMachine = opposite(this.startDir as Dir);
+        const intoMachine = lb.dir === toMachine;
+        const fromMachine = opposite(lb.inDir) === toMachine;
+        if (!intoMachine && !fromMachine) { this.linkBelt = lb; this.linkDir = toMachine; }
+        this.blocked = true;
+        return;
+      }
       if (!this.usable(x, y)) { this.blocked = true; return; }
       this.cells.push({ x, y });
     }

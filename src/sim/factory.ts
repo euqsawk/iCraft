@@ -25,6 +25,8 @@ export interface Belt {
   split?: Dir;
   /** Alternance du séparateur. */
   toggle?: number;
+  /** Liaison de côté : la machine voisine dans ce sens y dépose sa production (sans case de tapis). */
+  feed?: Dir;
 }
 
 export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore';
@@ -251,6 +253,12 @@ export class Factory {
     this.dirty = true;
   }
 
+  /** Relie une machine voisine au côté d'un tapis : elle y dépose sa production. */
+  setFeed(b: Belt, dir: Dir | undefined): void {
+    if (dir === undefined) delete b.feed; else b.feed = dir;
+    this.dirty = true;
+  }
+
   setBeltDir(b: Belt, dir: Dir): void {
     b.dir = dir;
     this.dirty = true;
@@ -292,6 +300,11 @@ export class Factory {
       // Sortie de machine : la case d'où vient le tapis est dans une machine.
       const fm = this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
       if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
+      // Liaison de côté : la machine voisine dépose au milieu de la case.
+      if (b.feed !== undefined) {
+        const lm = this.machineAt(b.x + DX[b.feed], b.y + DY[b.feed]);
+        if (lm && lm !== fm && !(nxt?.kind === 'machine' && nxt.machine === lm)) this.outputs.get(lm)!.push(b);
+      }
     }
 
     // Ordre de mise à jour : l'aval d'abord, pour que les objets avancent en file.
@@ -615,14 +628,20 @@ export class Factory {
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
-      const rear = b.items.length ? b.items[b.items.length - 1].p : Infinity;
-      if (rear < RULES.beltGap) continue;
+      const side = b.feed !== undefined && this.machineAt(b.x + DX[b.feed], b.y + DY[b.feed]) === m && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
+      if (side) {
+        if (!this.roomAt(b, 0.5)) continue;
+      } else {
+        const rear = b.items.length ? b.items[b.items.length - 1].p : Infinity;
+        if (rear < RULES.beltGap) continue;
+      }
       const t = kinds[(m.rrOut + s) % kinds.length];
       buf[t]--;
       if (buf[t] === 0 && buf === m.inBuf) delete buf[t];
-      const it: BeltItem = { t, p: 0 };
+      const it: BeltItem = { t, p: side ? 0.5 : 0 };
       this.enter(b, it);
       b.items.push(it);
+      if (side) b.items.sort((a, c) => c.p - a.p);
       m.rrOut = (m.rrOut + s + 1) % Math.max(outs.length, 1);
       return;
     }
@@ -633,7 +652,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feed ?? -1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made,
@@ -643,10 +662,11 @@ export class Factory {
 
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear();
-    for (const [x, y, dir, inDir, built, items, split] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
+      if (feed !== undefined && feed >= 0) b.feed = feed as Dir;
     }
     this.nextId = 1;
     for (const sm of s.machines) {
@@ -663,7 +683,7 @@ export class Factory {
 
 export interface FactorySave {
   nextId: number;
-  belts: [number, number, number, number, number, [string, number, number?][], number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;

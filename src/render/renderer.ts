@@ -365,24 +365,16 @@ export class GameRenderer {
       const ex = (b.x + 0.5 + DX[d] * 0.5) * CELL, ey = (b.y + 0.5 + DY[d] * 0.5) * CELL;
       const ax = DX[d], ay = DY[d], px = -ay, py = ax;
       const half = 10, out = 7, inn = 11;
-      const quad = (o0: number, o1: number, w: number, dx = 0, dy = 0) => [
-        ex - px * w + ax * o0 + dx, ey - py * w + ay * o0 + dy,
-        ex + px * w + ax * o0 + dx, ey + py * w + ay * o0 + dy,
-        ex + px * w + ax * o1 + dx, ey + py * w + ay * o1 + dy,
-        ex - px * w + ax * o1 + dx, ey - py * w + ay * o1 + dy,
-      ];
       const x0 = Math.min(ex - ax * out, ex + ax * inn) - (ax === 0 ? half : 0);
       const y0 = Math.min(ey - ay * out, ey + ay * inn) - (ay === 0 ? half : 0);
       const w = ax === 0 ? half * 2 : out + inn, hh = ay === 0 ? half * 2 : out + inn;
       // Ombre, comme sous les machines, puis l'avancée blanche aux coins arrondis.
       if (!ghost) g.roundRect(x0, y0 + 3, w, hh, 6).fill(PALETTE.shadow);
       g.roundRect(x0, y0, w, hh, 6).fill({ color: PALETTE.white, alpha: ghost ? 0.6 : 1 });
-      // La bouche, côté tapis
-      g.poly(quad(-out + 2, -out + 5.5, 7.5)).fill({ color: PALETTE.ink, alpha: ghost ? 0.2 : 0.5 });
-      // Chevron du flux, sur l'avancée
-      const s = into ? 1 : -1, cx = ex + ax * 3, cy = ey + ay * 3;
-      g.moveTo(cx - ax * 2 * s + px * 3.5, cy - ay * 2 * s + py * 3.5).lineTo(cx + ax * 1.5 * s, cy + ay * 1.5 * s).lineTo(cx - ax * 2 * s - px * 3.5, cy - ay * 2 * s - py * 3.5)
-        .stroke({ width: 2.2, color: into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 0.95, cap: 'round', join: 'round' });
+      // Juste un chevron dans le bloc blanc : rouge pour une entrée, vert pour une sortie.
+      const s = into ? 1 : -1, cx = ex + ax * 2, cy = ey + ay * 2;
+      g.moveTo(cx - ax * 2.5 * s + px * 4.5, cy - ay * 2.5 * s + py * 4.5).lineTo(cx + ax * 2 * s, cy + ay * 2 * s).lineTo(cx - ax * 2.5 * s - px * 4.5, cy - ay * 2.5 * s - py * 4.5)
+        .stroke({ width: 2.6, color: into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
     };
     for (const b of f.belts.values()) {
       // Entrée : le tapis donne dans une machine.
@@ -391,6 +383,8 @@ export class GameRenderer {
       // Sortie : le tapis part d'une machine.
       const back = (b.inDir + 2) % 4;
       if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
+      // Liaison de côté : la machine voisine dépose sur ce tapis.
+      if (b.feed !== undefined && b.feed !== back && f.machineAt(b.x + DX[b.feed], b.y + DY[b.feed])) port(b, b.feed, false);
     }
   }
 

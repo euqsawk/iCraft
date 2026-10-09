@@ -4,7 +4,7 @@ import { machineDef } from '../data/machines.ts';
 import { item, itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
 import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
-import { key, unkey, type Dir } from './geom.ts';
+import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
 import { Inventory, type Slot } from './inventory.ts';
@@ -664,6 +664,21 @@ export class Game {
     let refund = 0;
     for (const c of this.factory.chainOf(b)) refund += this.refundBelt(c);
     this.earn(refund);
+    this.emit({ type: 'factory' });
+  }
+
+  /** Relie une machine au côté d'un tapis qui la longe (sa production y est déposée). */
+  linkMachineToBelt(b: Belt, dir: Dir): boolean {
+    const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);
+    if (!m) return false;
+    this.factory.setFeed(b, dir);
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `${machineDef(m.type).name} reliée au tapis`, tone: 'good' });
+    return true;
+  }
+
+  unlinkBelt(b: Belt): void {
+    this.factory.setFeed(b, undefined);
     this.emit({ type: 'factory' });
   }
 

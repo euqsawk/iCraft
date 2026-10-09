@@ -274,6 +274,27 @@ test('une machine posée sur un tapis se branche : entrée et sortie', () => {
   assert(four.made > 0 && (chest.inBuf.lingot_fer ?? 0) > 0, `four ${four.made}, coffre ${JSON.stringify(chest.inBuf)}`);
 });
 
+test('relier une machine au tapis qui la longe, sans nouvelle case', () => {
+  const g = new Game('TEST-16');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  const four = g.placeMachine('four', 6, 6)!;
+  const chest = g.placeMachine('coffre', 14, 8)!;
+  // Un tapis passe sous le four (rangée y = 8), de gauche à droite, jusqu'au coffre.
+  assert(g.placeBelts(trace(g, [[4.5, 8.5], [12.5, 8.5], [13.5, 8.5]]).result()), 'tapis');
+  run(g, 40);
+  const t = new BeltTracer(g.factory, 6.5, 7.5); // depuis le four…
+  t.move(6.6, 8.6); // … vers le tapis juste dessous
+  assert(t.linkBelt && t.linkDir === 3 && t.newCount === 0, `liaison proposée : ${t.linkDir}`);
+  const n0 = g.factory.belts.size;
+  assert(g.linkMachineToBelt(t.linkBelt!, t.linkDir!) && g.factory.belts.size === n0, 'liaison sans case');
+  four.outBuf.verre = 5; // (le verre : personne ne le réclame, il reste au coffre)
+  run(g, 20);
+  assert((chest.inBuf.verre ?? 0) === 5, `coffre ${JSON.stringify(chest.inBuf)}`);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.factory.beltAt(6, 8)!.feed === 3, 'liaison sauvegardée');
+});
+
 console.log('Charbon');
 test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => {
   const g = new Game('TEST-20');
