@@ -689,6 +689,23 @@ export class Game {
     return found.sort((a, b) => a.d - b.d).slice(0, n);
   }
 
+  /** Relie deux machines collées : la production de la première passe directement dans la seconde. */
+  linkMachines(from: Machine, to: Machine): boolean {
+    if (from === to || !this.factory.touching(from, to)) return false;
+    if (!from.links?.includes(to.id)) from.links = [...(from.links ?? []), to.id];
+    this.factory.markBuilt();
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `${machineDef(from.type).name} → ${machineDef(to.type).name.toLowerCase()} : reliés`, tone: 'good' });
+    return true;
+  }
+
+  unlinkMachines(from: Machine, to?: number): void {
+    from.links = to === undefined ? [] : (from.links ?? []).filter((id) => id !== to);
+    if (!from.links.length) delete from.links;
+    this.factory.markBuilt();
+    this.emit({ type: 'factory' });
+  }
+
   /** Relie une machine au côté d'un tapis qui la longe (sa production y est déposée). */
   linkMachineToBelt(b: Belt, dir: Dir): boolean {
     const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);

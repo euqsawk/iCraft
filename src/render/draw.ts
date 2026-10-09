@@ -197,13 +197,17 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.circle(0, -11, 5).fill(PALETTE.yellow).stroke({ width: 1.8, color: ink });
       g.moveTo(-1.2, -13).lineTo(-1.2, -9).stroke({ width: 1.6, color: ink, cap: 'round' });
       break;
-    case 'laboratoire':
-      // Fiole : col étroit, panse triangulaire, liquide menthe.
-      g.poly([-4, -14, 4, -14, 4, -5, 13, 11, -13, 11, -4, -5]).fill(0xffffff).stroke({ ...st, join: 'round' });
-      g.poly([-8.5, 3, 8.5, 3, 11.2, 9, -11.2, 9]).fill(0x8fd3b6);
-      g.moveTo(-6, -14).lineTo(6, -14).stroke({ ...st, cap: 'round' });
-      g.circle(-2, 0, 1.6).fill(ink).circle(3, -3, 1.2).fill(ink);
+    case 'laboratoire': {
+      // Fiole : le liquide d'abord (il épouse les parois), le contour par-dessus.
+      const half = (y: number) => 4 + ((y + 5) * 9) / 16;
+      g.poly([-4, -14, 4, -14, 4, -5, 13, 11, -13, 11, -4, -5]).fill(0xffffff);
+      g.poly([-half(2), 2, half(2), 2, half(11), 11, -half(11), 11]).fill(0x8fd3b6);
+      g.circle(-2.5, 6, 1.8).fill(0xffffff).circle(3, 4.5, 1.2).fill(0xffffff);
+      g.poly([-4, -14, 4, -14, 4, -5, 13, 11, -13, 11, -4, -5]).stroke({ ...st, join: 'round' });
+      g.moveTo(-6.5, -14).lineTo(6.5, -14).stroke({ ...st, cap: 'round' });
+      g.circle(0.5, -2, 1.4).fill(ink);
       break;
+    }
     case 'comptoir':
       // Petite échoppe : auvent rayé et une pièce.
       g.roundRect(-12, -3, 24, 15, 3).fill(0xffffff).stroke(st);

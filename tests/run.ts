@@ -371,6 +371,25 @@ test('station : son drone travaille autour d’elle, loin du robot', () => {
   assert(g2.stationDrones.size === 0, 'drone retiré avec la station');
 });
 
+test('deux machines collées se relient sans tapis', () => {
+  const g = new Game('TEST-1A');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  const four = g.placeMachine('four', 6, 6)!;
+  const chest = g.placeMachine('coffre', 8, 6)!; // collé à droite du four
+  run(g, 40);
+  const t = new BeltTracer(g.factory, 6.5, 6.5); t.move(8.5, 6.5);
+  assert(t.linkMachine === chest, 'liaison directe proposée');
+  assert(g.linkMachines(four, chest), 'reliés');
+  four.outBuf.verre = 4;
+  run(g, 10);
+  assert((chest.inBuf.verre ?? 0) === 4, `coffre ${JSON.stringify(chest.inBuf)}`);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(JSON.stringify(g2.factory.machines.get(four.id)!.links) === `[${chest.id}]`, 'liaison sauvegardée');
+  const far = g.placeMachine('four', 12, 12)!;
+  assert(!g.linkMachines(four, far), 'pas de liaison entre machines éloignées');
+});
+
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');

@@ -25,6 +25,8 @@ export class BeltTracer {
   /** Depuis une machine vers un tapis qui la longe : une liaison de côté, sans nouvelle case. */
   linkBelt: Belt | null = null;
   linkDir: Dir | null = null;
+  /** Depuis une machine vers une machine collée : liaison directe. */
+  linkMachine: Machine | null = null;
   /** Depuis un tapis vers une machine qu'il longe : le tapis la nourrit par le côté. */
   intoMachine: Dir | null = null;
   readonly extend: Belt | null = null;
@@ -100,6 +102,7 @@ export class BeltTracer {
       const cx = Math.floor(fx), cy = Math.floor(fy);
       this.linkBelt = null;
       this.linkDir = null;
+      this.linkMachine = null;
       if (this.factory.inside(m, cx, cy)) return;
       // Première case : collée au bord de la machine, du côté du doigt.
       let x = Math.min(Math.max(cx, m.x), m.x + m.w - 1);
@@ -110,6 +113,9 @@ export class BeltTracer {
       else y = cy < m.y ? m.y - 1 : m.y + m.h;
       const inside = { x: Math.min(Math.max(x, m.x), m.x + m.w - 1), y: Math.min(Math.max(y, m.y), m.y + m.h - 1) };
       this.startDir = dirBetween(inside.x, inside.y, x, y);
+      // Une autre machine est collée à cet endroit : liaison directe.
+      const lm = this.factory.machineAt(x, y);
+      if (lm && lm !== m) { this.linkMachine = lm; this.blocked = true; return; }
       // Un tapis longe la machine à cet endroit : on propose de les relier par le côté.
       const lb = this.factory.beltAt(x, y);
       if (lb) {

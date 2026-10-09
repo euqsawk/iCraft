@@ -558,6 +558,10 @@ export class Hud implements GestureHandlers {
         this.showBubble(sx, sy - 56, 'Lâche pour relier la machine à ce tapis', false);
         return;
       }
+      if (this.tracer.linkMachine) {
+        this.showBubble(sx, sy - 56, `Lâche pour relier à ${esc(machineDef(this.tracer.linkMachine.type).name.toLowerCase())}`, false);
+        return;
+      }
       if (this.tracer.intoMachine !== null) {
         this.showBubble(sx, sy - 56, 'Lâche pour que le tapis nourrisse cette machine', false);
         return;
@@ -576,7 +580,9 @@ export class Hud implements GestureHandlers {
     this.bubble.classList.add('hidden');
     const pv = this.r.preview;
     if (!cancelled) {
-      if (this.tool === 'tapis' && this.tracer?.linkBelt && this.tracer.linkDir !== null) {
+      if (this.tool === 'tapis' && this.tracer?.linkMachine && this.tracer.startMachine) {
+        this.game.linkMachines(this.tracer.startMachine, this.tracer.linkMachine);
+      } else if (this.tool === 'tapis' && this.tracer?.linkBelt && this.tracer.linkDir !== null) {
         this.game.linkMachineToBelt(this.tracer.linkBelt, this.tracer.linkDir);
       } else if (this.tool === 'tapis' && this.tracer?.splitFrom && this.tracer.intoMachine !== null) {
         this.game.linkBeltToMachine(this.tracer.splitFrom, this.tracer.intoMachine);
@@ -1102,6 +1108,20 @@ export class Hud implements GestureHandlers {
       }
       sheet.append(this.sheetHead(title, esc(status), close));
       sheet.append(this.flowCard(mm));
+      // Liaisons directes avec des machines collées
+      const links = (mm.links ?? []).map((id) => g.factory.machines.get(id)).filter((x): x is Machine => !!x);
+      if (links.length) {
+        const lc = h('div', 'card');
+        lc.innerHTML = '<p class="muted">Reliée directement (machines collées)</p>';
+        for (const to of links) {
+          const row = h('div', 'row link-row', `<span>→ ${esc(machineDef(to.type).name)}</span>`);
+          const cut = h('button', 'btn', 'Couper');
+          cut.onclick = () => { g.unlinkMachines(mm, to.id); this.refreshSheet(); };
+          row.append(cut);
+          lc.append(row);
+        }
+        sheet.append(lc);
+      }
       // Charbon et recettes
       const top = h('div', 'card mrec');
       top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, 10, g.factory.lowFuel(mm)) : ''}${this.recipesHtml(def, mm)}`;

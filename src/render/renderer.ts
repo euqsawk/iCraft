@@ -382,6 +382,29 @@ export class GameRenderer {
       g.moveTo(cx - ax * 2.5 * s + px * 4.5, cy - ay * 2.5 * s + py * 4.5).lineTo(cx + ax * 2 * s, cy + ay * 2 * s).lineTo(cx - ax * 2.5 * s - px * 4.5, cy - ay * 2.5 * s - py * 4.5)
         .stroke({ width: 2.6, color: into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
     };
+    // Liaisons directes entre machines collées : un petit pont blanc sur le bord commun, chevron vert.
+    for (const a of f.machines.values()) {
+      for (const id of a.links ?? []) {
+        const b = f.machines.get(id);
+        if (!b || !f.touching(a, b)) continue;
+        let ex: number, ey: number, d: number;
+        if (a.x + a.w === b.x || b.x + b.w === a.x) {
+          d = a.x + a.w === b.x ? 0 : 2;
+          ex = (d === 0 ? b.x : a.x) * CELL;
+          ey = (Math.max(a.y, b.y) + Math.min(a.y + a.h, b.y + b.h)) / 2 * CELL;
+        } else {
+          d = a.y + a.h === b.y ? 1 : 3;
+          ey = (d === 1 ? b.y : a.y) * CELL;
+          ex = (Math.max(a.x, b.x) + Math.min(a.x + a.w, b.x + b.w)) / 2 * CELL;
+        }
+        const ax = DX[d], ay = DY[d], px = -ay, py = ax;
+        const ghost = !a.built || !b.built;
+        const w = ax === 0 ? 20 : 16, hh = ax === 0 ? 16 : 20;
+        g.roundRect(ex - w / 2, ey - hh / 2, w, hh, 6).fill({ color: PALETTE.white, alpha: ghost ? 0.6 : 1 }).stroke({ width: 1.5, color: PALETTE.shadow });
+        g.moveTo(ex - ax * 2.5 + px * 4.5, ey - ay * 2.5 + py * 4.5).lineTo(ex + ax * 2 , ey + ay * 2).lineTo(ex - ax * 2.5 - px * 4.5, ey - ay * 2.5 - py * 4.5)
+          .stroke({ width: 2.6, color: PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
+      }
+    }
     for (const b of f.belts.values()) {
       // Entrée : le tapis donne dans une machine.
       if (f.machineAt(b.x + DX[b.dir], b.y + DY[b.dir])) port(b, b.dir, true);
@@ -753,6 +776,14 @@ export class GameRenderer {
 
   private drawRange(g: Graphics, cx: number, cy: number): void {
     const R = RULES.stationRange * CELL;
+    // Les machines à portée du drone de la station se teintent en vert.
+    for (const m of this.game.factory.machines.values()) {
+      if (m.type === 'station') continue;
+      const mx = (m.x + m.w / 2) * CELL, my = (m.y + m.h / 2) * CELL;
+      if (Math.hypot(mx - cx, my - cy) > R) continue;
+      const r = m.w === 1 ? 8 : m.type === 'noyau' ? 18 : 15;
+      g.roundRect(m.x * CELL + 1, m.y * CELL + 1, m.w * CELL - 2, m.h * CELL - 2, r).fill({ color: 0x6cc7a0, alpha: 0.45 }).stroke({ width: 2.5, color: PALETTE.green, alpha: 0.8 });
+    }
     g.circle(cx, cy, R).fill({ color: PALETTE.yellow, alpha: 0.1 });
     dashedPolyline(g, Array.from({ length: 97 }, (_, i) => ({ x: cx + Math.cos(i / 96 * Math.PI * 2) * R, y: cy + Math.sin(i / 96 * Math.PI * 2) * R })), 10, 7);
     g.stroke({ width: 3, color: PALETTE.ink, alpha: 0.35, cap: 'round' });

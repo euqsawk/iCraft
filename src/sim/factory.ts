@@ -64,6 +64,9 @@ export interface Machine {
   /** Débit réel : ce qui est entré et sorti ces dernières secondes (non sauvegardé). */
   flowEv?: { t: number; k: string; n: number; out: boolean }[];
   flowSince?: number;
+  /** Liaisons directes vers des machines collées (sans case de tapis). */
+  links?: number[];
+  linkT?: number;
 }
 
 /** Fenêtre de mesure du débit réel, en secondes. */
@@ -607,7 +610,10 @@ export class Factory {
       const def = machineDef(m.type);
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
-      if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
+      if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') {
+        this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
+        if (m.links?.length) this.pushLinks(m, def.kind === 'storage' ? m.inBuf : m.outBuf, dt);
+      }
     }
   }
 
@@ -683,6 +689,30 @@ export class Factory {
     return false;
   }
 
+  /** Deux machines collées et reliées : les objets passent directement, à la vitesse d'un tapis. */
+  private pushLinks(m: Machine, buf: Record<string, number>, dt: number): void {
+    m.linkT = Math.min(1, (m.linkT ?? 0) + dt * RULES.beltSpeed * this.speedMult * 0.5);
+    if (m.linkT < 1) return;
+    for (const id of m.links!) {
+      const to = this.machines.get(id);
+      if (!to || !to.built) continue;
+      const t = Object.keys(buf).find((k) => buf[k] > 0 && this.canAccept(to, k));
+      if (!t) continue;
+      buf[t]--;
+      if (buf[t] === 0 && buf === m.inBuf) delete buf[t];
+      this.give(to, t);
+      m.linkT = 0;
+      return;
+    }
+  }
+
+  /** Les deux machines se touchent-elles par un côté ? */
+  touching(a: Machine, b: Machine): boolean {
+    const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+    const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+    return (ox === 0 && oy > 0) || (oy === 0 && ox > 0);
+  }
+
   private pushOutputs(m: Machine, buf: Record<string, number>): void {
     const outs = this.outputs.get(m);
     if (!outs || outs.length === 0) return;
@@ -723,7 +753,7 @@ export class Factory {
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
-        fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made,
+        fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
       })),
     };
   }
@@ -746,6 +776,7 @@ export class Factory {
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
+      if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);
     this.dirty = true;
@@ -758,7 +789,7 @@ export interface FactorySave {
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;
-    craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number;
+    craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
   }[];
 }
 
