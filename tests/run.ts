@@ -577,6 +577,21 @@ test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais d
   assert(g2.gifts.comptoir !== undefined && [...g2.factory.machines.values()].filter((m) => m.type === 'comptoir').length === 1, 'pas de second cadeau');
 });
 
+test('le minerai du robot ne finit pas dans un coffre au hasard', () => {
+  const g = new Game('TEST-65');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const four = g.placeMachine('four', -9, -1)!;
+  const chest = g.placeMachine('coffre', -6, 3)!;
+  run(g, 40);
+  g.sendRobot(-7, 1.5); // hors filon
+  run(g, 6);
+  g.robot.inv.add('cuivre', 10);
+  run(g, 40);
+  assert(!(chest.inBuf.cuivre > 0), `cuivre rangé dans le coffre : ${chest.inBuf.cuivre}`);
+  // Le four en prend au plus 6 (plus un en cours de fonte) ; le reste reste chez le robot.
+  assert((four.inBuf.cuivre ?? 0) <= 6 && g.robot.inv.count('cuivre') >= 3, `four ${four.inBuf.cuivre}, robot ${g.robot.inv.count('cuivre')}`);
+});
+
 console.log('Sauvegardes');
 test('apparence, conseils et temps de jeu sont sauvegardés ; une ancienne partie n’a pas de conseils', () => {
   const g = new Game('TEST-50');

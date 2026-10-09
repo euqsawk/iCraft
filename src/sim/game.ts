@@ -63,7 +63,9 @@ export type Source = { kind: 'robot' } | { kind: 'chest'; id: number };
 export type DroneTask =
   | { kind: 'build'; job: Job }
   /** Prendre un objet ; `self` : remplir sa propre case carburant. */
-  | { kind: 'fetch'; from: Source; item: string; self?: boolean }
+  | { kind: 'fetch'; from: Source; item: string; self?: boolean; max?: number }
+  /** Rendre au robot ce qu'on lui a pris et dont personne ne veut plus. */
+  | { kind: 'return' }
   /** Recharger une machine en charbon. */
   | { kind: 'refuel'; id: number }
   /** Déposer la cargaison (minerai du robot) dans une machine ou un coffre. */
@@ -83,6 +85,8 @@ export interface Drone {
   burn: number;
   /** Une case d'inventaire. */
   cargo: Slot | null;
+  /** La cargaison vient de l'inventaire du robot : si personne n'en veut, elle y retourne. */
+  fromRobot?: boolean;
   /** Ses tâches, de la plus importante à la moins importante. */
   priorities: DronePriority[];
 }
@@ -1073,7 +1077,9 @@ export class Game {
           if (nb && nb.needs[cargo.t]) return { kind: 'deliver', id: nb.m.id };
         }
       }
-      // Personne n'en veut : on la range dans un coffre (sauf le charbon d'un drone ravitailleur).
+      // Personne n'en veut : ce qui vient du robot lui revient ; le reste va dans un coffre
+      // (sauf le charbon d'un drone ravitailleur).
+      if (d.fromRobot && this.robot.inv.room(cargo.t) > 0) return { kind: 'return' };
       if (!(cargo.t === 'charbon' && refueler)) {
         const dest = this.destinationFor(cargo.t);
         if (dest) return { kind: 'deliver', id: dest.id };
@@ -1093,14 +1099,18 @@ export class Game {
         if (job) return { kind: 'build', job };
       } else if (cat === 'robot') {
         for (const t of this.robot.inv.kinds()) {
-          if (t !== 'charbon' && this.destinationFor(t, false)) return { kind: 'fetch', from: { kind: 'robot' }, item: t };
+          if (t === 'charbon') continue;
+          const dest = this.destinationFor(t, false);
+          // On ne prend que ce que la machine peut recevoir.
+          if (dest) return { kind: 'fetch', from: { kind: 'robot' }, item: t, max: Math.max(1, RULES.machineBuffer - (dest.inBuf[t] ?? 0)) };
         }
       } else {
         const nb = this.needsOf(cat);
         if (!nb) continue;
-        for (const item of Object.keys(nb.needs)) {
+        for (const [item, need] of Object.entries(nb.needs)) {
           const src = this.sourceFor(d, item);
-          if (src) return { kind: 'fetch', from: src, item };
+          // Juste ce qu'il faut : le reste reste dans le coffre ou chez le robot.
+          if (src) return { kind: 'fetch', from: src, item, max: need };
         }
       }
     }
@@ -1119,7 +1129,7 @@ export class Game {
 
   private taskPos(t: DroneTask): { x: number; y: number } | null {
     if (t.kind === 'build') return this.jobPos(t.job);
-    if (t.kind === 'fetch' && t.from.kind === 'robot') return { x: this.robot.x, y: this.robot.y - 0.6 };
+    if ((t.kind === 'fetch' && t.from.kind === 'robot') || t.kind === 'return') return { x: this.robot.x, y: this.robot.y - 0.6 };
     const id = t.kind === 'fetch' ? (t.from as { id: number }).id : t.id;
     const m = this.factory.machines.get(id);
     return m && m.built ? this.center(m) : null;
@@ -1136,9 +1146,15 @@ export class Game {
       };
       if (t.self) d.fuel += take(RULES.fuelStack - d.fuel);
       if (!d.cargo || d.cargo.t === t.item) {
-        const got = take(RULES.invStack - (d.cargo?.n ?? 0));
-        if (got > 0) d.cargo = { t: t.item, n: (d.cargo?.n ?? 0) + got };
+        const room = RULES.invStack - (d.cargo?.n ?? 0);
+        const got = take(t.max !== undefined ? Math.min(room, t.max) : room);
+        if (got > 0) {
+          if (!d.cargo) d.fromRobot = t.from.kind === 'robot';
+          d.cargo = { t: t.item, n: (d.cargo?.n ?? 0) + got };
+        }
       }
+    } else if (t.kind === 'return' && d.cargo) {
+      d.cargo.n -= this.robot.inv.add(d.cargo.t, d.cargo.n);
     } else if (t.kind === 'refuel' && d.cargo?.t === 'charbon') {
       const m = f.machines.get(t.id);
       if (m) d.cargo.n -= f.addFuel(m, d.cargo.n);
@@ -1152,6 +1168,7 @@ export class Game {
       }
     }
     if (d.cargo && d.cargo.n <= 0) d.cargo = null;
+    if (!d.cargo) d.fromRobot = false;
   }
 
   /** Range les tâches d'un drone, de la plus importante à la moins importante. */
