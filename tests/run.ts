@@ -619,6 +619,15 @@ test('Laboratoire : il garde les objets, débloquer les consomme', () => {
   g.receive(lab, 'lingot_cuivre', 20);
   assert(g.unlockableCount() >= 1 && g.unlock('trefileuse') && (g.lab.lingot_cuivre ?? 0) === 0, 'tréfileuse');
 });
+test('Laboratoire : il garde de quoi faire toutes les améliorations possibles, pas une seule', () => {
+  const g = new Game('TEST-43');
+  const users = g.reachableNodes().filter((x) => x.cost.lingot_fer);
+  const total = users.reduce((a, x) => a + x.cost.lingot_fer, 0);
+  assert(users.length >= 2, `plusieurs nœuds au fer : ${users.map((x) => x.id)}`);
+  assert(g.labNeeds().lingot_fer === total && total > Math.max(...users.map((x) => x.cost.lingot_fer)), `besoin ${g.labNeeds().lingot_fer} / ${total}`);
+  // Un nœud qui s'ouvre après son parent compte aussi (au même palier).
+  assert(g.reachableNodes().every((x) => x.palier <= g.palier && !g.unlocks.has(x.id)), 'seulement ce palier');
+});
 test('Comptoir : la commande se livre et se paie en pièces', () => {
   const g = new Game('TEST-42');
   g.money = 10000; g.world.reveal(6, 6, 20);
@@ -637,13 +646,14 @@ test('les drones vident les coffres vers le Noyau et le Laboratoire, selon leur 
   const lab = g.giveBuilding('laboratoire')!;
   run(g, 40);
   assert(chest.built && lab.built, 'construits');
-  g.factory.putInStorage(chest, 'lingot_fer', 60);
+  const labWants = g.labNeeds().lingot_fer;
+  g.factory.putInStorage(chest, 'lingot_fer', labWants + 30);
   g.setDronePriority(0, 'laboratoire');
   const firsts: string[] = [];
   g.on((e) => { if (e.type === 'deliver' && firsts.length < 1) firsts.push(e.at); });
   run(g, 60);
   assert(firsts[0] === 'laboratoire', `première livraison : ${firsts[0]}`);
-  assert((g.lab.lingot_fer ?? 0) === 30, `labo : ${g.lab.lingot_fer}`);
+  assert((g.lab.lingot_fer ?? 0) === labWants, `labo : ${g.lab.lingot_fer} / ${labWants}`);
   assert((g.palierDone.lingot_fer ?? 0) === 30, `Noyau : ${g.palierDone.lingot_fer}`);
 });
 test('arbre : effets appliqués et gardés dans la sauvegarde', () => {

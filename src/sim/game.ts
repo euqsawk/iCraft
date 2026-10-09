@@ -311,11 +311,27 @@ export class Game {
   }
 
   /** Ce qu'il manque au Laboratoire pour les déblocages ouverts (le plus gros besoin par objet). */
+  /** Les nœuds pas encore débloqués qu'on peut débloquer à ce palier, directement ou après leurs parents. */
+  reachableNodes(): UnlockNode[] {
+    const ok = new Set<string>(this.unlocks);
+    const out: UnlockNode[] = [];
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const x of ALL_NODES) {
+        if (ok.has(x.id) || x.effect.kind === 'soon' || x.palier > this.palier) continue;
+        if (!x.parents.every((p) => ok.has(p))) continue;
+        ok.add(x.id); out.push(x); changed = true;
+      }
+    }
+    return out;
+  }
+
   labNeeds(): Record<string, number> {
+    // Tout ce qu'il faut pour débloquer chaque nœud possible à ce palier (y compris ceux qui s'ouvriront
+    // une fois leurs parents débloqués) : les coûts s'additionnent quand deux nœuds demandent le même objet.
     const want: Record<string, number> = {};
-    for (const x of ALL_NODES) {
-      if (this.nodeState(x) !== 'available') continue;
-      for (const [k, v] of Object.entries(x.cost)) want[k] = Math.max(want[k] ?? 0, v);
+    for (const x of this.reachableNodes()) {
+      for (const [k, v] of Object.entries(x.cost)) want[k] = (want[k] ?? 0) + v;
     }
     const out: Record<string, number> = {};
     for (const [k, v] of Object.entries(want)) {
@@ -336,7 +352,7 @@ export class Game {
   accepts(m: Machine, item: string): number {
     if (m.type === 'noyau') return this.noyauNeeds()[item] ?? 0;
     if (m.type === 'comptoir') return this.comptoirNeeds()[item] ?? 0;
-    if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? Math.max(0, RULES.labCap - (this.lab[item] ?? 0)) : 0;
+    if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? Math.max(0, RULES.labCap - (this.lab[item] ?? 0), this.labNeeds()[item] ?? 0) : 0;
     if (m.type === 'revente') return m.built && !this.pickups.some((p) => p.id === m.id && !p.done) ? Math.max(0, RULES.sellCap - this.sellCount(m)) : 0;
     return 0;
   }
