@@ -218,6 +218,10 @@ export const MACHINES: Record<string, MachineDef> = {
     id: 'batterie', name: 'Batterie', kind: 'battery', coal: false, w: 2, h: 2, cost: 150, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde le surplus du solaire (10 kWh) et le rend la nuit',
   },
+  super_foreuse: {
+    id: 'super_foreuse', name: 'Grande foreuse', kind: 'drill', coal: true, w: 4, h: 4, cost: 1500, unlock: 1, recipes: [], buildable: true,
+    hint: 'Posée sur un filon, elle l’exploite en entier : autant que des foreuses partout dessus, sans perte',
+  },
   arbre: {
     id: 'arbre', name: 'Arbre', kind: 'tree', coal: false, w: 1, h: 1, cost: 5, unlock: 1, recipes: [], buildable: true,
     hint: 'Nettoie doucement la pollution autour de lui',
@@ -257,7 +261,7 @@ export const ELECTRIC_BASES = ['foreuse', 'four', 'presse', 'tour', 'trefileuse'
 
 /** Consommation au courant, en kW : de 60 kW pour une presse à 400 kW pour une centrifugeuse. */
 const KW: Record<string, number> = {
-  presse: 60, tour: 60, trefileuse: 60, foreuse: 90, four: 90, broyeur: 120, melangeur: 120,
+  presse: 60, tour: 60, trefileuse: 60, foreuse: 90, super_foreuse: 400, four: 90, broyeur: 120, melangeur: 120,
   assembleur: 150, haut_fourneau: 180, raffinerie: 250, fabricant: 300, centrifugeuse: 400,
 };
 for (const [id, kw] of Object.entries(KW)) if (MACHINES[id]) MACHINES[id].kw = kw;

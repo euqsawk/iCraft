@@ -203,7 +203,7 @@ export interface GameSave {
 }
 
 /** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte, avec le robot et les drones). */
-const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar', 'rampe', 'arbre', 'filtre']);
+const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar', 'rampe', 'arbre', 'filtre', 'super_foreuse']);
 
 export class Game {
   readonly world: World;

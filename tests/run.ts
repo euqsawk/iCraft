@@ -13,6 +13,7 @@ import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
 import { ROCKET_NEEDS } from '../src/sim/factory.ts';
+import { patchCells } from '../src/world/world.ts';
 
 let failed = 0, passed = 0;
 function test(name: string, fn: () => void): void {
@@ -1092,6 +1093,30 @@ test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
   const m0 = other.money;
   const b = other.placePlan(plan, 20, 10, 10)!;
   assert(b && b.inner && [...b.inner.machines.values()].some((x) => x.type === 'presse') && m0 - other.money === other.planPrice(plan), 'atelier posé depuis le plan');
+});
+test('grande foreuse : tout le filon, sans perte ; seule sur son filon', () => {
+  const g = new Game('TEST-SF');
+  g.money = 1e6; g.world.reveal(-10, -4, 20);
+  g.unlocks.add('super_foreuse');
+  const p = g.world.patchAt(-12, -4)!;
+  const cells = patchCells(p).length;
+  const c = g.factory.checkMachine('super_foreuse', -14, -6);
+  assert(c.ok && c.ore === 'fer' && Math.abs(c.rate! - 0.5 * (cells / 4)) < 1e-9, `débit ${c.rate} pour ${cells} cases`);
+  // Une place de foreuse sur le même filon, hors de la grande foreuse.
+  let spot: { x: number; y: number } | null = null;
+  for (let y = -9; y <= 1 && !spot; y++) for (let x = -17; x <= -7 && !spot; x++) {
+    const out = x + 1 < -14 || x > -11 || y + 1 < -6 || y > -3;
+    if (out && g.factory.checkMachine('foreuse', x, y).ok) spot = { x, y };
+  }
+  assert(spot, 'une place de foreuse');
+  const d = g.placeMachine('foreuse', spot!.x, spot!.y);
+  assert(d && !g.factory.checkMachine('super_foreuse', -14, -6).ok, 'pas de grande foreuse sur un filon déjà exploité');
+  g.removeMachine(d!);
+  const sf = g.placeMachine('super_foreuse', -14, -6)!;
+  assert(sf && sf.rate! > 3 && !g.factory.checkMachine('foreuse', spot!.x, spot!.y).ok, 'le filon est à elle');
+  sf.built = true; sf.fuel = 10; g.pending = []; g.factory.markBuilt();
+  run(g, 1.4);
+  assert(sf.made >= 5, `elle extrait vite : ${sf.made} en 1,4 s`);
 });
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {

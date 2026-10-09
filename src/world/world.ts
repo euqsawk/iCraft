@@ -32,6 +32,14 @@ export function cellToChunk(x: number): number {
   return Math.floor(x / CHUNK);
 }
 
+/** Les cases d'un filon (toutes celles qu'il couvre). */
+export function patchCells(p: Patch): { x: number; y: number }[] {
+  const out: { x: number; y: number }[] = [];
+  const R = Math.ceil(p.r * 1.3) + 1;
+  for (let y = Math.floor(p.cy) - R; y <= Math.floor(p.cy) + R; y++) for (let x = Math.floor(p.cx) - R; x <= Math.floor(p.cx) + R; x++) if (patchContains(p, x, y)) out.push({ x, y });
+  return out;
+}
+
 /** Rayon du filon dans la direction θ : un contour irrégulier mais stable. */
 export function patchRadius(p: Patch, theta: number): number {
   return p.r * (1 + 0.16 * Math.sin(3 * theta + p.p1) + 0.09 * Math.sin(5 * theta + p.p2));

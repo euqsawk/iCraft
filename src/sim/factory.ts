@@ -2,7 +2,7 @@
 import { CHUNK, RULES } from '../config.ts';
 import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
-import { RICHNESS_RATE, type World } from '../world/world.ts';
+import { patchCells, RICHNESS_RATE, type Patch, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
 import { addTo, burnOne, takeOf } from './fuel.ts';
 
@@ -225,6 +225,8 @@ export class Factory {
 
   setElectric(types: Iterable<string>): void {
     const next = new Set(types);
+    // La grande foreuse passe au courant avec les foreuses.
+    if (next.has('foreuse')) next.add('super_foreuse');
     if (next.size === this.electric.size && [...next].every((t) => this.electric.has(t))) return;
     this.electric = next;
     this.dirty = true;
@@ -461,6 +463,26 @@ export class Factory {
       let best: [string, { n: number; rate: number }] | null = null;
       for (const e of oreCount) if (!best || e[1].n > best[1].n) best = e;
       if (!best || best[1].n < 2) return { ok: false, reason: 'À poser sur un filon' };
+      // Les filons sous la machine.
+      const under = new Map<string, Patch>();
+      for (let j = 0; j < def.h; j++) for (let i = 0; i < def.w; i++) { const p = this.world.patchAt(x + i, y + j); if (p && p.type !== 'eau') under.set(p.id, p); }
+      // Un filon exploité par une grande foreuse est à elle seule (et elle ne se pose pas où il y a déjà des foreuses).
+      for (const o of this.machines.values()) {
+        if (o === ignore || machineDef(o.type).kind !== 'drill') continue;
+        const big = o.type === 'super_foreuse';
+        if (!big && type !== 'super_foreuse') continue;
+        for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) {
+          const p = this.world.patchAt(o.x + i, o.y + j);
+          if (p && under.has(p.id)) return { ok: false, reason: big ? 'Une grande foreuse exploite déjà ce filon' : 'Des foreuses exploitent déjà ce filon' };
+        }
+      }
+      if (type === 'super_foreuse') {
+        // Tout le filon, comme des foreuses partout dessus : 0,5 objet par seconde pour 4 cases (selon sa richesse).
+        const main = [...under.values()].filter((p) => p.type === best![0]).sort((a, b) => b.r - a.r)[0];
+        if (!main || best[1].n < 6) return { ok: false, reason: 'À poser bien au milieu d’un filon' };
+        const cells = patchCells(main).length;
+        return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * RICHNESS_RATE[main.richness] * (cells / 4), belts };
+      }
       return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate * (best[1].n / 4 * 0.5 + 0.5), belts };
     }
     return { ok: true, belts };

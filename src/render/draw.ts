@@ -167,6 +167,15 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.circle(0, 0, 8).stroke({ width: 2.2, color: ink });
       g.moveTo(0, -7).lineTo(0, 7).moveTo(-7, 0).lineTo(7, 0).stroke({ width: 2, color: 0x5fae6b, cap: 'round' });
       break;
+    case 'super_foreuse': {
+      // Une grosse tête de forage, à la couleur du minerai.
+      const c = ore ? item(ore).color : PALETTE.ink2;
+      g.roundRect(-30, -30, 60, 60, 10).fill({ color: c, alpha: 0.18 });
+      g.circle(0, 0, 20).fill(0xffffff).stroke({ width: 3, color: ink });
+      g.poly([-12, -9, 12, -9, 0, 15]).fill(c).stroke({ width: 2, color: ink, join: 'round' });
+      for (const [x, y] of [[-24, -24], [24, -24], [-24, 24], [24, 24]]) g.circle(x, y, 4).fill(ink);
+      break;
+    }
     case 'lampadaire':
       g.moveTo(0, 9).lineTo(0, -5).stroke({ width: 2.4, color: ink, cap: 'round' });
       g.moveTo(-4, 9).lineTo(4, 9).stroke({ width: 2.4, color: ink, cap: 'round' });

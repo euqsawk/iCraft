@@ -1176,7 +1176,12 @@ export class GameRenderer {
     const W = def.w * CELL, H = def.h * CELL;
     const isDrill = def.kind === 'drill';
     const bw = isDrill ? W - 8 : W - 2, bh = isDrill ? H - 8 : H - 2, br = isDrill ? 12 : def.w === 1 ? 7 : 15;
-    if (m.built) {
+    // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
+    const bare = def.kind === 'lamp' || def.kind === 'tree';
+    if (bare) {
+      icon.scale.set(1.35);
+      if (!m.built) icon.alpha = 0.4;
+    } else if (m.built) {
       drawMachineBody(body, bw, bh, br);
     } else {
       body.roundRect(-bw / 2, -bh / 2, bw, bh, br).fill({ color: PALETTE.white, alpha: 0.45 });
@@ -1191,10 +1196,12 @@ export class GameRenderer {
     lamp.visible = false;
     root.addChild(body, icon, badge, lamp);
     let label: Text | null = null;
-    const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
-    label = this.makeLabel(name);
-    label.position.set(0, -bh / 2 - 4);
-    root.addChild(label);
+    if (!bare) {
+      const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
+      label = this.makeLabel(name);
+      label.position.set(0, -bh / 2 - 4);
+      root.addChild(label);
+    }
     root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
@@ -1245,7 +1252,7 @@ export class GameRenderer {
       if (m.made !== v.made) { v.made = m.made; v.pop = 1; }
       v.pop = Math.max(0, v.pop - dt * 4);
       const s = 1 + Math.sin(v.pop * Math.PI) * 0.16;
-      v.icon.scale.set(s);
+      v.icon.scale.set(s * (def.kind === 'lamp' || def.kind === 'tree' ? 1.35 : 1));
       if (m.type === 'four' && m.status === 'working') v.icon.y = Math.sin(this.time * 9) * 0.6;
       // Le nom s'affiche au-dessus de la machine, sauf si une autre machine y est collée (il la recouvrirait).
       if (v.label) v.label.visible = this.camera.zoom > 0.6 && !this.machineAbove(m);
