@@ -167,9 +167,16 @@ export class GameRenderer {
   /** L'usine affichée (la carte ou l'intérieur d'un atelier) et la pièce de l'atelier. */
   private shownFactory: unknown = null;
   /** La nuit : un voile bleu nuit sur la carte, et la lumière des bâtiments et du robot (en mode additif). */
+  /**
+   * La nuit : une carte de lumière (couleur de la nuit, et des taches de lumière ajoutées par-dessus),
+   * dessinée hors écran puis posée sur la scène en mode « multiplier » : ce qui est éclairé garde ses couleurs,
+   * le reste s'assombrit.
+   */
   private nightLayer = new Container();
   private nightDark = new Graphics();
   private glowLayer = new Container();
+  private lightRT: RenderTexture | null = null;
+  private lightSprite = new Sprite();
   private glowPool: Sprite[] = [];
   private glowTex: Texture | null = null;
   private roomG = new Graphics();
@@ -185,9 +192,12 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.nightLayer, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
+    this.lightSprite.blendMode = 'multiply';
+    this.lightSprite.visible = false;
+    app.stage.addChildAt(this.lightSprite, app.stage.getChildIndex(this.worldLayer) + 1);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -2033,10 +2043,23 @@ export class GameRenderer {
    */
   private drawNight(): void {
     const night = this.game.inAtelier ? 0 : 1 - this.game.daylight;
-    this.nightLayer.visible = night > 0.01;
-    if (!this.nightLayer.visible) return;
-    const b = this.camera.bounds(CELL * 2);
-    this.nightDark.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill({ color: 0x0a1430, alpha: 0.7 * night });
+    this.lightSprite.visible = night > 0.01;
+    if (!this.lightSprite.visible) return;
+    const W = this.app.screen.width, H = this.app.screen.height;
+    // La carte de lumière, à mi-résolution (la lumière est douce, ça ne se voit pas).
+    if (!this.lightRT || this.lightRT.width !== W || this.lightRT.height !== H) {
+      this.lightRT?.destroy(true);
+      this.lightRT = RenderTexture.create({ width: W, height: H, resolution: 0.5 });
+      this.lightSprite.texture = this.lightRT;
+    }
+    // La couleur de la nuit : du blanc (jour) à un bleu nuit profond.
+    const mix = (a: number, b: number, t: number) => Math.round(a + (b - a) * t);
+    const amb = (mix(255, 50, night) << 16) | (mix(255, 58, night) << 8) | mix(255, 92, night);
+    const cam = this.camera;
+    this.nightLayer.scale.set(cam.zoom);
+    this.nightLayer.position.set(cam.width / 2 - cam.x * cam.zoom, cam.height / 2 - cam.y * cam.zoom);
+    const b = cam.bounds(CELL * 2);
+    this.nightDark.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill(amb);
     const tex = this.glowTexture();
     let used = 0;
     const glow = (x: number, y: number, r: number, tint: number, a: number) => {
@@ -2047,25 +2070,26 @@ export class GameRenderer {
       sp.position.set(x, y);
       sp.width = sp.height = r * 2;
       sp.tint = tint;
-      sp.alpha = a;
+      sp.alpha = Math.min(1, a);
     };
     for (const m of this.game.view.machines.values()) {
       if (!m.built) continue;
       const cx = (m.x + m.w / 2) * CELL, cy = (m.y + m.h / 2) * CELL;
-      const r = Math.max(m.w, m.h) * CELL * 1.05 + CELL * 0.6;
+      const r = Math.max(m.w, m.h) * CELL * 0.8 + CELL * 1.2;
       if (!this.inView(cx, cy, r)) continue;
       // Une machine qui travaille éclaire un peu plus, et sa lumière vacille à peine.
-      const busy = m.status === 'working' ? 1 : 0.7;
-      const flick = 0.94 + 0.06 * Math.sin(this.time * 3 + m.id);
-      glow(cx, cy, r, m.type === 'noyau' ? 0xff7a55 : 0xffa94a, 0.38 * night * busy * flick);
+      const busy = m.status === 'working' ? 1 : 0.8;
+      const flick = 0.95 + 0.05 * Math.sin(this.time * 3 + m.id);
+      glow(cx, cy, r, m.type === 'noyau' ? 0xffa58a : 0xffcf8f, 0.9 * busy * flick);
     }
     const rb = this.game.robot;
     const rx = rb.x * CELL, ry = (rb.y - 0.6) * CELL;
-    glow(rx, ry, CELL * 2.6, 0xffe2a0, 0.45 * night);
+    glow(rx, ry, CELL * 2.4, 0xfff0d0, 0.9);
     // Le faisceau de sa lampe, devant lui.
     const dir = Math.cos(rb.heading) < -0.1 ? -1 : 1;
-    for (let i = 1; i <= 3; i++) glow(rx + dir * CELL * (0.9 + i * 0.75), ry - CELL * 0.35 * i, CELL * (0.7 + i * 0.35), 0xfff6d8, (0.36 - i * 0.07) * night);
+    for (let i = 1; i <= 4; i++) glow(rx + dir * CELL * (0.6 + i * 0.85), ry - CELL * 0.3 * i, CELL * (0.6 + i * 0.4), 0xfff4dc, 0.75 - i * 0.12);
     for (let i = used; i < this.glowPool.length; i++) this.glowPool[i].visible = false;
+    this.app.renderer.render({ container: this.nightLayer, target: this.lightRT, clear: true, clearColor: amb });
   }
 
   render(dt: number): void {

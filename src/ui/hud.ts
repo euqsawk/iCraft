@@ -2580,6 +2580,8 @@ export class Hud implements GestureHandlers {
       }
       // Le reste de la journée ou de la nuit, en couleur sur le bord de la pastille.
       this.dayIcon.style.background = light > 0.5 ? '#FFF6D6' : '#1F2A3D';
+      // La nuit, le titre du palier (posé sur la carte) garde un fond blanc pour rester lisible.
+      this.root.classList.toggle('is-night', light < 0.6 && !this.game.inAtelier);
     }
     // Inventaires en grand : la fabrication avance à chaque image, le reste chaque seconde.
     if (this.sheetKind && this.overlay) {
