@@ -50,6 +50,9 @@ export const BIOME_NAMES: Record<BiomeId, string> = {
 export const RULES = {
   startMoney: 300,
   beltCost: 1,
+  /** Électricité : prix d'une case de câble ; un charbon fait tourner un générateur à pleine charge pendant 10 s. */
+  cableCost: 2,
+  genCoalSeconds: 10,
   /** Pont : un tapis passe par-dessus d'autres tapis, sur 4 cases au plus ; prix en plus des cases. */
   bridgeSpan: 4,
   bridgeCost: 5,

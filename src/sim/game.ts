@@ -684,7 +684,27 @@ export class Game {
     }
     const m = this.factory.machineAt(x, y);
     if (m) return this.removeMachine(m);
+    // Le câble en dernier (il passe sous le reste).
+    if (this.factory.removeCable(x, y)) {
+      this.earn(RULES.cableCost);
+      this.emit({ type: 'factory' });
+      return true;
+    }
     return false;
+  }
+
+  /** Pose des câbles (tout de suite, sans chantier) sur les cases révélées ; les cases déjà câblées sont gratuites. */
+  placeCables(cells: { x: number; y: number }[]): boolean {
+    if (!this.isUnlocked('generateur')) {
+      this.emit({ type: 'toast', text: 'Câbles : débloque le Générateur dans l’arbre (Énergie)', tone: 'warn' });
+      return false;
+    }
+    const fresh = cells.filter((c) => !this.factory.hasCable(c.x, c.y) && this.world.isRevealed(c.x, c.y));
+    if (!fresh.length) return false;
+    if (!this.spend(fresh.length * RULES.cableCost)) return false;
+    for (const c of fresh) this.factory.addCable(c.x, c.y);
+    this.emit({ type: 'factory' });
+    return true;
   }
 
   removeMachine(m: Machine): boolean {
@@ -1051,7 +1071,7 @@ export class Game {
   /** Combien une machine (four, foreuse…) accepte encore de cet objet : charbon dans sa case carburant, ingrédients. */
   machineAccepts(m: Machine, t: string): number {
     const def = machineDef(m.type);
-    if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill' && def.kind !== 'station')) return 0;
+    if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill' && def.kind !== 'station' && def.kind !== 'generator')) return 0;
     let n = 0;
     const ingredient = def.recipes.some((r) => r.in[t]);
     if (t === 'charbon' && def.coal) n += this.factory.fuelRoom(m);

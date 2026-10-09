@@ -68,9 +68,11 @@ Pour poser une machine : touche sa carte puis la carte du jeu, ou fais glisser s
 - **Absence** : quand le jeu est fermé, l'usine tourne à 10 % de sa vitesse, sur 8 h au plus. Ce que les tapis livrent au Noyau, au Laboratoire et au Comptoir compte ; un écran au retour montre ce qui a été livré.
 - **Mise à jour** : le menu propose « Chercher une mise à jour ».
 
+- **Électricité** (branche Énergie, palier 4) : le **Générateur** brûle du charbon (les drones le rechargent) et alimente jusqu'à 5 machines électriques ; il ne brûle que pour celles qui travaillent (un charbon = 10 s à pleine charge). Il débloque l'outil **Câble** : on le trace au doigt comme un tapis, il passe sous les tapis et les machines (2 pièces la case, posé tout de suite), et une machine posée dessus ou collée à un câble est sur le réseau. Un câble est jaune quand son réseau a du courant. Chaque machine a ensuite sa version électrique à débloquer (Foreuse, Four, Broyeur, Presse, Tréfileuse, Mélangeur, Tour, Fourneau, Raffinerie, Assembleur, Fabricant, Centrifugeuse) : mêmes recettes, plus de charbon à livrer. Trop de machines pour un réseau : elles ralentissent ; sans courant : pastille éclair. Le générateur montre la charge de son réseau, une machine électrique son courant. La gomme retire un câble en dernier (après ce qui est posé dessus).
+
 ## Pas encore là
 
-Électricité et câbles, modules, sons, transport (camions et trains), marché et le reste de l'équipement du robot. Ce sont les prochaines étapes du document de game design.
+Batteries, solaire et réacteur, modules, sons, transport (camions et trains), marché et le reste de l'équipement du robot. Ce sont les prochaines étapes du document de game design.
 
 ## Développement
 

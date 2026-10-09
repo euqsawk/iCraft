@@ -1,6 +1,7 @@
 // Tests de la simulation (sans rendu). Lancer : npm test
 import { Game } from '../src/sim/game.ts';
 import { BeltTracer, type TraceCell } from '../src/sim/tracer.ts';
+import { CableTracer } from '../src/sim/cables.ts';
 import { World } from '../src/world/world.ts';
 import { producibleItems, generateChoices } from '../src/sim/orders.ts';
 import { item, ITEM_LIST } from '../src/data/items.ts';
@@ -56,7 +57,7 @@ test('chaque recette se déduit de ses entrées (sauf la raffinerie)', () => {
   for (const m of Object.values(MACHINES)) {
     const sigs = m.recipes.map((r) => Object.keys(r.in).sort().join('+'));
     const dup = sigs.filter((s, i) => sigs.indexOf(s) !== i);
-    if (m.id === 'raffinerie') assert(dup.length === 1 && dup[0] === 'petrole', 'raffinerie : seul le pétrole est ambigu');
+    if (m.id === 'raffinerie' || m.base === 'raffinerie') assert(dup.length === 1 && dup[0] === 'petrole', 'raffinerie : seul le pétrole est ambigu');
     else assert(dup.length === 0, `${m.id} : recettes ambiguës ${dup}`);
   }
 });
@@ -603,6 +604,69 @@ test('sans charbon, le robot ralentit et le drone se pose sur lui', () => {
   assert(d.state !== 'parked' && d.fuel > 0, 'le drone aurait dû repartir');
 });
 
+
+console.log('Électricité');
+test('générateur, câbles et machines électriques', () => {
+  const g = new Game('TEST-E1');
+  g.money = 100000; g.world.reveal(8, 8, 20); g.drones[0].cargo = null;
+  assert(!g.placeMachine('generateur', 4, 4) && !g.placeCables([{ x: 6, y: 4 }]), 'à débloquer');
+  for (const id of ['generateur', 'four_elec', 'presse_elec']) g.unlocks.add(id);
+  const gen = g.placeMachine('generateur', 4, 4)!;
+  const four = g.placeMachine('four_elec', 9, 4)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  assert(MACHINES.four_elec.name === 'Four électrique' && !MACHINES.four_elec.coal && MACHINES.four_elec.recipes.length === MACHINES.four.recipes.length, 'définition');
+  four.inBuf = { fer: 10 };
+  run(g, 3);
+  assert(four.status === 'nopower' && !(four.outBuf.lingot_fer > 0), `sans câble : ${four.status}`);
+  // Câble du générateur (cases 4-5) jusqu'au four (cases 9-10) : il touche les deux.
+  const cells = [6, 7, 8].map((x) => ({ x, y: 4 }));
+  const m0 = g.money;
+  assert(g.placeCables(cells) && m0 - g.money === 3 * RULES.cableCost, 'câbles posés');
+  assert(g.factory.netOf(four) && g.factory.netOf(four) === g.factory.netOf(gen), 'même réseau');
+  run(g, 3);
+  assert(four.status === 'nopower', 'générateur sans charbon');
+  gen.fuel = 10;
+  run(g, 20);
+  assert((four.outBuf.lingot_fer ?? 0) >= 3 && four.fuel === 0, `lingots sans charbon dans le four : ${four.outBuf.lingot_fer}`);
+  assert(gen.fuel < 10 && gen.fuel >= 7, `le générateur brûle selon la charge : ${gen.fuel}`);
+  // Au repos, il ne brûle rien.
+  four.inBuf = {}; four.outBuf = {};
+  run(g, 3);
+  const f = gen.fuel + gen.burn;
+  run(g, 30);
+  assert(gen.fuel + gen.burn === f && gen.status === 'idle', `au repos : ${f} → ${gen.fuel + gen.burn}`);
+  // Six machines pour un générateur de 5 : chacune reçoit 5/6 du courant.
+  const presses = [0, 1, 2, 3, 4, 5].map((i) => g.placeMachine('presse_elec', 4 + i * 2, 7)!);
+  const four2 = presses.pop()!;
+  g.factory.removeMachine(four2);
+  const extra = g.placeMachine('four_elec', 14, 7)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  g.placeCables([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((x) => ({ x, y: 6 })));
+  for (const p of presses) p.inBuf = { lingot_fer: 10 };
+  extra.inBuf = { fer: 10 };
+  four.inBuf = { fer: 10 };
+  run(g, 2);
+  const net = g.factory.netOf(four)!;
+  assert(net.users.length === 7 && net.demand === 7 && Math.abs(net.ratio - 5 / 7) < 1e-9, `réseau : ${net.users.length} machines, demande ${net.demand}, part ${net.ratio}`);
+  // Sauvegarde et gomme.
+  const g2 = new Game('TEST-E1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.cables.size === g.factory.cables.size && g2.factory.hasCable(7, 4), 'câbles rechargés');
+  const m1 = g.money;
+  assert(g.removeAt(7, 4) && !g.factory.hasCable(7, 4) && g.money - m1 === RULES.cableCost, 'câble gommé');
+  assert(g.factory.netOf(four) !== g.factory.netOf(gen) || g.factory.netOf(four)!.gens.length === 1, 'réseau recalculé');
+});
+test('tracé de câble : passe sous les tapis et les machines, reprend en revenant', () => {
+  const g = new Game('TEST-E2');
+  g.world.reveal(8, 8, 20);
+  const t = new CableTracer(g.world, 2.5, 2.5);
+  for (let i = 1; i <= 24; i++) t.move(2.5 + i * 0.25, 2.5);
+  for (let i = 1; i <= 12; i++) t.move(8.5, 2.5 + i * 0.25);
+  assert(t.cells.length === 10 && t.cells[6].x === 8 && t.cells[9].y === 5, `cases : ${JSON.stringify(t.cells)}`);
+  t.move(5.5, 2.5);
+  assert(t.cells.length === 4, `reprise : ${t.cells.length}`);
+});
 
 console.log('Paliers, Laboratoire, Comptoir');
 test('les propositions du Comptoir suivent ce qu’on sait fabriquer', () => {

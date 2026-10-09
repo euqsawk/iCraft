@@ -252,6 +252,9 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .gauge { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 800; }
 .gauge .g-label { display: inline-flex; align-items: center; gap: 4px; color: var(--ink2); }
 .gauge .g-label img { width: 14px; height: 14px; }
+.gauge .g-label svg { width: 14px; height: 14px; flex: none; color: var(--ink); }
+.gauge.power .g-bar > span { background: var(--yellow, #FFC857); }
+.gauge.power .g-label { white-space: nowrap; }
 .gauge .g-bar { flex: 1; min-width: 40px; height: 8px; border-radius: 4px; background: #E8EFEB; overflow: hidden; }
 .gauge .g-bar > span { display: block; height: 100%; background: var(--ink); border-radius: 4px; }
 .gauge.low .g-bar > span { background: var(--coral); }

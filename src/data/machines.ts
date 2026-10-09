@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator';
 
 export interface MachineDef {
   id: string;
@@ -33,6 +33,12 @@ export interface MachineDef {
   buildable: boolean;
   /** Phrase courte pour la palette. */
   hint: string;
+  /** Machine électrique : courant consommé quand elle travaille (1 = une machine). */
+  power?: number;
+  /** Générateur : nombre de machines électriques qu'il alimente à plein. */
+  supply?: number;
+  /** Version électrique : la machine au charbon dont elle reprend les recettes. */
+  base?: string;
 }
 
 const r = (inp: Record<string, number>, out: Record<string, number>, time: number): Recipe => ({ in: inp, out, time });
@@ -137,6 +143,10 @@ export const MACHINES: Record<string, MachineDef> = {
     hint: 'Uranium → uranium enrichi',
     recipes: [r({ uranium: 1 }, { uranium_enrichi: 1 }, 3)],
   },
+  generateur: {
+    id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 5,
+    hint: 'Brûle du charbon et alimente les machines reliées par câble',
+  },
   coffre: {
     id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 100 objets · les drones y prennent le charbon',
@@ -162,6 +172,22 @@ export const MACHINES: Record<string, MachineDef> = {
     hint: 'Reçoit les livraisons',
   },
 };
+
+/** Les machines qui existent aussi en version électrique (sans charbon, reliées par câble à un générateur). */
+export const ELECTRIC_BASES = ['foreuse', 'four', 'presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'broyeur', 'melangeur', 'raffinerie', 'fabricant', 'centrifugeuse'];
+
+for (const id of ELECTRIC_BASES) {
+  const b = MACHINES[id];
+  MACHINES[`${id}_elec`] = {
+    ...b, id: `${id}_elec`, name: `${b.name} électrique`, coal: false, power: 1, base: id,
+    cost: Math.round(b.cost * 1.5), hint: `${b.hint} · électrique, sans charbon`,
+  };
+}
+
+/** La machine au charbon d'une machine (elle-même si elle n'est pas électrique). */
+export function baseType(id: string): string {
+  return MACHINES[id]?.base ?? id;
+}
 
 export const BUILDABLE: MachineDef[] = Object.values(MACHINES).filter((m) => m.buildable);
 

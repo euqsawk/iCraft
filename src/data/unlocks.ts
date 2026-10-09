@@ -89,11 +89,23 @@ export const BRANCHES: Branch[] = [
   {
     id: 'energie', label: 'Énergie', nodes: [
       n('charbon', 'Charbon', 'charbon', 0, 1, 1, {}, [], 'Au début, tout tourne au charbon : machines, robot et drones.', base),
-      n('generateur', 'Générateur', 'generateur', 1, 1, 4, { moteur: 10, cable: 40 }, ['charbon'], 'Brûle du charbon et alimente les machines par câbles.', soon),
-      n('four_elec', 'Four électrique', 'four_elec', 2, 0, 4, { cable: 40 }, ['generateur'], 'Un four qui marche à l’électricité : plus de charbon à livrer.', soon),
-      n('batterie', 'Batteries', 'batterie', 2, 2, 5, { batterie: 20 }, ['generateur'], 'Stocke le surplus pour plus tard.', soon),
-      n('solaire', 'Solaire', 'solaire', 3, 2, 5, { panneau_solaire: 10 }, ['batterie'], 'Énergie gratuite le jour, gardée la nuit dans les batteries.', soon),
-      n('reacteur', 'Réacteur', 'reacteur', 4, 1, 7, { reacteur: 1 }, ['solaire'], 'Fonctionne à l’uranium enrichi. Fin de partie.', soon),
+      n('generateur', 'Générateur', 'generateur', 1, 1, 4, { moteur: 10, cable: 40 }, ['charbon'], 'Brûle du charbon et alimente jusqu’à 5 machines électriques. Débloque aussi les câbles : trace-les au doigt, une machine collée à un câble est sur le réseau.', m('generateur')),
+      // Chaque machine a sa version électrique : plus de charbon à livrer, il suffit d'un câble.
+      n('foreuse_elec', 'Foreuse électrique', 'foreuse_elec', 2, 0, 4, { cable: 20, engrenage: 20 }, ['generateur'], 'Une foreuse sans charbon, reliée au réseau.', m('foreuse_elec')),
+      n('four_elec', 'Four électrique', 'four_elec', 2, 1, 4, { cable: 40 }, ['generateur'], 'Un four qui marche à l’électricité : plus de charbon à livrer.', m('four_elec')),
+      n('broyeur_elec', 'Broyeur électrique', 'broyeur_elec', 2, 2, 4, { cable: 30, beton: 20 }, ['generateur'], 'Un broyeur sans charbon.', m('broyeur_elec')),
+      n('presse_elec', 'Presse électrique', 'presse_elec', 3, 0, 4, { cable: 30, plaque_fer: 60 }, ['foreuse_elec'], 'Une presse sans charbon.', m('presse_elec')),
+      n('trefileuse_elec', 'Tréfileuse électrique', 'trefileuse_elec', 3, 1, 4, { cable: 30, fil_cuivre: 60 }, ['four_elec'], 'Une tréfileuse sans charbon.', m('trefileuse_elec')),
+      n('melangeur_elec', 'Mélangeur électrique', 'melangeur_elec', 3, 2, 4, { cable: 40, beton: 40 }, ['broyeur_elec'], 'Un mélangeur sans charbon.', m('melangeur_elec')),
+      n('tour_elec', 'Tour électrique', 'tour_elec', 4, 0, 4, { cable: 30, vis: 60 }, ['presse_elec'], 'Un tour sans charbon.', m('tour_elec')),
+      n('haut_fourneau_elec', 'Fourneau électrique', 'haut_fourneau_elec', 4, 1, 4, { cable: 40, acier: 40 }, ['trefileuse_elec'], 'Un fourneau sans charbon (l’acier demande toujours du charbon comme ingrédient).', m('haut_fourneau_elec')),
+      n('raffinerie_elec', 'Raffinerie électrique', 'raffinerie_elec', 4, 2, 4, { cable: 60, plastique: 40 }, ['melangeur_elec'], 'Une raffinerie sans charbon.', m('raffinerie_elec')),
+      n('assembleur_elec', 'Assembleur électrique', 'assembleur_elec', 5, 0, 4, { cable: 40, engrenage: 40 }, ['tour_elec'], 'Un assembleur sans charbon.', m('assembleur_elec')),
+      n('fabricant_elec', 'Fabricant électrique', 'fabricant_elec', 5, 1, 4, { cable: 60, moteur: 10 }, ['haut_fourneau_elec'], 'Un fabricant sans charbon.', m('fabricant_elec')),
+      n('centrifugeuse_elec', 'Centrifugeuse électrique', 'centrifugeuse_elec', 5, 2, 6, { cable: 80, processeur: 20 }, ['raffinerie_elec'], 'Une centrifugeuse sans charbon.', m('centrifugeuse_elec')),
+      n('batterie', 'Batteries', 'batterie', 6, 0, 5, { batterie: 20 }, ['assembleur_elec'], 'Stocke le surplus pour plus tard.', soon),
+      n('solaire', 'Solaire', 'solaire', 7, 0, 5, { panneau_solaire: 10 }, ['batterie'], 'Énergie gratuite le jour, gardée la nuit dans les batteries.', soon),
+      n('reacteur', 'Réacteur', 'reacteur', 8, 1, 7, { reacteur: 1 }, ['solaire'], 'Fonctionne à l’uranium enrichi. Fin de partie.', soon),
     ],
   },
   {

@@ -1,7 +1,7 @@
 // L'usine : tapis et machines sur la grille, et leur simulation.
 import { RULES } from '../config.ts';
 import { acceptedInputs, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
-import { DX, DY, key, opposite, type Dir } from './geom.ts';
+import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
 
 export interface BeltItem {
@@ -41,7 +41,7 @@ export function span(b: { jump?: number }): number {
   return 1 + (b.jump ?? 0);
 }
 
-export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore';
+export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore' | 'nopower';
 
 export interface Machine {
   id: number;
@@ -76,6 +76,20 @@ export interface Machine {
   /** Liaisons directes vers des machines collées (sans case de tapis). */
   links?: number[];
   linkT?: number;
+  /** Électricité (non sauvegardé) : la machine a voulu travailler, et la part de courant qu'elle reçoit (0 à 1). */
+  want?: boolean;
+  power?: number;
+}
+
+/** Un réseau électrique : les câbles reliés entre eux et les machines qui les touchent. */
+export interface PowerNet {
+  id: number;
+  gens: Machine[];
+  users: Machine[];
+  /** Courant disponible et demandé (en machines), et la part servie (0 à 1). */
+  supply: number;
+  demand: number;
+  ratio: number;
 }
 
 /** Fenêtre de mesure du débit réel, en secondes. */
@@ -100,7 +114,12 @@ const DRILL_BASE_RATE = 0.5;
 export class Factory {
   readonly belts = new Map<number, Belt>();
   readonly machines = new Map<number, Machine>();
+  /** Câbles électriques (une couche à part : ils passent sous les tapis et les machines). */
+  readonly cables = new Set<number>();
   private cellMachine = new Map<number, Machine>();
+  private nets: PowerNet[] = [];
+  private netOfMachine = new Map<Machine, PowerNet>();
+  private netOfCable = new Map<number, PowerNet>();
   private nextId = 1;
 
   // Topologie, recalculée quand l'usine change.
@@ -335,6 +354,132 @@ export class Factory {
     this.dirty = true;
   }
 
+  // ---------- Électricité ----------
+
+  hasCable(x: number, y: number): boolean {
+    return this.cables.has(key(x, y));
+  }
+
+  addCable(x: number, y: number): boolean {
+    const k = key(x, y);
+    if (this.cables.has(k)) return false;
+    this.cables.add(k);
+    this.dirty = true;
+    return true;
+  }
+
+  removeCable(x: number, y: number): boolean {
+    const ok = this.cables.delete(key(x, y));
+    if (ok) this.dirty = true;
+    return ok;
+  }
+
+  /** Le réseau d'une machine (null si aucun câble ne la touche). */
+  netOf(m: Machine): PowerNet | null {
+    this.refresh();
+    return this.netOfMachine.get(m) ?? null;
+  }
+
+  /** Le réseau d'une case de câble. */
+  netAt(x: number, y: number): PowerNet | null {
+    this.refresh();
+    return this.netOfCable.get(key(x, y)) ?? null;
+  }
+
+  /** Les réseaux : câbles reliés (case à case), et les machines posées dessus ou collées à un câble. */
+  private buildNets(): void {
+    const parent = new Map<number, number>();
+    const find = (k: number): number => {
+      let r = k;
+      while (parent.get(r) !== r) r = parent.get(r)!;
+      let c = k;
+      while (c !== r) { const n = parent.get(c)!; parent.set(c, r); c = n; }
+      return r;
+    };
+    const union = (a: number, b: number) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+    for (const k of this.cables) parent.set(k, k);
+    for (const k of this.cables) {
+      const [x, y] = unkey(k);
+      for (const [dx, dy] of [[1, 0], [0, 1]]) {
+        const n = key(x + dx, y + dy);
+        if (this.cables.has(n)) union(k, n);
+      }
+    }
+    // Une machine relie les câbles qu'elle touche (sur ses cases ou autour).
+    const touch = new Map<Machine, number[]>();
+    for (const m of this.machines.values()) {
+      const def = machineDef(m.type);
+      if (!def.power && !def.supply) continue;
+      const found: number[] = [];
+      for (let y = m.y - 1; y <= m.y + m.h; y++) {
+        for (let x = m.x - 1; x <= m.x + m.w; x++) {
+          const corner = (x < m.x || x >= m.x + m.w) && (y < m.y || y >= m.y + m.h);
+          if (corner) continue;
+          const k = key(x, y);
+          if (this.cables.has(k)) found.push(k);
+        }
+      }
+      if (!found.length) continue;
+      for (const k of found) union(found[0], k);
+      touch.set(m, found);
+    }
+    const byRoot = new Map<number, PowerNet>();
+    const netFor = (k: number) => {
+      const r = find(k);
+      let n = byRoot.get(r);
+      if (!n) { n = { id: byRoot.size + 1, gens: [], users: [], supply: 0, demand: 0, ratio: 0 }; byRoot.set(r, n); }
+      return n;
+    };
+    this.netOfCable.clear();
+    this.netOfMachine.clear();
+    for (const k of this.cables) this.netOfCable.set(k, netFor(k));
+    for (const [m, found] of touch) {
+      const n = netFor(found[0]);
+      this.netOfMachine.set(m, n);
+      if (machineDef(m.type).supply) n.gens.push(m); else n.users.push(m);
+    }
+    this.nets = [...byRoot.values()];
+  }
+
+  /** Le courant de chaque réseau : les générateurs qui ont du charbon servent les machines qui veulent travailler. */
+  private stepPower(dt: number): void {
+    for (const m of this.machines.values()) if (machineDef(m.type).power) m.power = 0;
+    for (const n of this.nets) {
+      let supply = 0, demand = 0;
+      for (const g of n.gens) if (g.built && (g.fuel > 0 || g.burn > 0)) supply += machineDef(g.type).supply!;
+      for (const u of n.users) if (u.built && u.want) demand += machineDef(u.type).power!;
+      const ratio = supply <= 0 ? 0 : demand <= 0 ? 1 : Math.min(1, supply / demand);
+      for (const u of n.users) u.power = ratio;
+      n.supply = supply; n.demand = demand; n.ratio = ratio;
+      // Chaque générateur brûle selon la charge du réseau.
+      const load = supply > 0 ? Math.min(1, demand / supply) : 0;
+      for (const g of n.gens) this.tickGenerator(g, load, dt);
+    }
+    // Un générateur sans câble ne sert à rien.
+    for (const m of this.machines.values()) {
+      if (machineDef(m.type).kind === 'generator' && m.built && !this.netOfMachine.has(m)) m.status = m.fuel > 0 ? 'idle' : 'nofuel';
+    }
+  }
+
+  private tickGenerator(g: Machine, load: number, dt: number): void {
+    if (!g.built) return;
+    if (load <= 0) { g.status = g.fuel > 0 || g.burn > 0 ? 'idle' : 'nofuel'; return; }
+    if (g.burn <= 0) {
+      if (g.fuel <= 0) { g.status = 'nofuel'; return; }
+      g.fuel--;
+      this.flow(g, 'charbon', 1, false);
+      g.burn += RULES.genCoalSeconds;
+    }
+    g.burn -= dt * load;
+    g.status = 'working';
+  }
+
+  /** Électrique : part du courant reçue (et on note qu'elle en veut). Au charbon : 1 si elle a de quoi brûler. */
+  private energy(m: Machine, def: MachineDef, dt: number): number {
+    if (def.power) { m.want = true; return m.power ?? 0; }
+    return this.useFuel(m, def, dt) ? 1 : 0;
+  }
+
   setChoice(m: Machine, out: string): void {
     m.choice = out;
     m.craft = null;
@@ -363,6 +508,8 @@ export class Factory {
         if (lm && lm !== fm && !(nxt?.kind === 'machine' && nxt.machine === lm) && !this.outputs.get(lm)!.includes(b)) this.outputs.get(lm)!.push(b);
       }
     }
+
+    this.buildNets();
 
     // Ordre de mise à jour : l'aval d'abord, pour que les objets avancent en file.
     const visited = new Set<Belt>();
@@ -656,9 +803,11 @@ export class Factory {
       }
     }
 
+    this.stepPower(dt);
     for (const m of this.machines.values()) {
       if (!m.built) continue;
       const def = machineDef(m.type);
+      if (def.power) m.want = false;
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
       if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') {
@@ -678,9 +827,11 @@ export class Factory {
     if (!m.ore || !m.rate) { m.status = 'noore'; return; }
     if (this.outCount(m) >= RULES.machineBuffer) { m.status = 'blocked'; m.drillT = Math.min(m.drillT, 1); return; }
     // Sur du charbon, elle démarre même à vide : elle brûlera ce qu'elle extrait.
-    if (!this.useFuel(m, machineDef(m.type), dt) && !this.selfFed(m)) { m.status = 'nofuel'; return; }
+    const def = machineDef(m.type);
+    const k = this.energy(m, def, dt);
+    if (k <= 0 && !this.selfFed(m)) { m.status = def.power ? 'nopower' : 'nofuel'; return; }
     m.status = 'working';
-    m.drillT += dt * m.rate;
+    m.drillT += dt * m.rate * (def.power ? k : 1);
     if (m.drillT >= 1) {
       m.drillT -= 1;
       m.made++;
@@ -706,8 +857,9 @@ export class Factory {
     if (m.craft) {
       const rec = def.recipes[m.craft.ri];
       if (m.craft.t < rec.time) {
-        if (!this.useFuel(m, def, dt)) { m.status = 'nofuel'; return; }
-        m.craft.t += dt;
+        const k = this.energy(m, def, dt);
+        if (k <= 0) { m.status = def.power ? 'nopower' : 'nofuel'; return; }
+        m.craft.t += dt * k;
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
       for (const [k, v] of Object.entries(rec.out)) {
@@ -801,6 +953,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
+      cables: [...this.cables],
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
@@ -810,7 +963,8 @@ export class Factory {
   }
 
   load(s: FactorySave): void {
-    this.belts.clear(); this.machines.clear(); this.cellMachine.clear();
+    this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
+    for (const k of s.cables ?? []) this.cables.add(k);
     for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
@@ -838,6 +992,7 @@ export class Factory {
 
 export interface FactorySave {
   nextId: number;
+  cables?: number[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;

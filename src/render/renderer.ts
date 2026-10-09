@@ -9,12 +9,13 @@ import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
-import { DX, DY } from '../sim/geom.ts';
+import { DX, DY, unkey } from '../sim/geom.ts';
+import type { CableTracer } from '../sim/cables.ts';
 import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
 import { Camera } from './camera.ts';
-import { dashedPolyline, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
+import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
 import { PROPELLER, robotShapes, type Shape } from './robotShapes.ts';
 import { robotColor } from '../data/look.ts';
 
@@ -49,6 +50,7 @@ const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 
 export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
+  | { kind: 'cable'; tracer: CableTracer }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
   | null;
@@ -86,6 +88,12 @@ export class GameRenderer {
   private groundLayer = new Container();
   private dots!: TilingSprite;
   private filonLayer = new Container();
+  /** Câbles électriques : au sol, sous les tapis et les machines. */
+  private cableG = new Graphics();
+  private cableT = 0;
+  private cableCount = 0;
+  /** Ombres au sol (robot) : sous les machines. */
+  private groundShadows = new Container();
   /** Tapis découpés par morceaux de carte (ombres en dessous, bandes blanches au-dessus) : hors écran, on les cache. */
   private beltShadow = new Container();
   private beltTop = new Container();
@@ -93,7 +101,7 @@ export class GameRenderer {
   private ghostBeltG = new Graphics();
   /** Raccords entre les tapis et les machines (au-dessus des machines). */
   private portG = new Graphics();
-  /** Bouts de tapis entre machines collées : par-dessus les machines, toujours visibles. */
+  /** Bouts de tapis entre machines collées : sous les machines, comme les autres tapis. */
   private linkG = new Graphics();
   /** Machines rangées de haut en bas : celle du dessous passe devant (son ombre ne mord pas sur la voisine). */
   private machineLayer = new Container({ sortableChildren: true });
@@ -111,7 +119,7 @@ export class GameRenderer {
   private noyauView: { root: Container; ring: Graphics; badge: Graphics; progress: number; pulse: number } | null = null;
   private itemTextures = new Map<string, Texture>();
   private itemPool: Sprite[] = [];
-  private robotView!: { root: Container; body: Container; beam: Graphics; glow: Graphics; flip: Container; shape: Graphics; spin: Graphics; look: string };
+  private robotView!: { root: Container; shadow: Graphics; body: Container; beam: Graphics; glow: Graphics; flip: Container; shape: Graphics; spin: Graphics; look: string };
   private droneViews: Container[] = [];
   private beltsDirty = true;
   private time = 0;
@@ -133,7 +141,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.beltShadow, this.beltTop, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.machineLayer, this.linkG, this.portG, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -407,6 +415,40 @@ export class GameRenderer {
    * Raccord propre entre un tapis et une machine : une petite bouche posée sur le bord de la machine,
    * avec un chevron dans le sens du flux (vers la machine pour une entrée, vers le tapis pour une sortie).
    */
+  /** Les câbles : un trait sombre de case en case, jaune au milieu quand le réseau a du courant. */
+  private drawCables(): void {
+    this.cableT = 0;
+    const f = this.game.factory, g = this.cableG;
+    this.cableCount = f.cables.size;
+    g.clear();
+    if (!f.cables.size) return;
+    const segs: { x0: number; y0: number; x1: number; y1: number; on: boolean }[] = [];
+    const dots: { x: number; y: number; on: boolean }[] = [];
+    for (const k of f.cables) {
+      const [x, y] = unkey(k);
+      const net = f.netAt(x, y);
+      const on = !!net && net.supply > 0;
+      const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
+      let links = 0;
+      for (let d = 0; d < 4; d++) {
+        const nx = x + DX[d], ny = y + DY[d];
+        if (f.hasCable(nx, ny)) { links++; if (d < 2) segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL, y1: cy + DY[d] * CELL, on }); continue; }
+        // Une machine électrique collée au câble : il file jusqu'à son bord.
+        const m = f.machineAt(nx, ny);
+        if (m && (machineDef(m.type).power || machineDef(m.type).supply)) {
+          links++;
+          segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL * 0.6, y1: cy + DY[d] * CELL * 0.6, on });
+        }
+      }
+      if (links !== 2) dots.push({ x: cx, y: cy, on });
+    }
+    for (const s of segs) g.moveTo(s.x0, s.y0).lineTo(s.x1, s.y1);
+    g.stroke({ width: 5, color: PALETTE.ink, alpha: 0.85, cap: 'round', join: 'round' });
+    for (const d of dots) g.circle(d.x, d.y, 4).fill({ color: PALETTE.ink, alpha: 0.85 });
+    for (const s of segs) g.moveTo(s.x0, s.y0).lineTo(s.x1, s.y1).stroke({ width: 2, color: s.on ? PALETTE.yellow : 0x8a99ad, cap: 'round' });
+    for (const d of dots) g.circle(d.x, d.y, 2).fill(d.on ? PALETTE.yellow : 0x8a99ad);
+  }
+
   /** Tabliers des ponts : du milieu de la rampe jusqu'à la case d'arrivée, au-dessus des tapis enjambés. */
   private drawBridges(built: Belt[]): void {
     const g = this.bridgeG;
@@ -494,17 +536,12 @@ export class GameRenderer {
         const { x: ex, y: ey, d } = this.linkEdge(a, b);
         const ax = DX[d], ay = DY[d], px = -ay, py = ax;
         const ghost = !a.built || !b.built;
-        // Le même tapis que partout ailleurs (ombre, bande blanche, bouts arrondis), posé dans une petite
-        // encoche couleur du sol entre les deux machines, pour qu'il se voie comme un vrai bout de tapis.
-        const al = ghost ? 0.5 : 1;
-        const small = a.w === 1 || b.w === 1;
-        const half = small ? 1 : 4, notch = half + 7 + 2;
-        const ground = BIOME_COLORS[this.game.world.biomeAt(Math.floor(ex / CELL - ax * 0.5), Math.floor(ey / CELL - ay * 0.5))];
-        const nw = ax ? notch * 2 : 22, nh = ay ? notch * 2 : 22;
-        lg.roundRect(ex - nw / 2, ey - nh / 2, nw, nh, 5).fill({ color: ground, alpha: al });
-        lg.moveTo(ex - ax * half, ey - ay * half + 3).lineTo(ex + ax * half, ey + ay * half + 3)
+        // Un tapis normal (ombre, bande blanche, rouleau) d'un milieu de case à l'autre, sous les deux machines :
+        // on n'en voit que le bout entre leurs coins. Seul le chevron vert est par-dessus, sans fond.
+        const al = ghost ? 0.5 : 1, L = CELL / 2;
+        lg.moveTo(ex - ax * L, ey - ay * L + 3).lineTo(ex + ax * L, ey + ay * L + 3)
           .stroke({ width: 14, color: PALETTE.shadow, alpha: al, cap: 'round' });
-        lg.moveTo(ex - ax * half, ey - ay * half).lineTo(ex + ax * half, ey + ay * half)
+        lg.moveTo(ex - ax * L, ey - ay * L).lineTo(ex + ax * L, ey + ay * L)
           .stroke({ width: 14, color: PALETTE.white, alpha: al, cap: 'round' });
         g.moveTo(ex - ax * 2.5 + px * 4.5, ey - ay * 2.5 + py * 4.5).lineTo(ex + ax * 2, ey + ay * 2).lineTo(ex - ax * 2.5 - px * 4.5, ey - ay * 2.5 - py * 4.5)
           .stroke({ width: 2.6, color: PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
@@ -633,7 +670,7 @@ export class GameRenderer {
     lamp.visible = false;
     root.addChild(body, icon, badge, lamp);
     let label: Text | null = null;
-    const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
+    const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.base ? machineDef(def.base).name : def.name;
     label = this.makeLabel(name);
     label.position.set(0, -bh / 2 - 4);
     root.addChild(label);
@@ -701,6 +738,11 @@ export class GameRenderer {
           const r = def.w === 1 ? 5.5 : 7, x = def.w * CELL / 2 - 4 - r, y = -def.h * CELL / 2 + 4 + r;
           v.badge.circle(x, y, r).fill(0xffffff).stroke({ width: 2, color: PALETTE.coral });
           v.badge.rect(x - r * 0.38, y - r * 0.45, r * 0.25, r * 0.9).rect(x + r * 0.13, y - r * 0.45, r * 0.25, r * 0.9).fill(PALETTE.coral);
+        } else if (m.built && m.status === 'nopower') {
+          // Pas de courant : un éclair dans le même coin.
+          const r = 7.5, x = def.w * CELL / 2 - 4 - r, y = -def.h * CELL / 2 + 4 + r;
+          v.badge.circle(x, y, r).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
+          drawBolt(v.badge, x, y, 0.62);
         }
       }
     }
@@ -772,9 +814,11 @@ export class GameRenderer {
     const lamp = new Graphics().circle(10, -20, 5).fill(PALETTE.lamp).stroke({ width: 2.5, color: PALETTE.ink });
     body.addChild(g, glow, lamp, spin);
     flip.addChild(beam, body);
-    root.addChild(shadow, flip);
+    // Son ombre est au sol, sous les machines (pas par-dessus quand il passe à côté).
+    this.groundShadows.addChild(shadow);
+    root.addChild(flip);
     this.actorLayer.addChild(root);
-    this.robotView = { root, body, beam, glow, flip, shape: g, spin, look: '' };
+    this.robotView = { root, shadow, body, beam, glow, flip, shape: g, spin, look: '' };
     this.refreshLook();
   }
 
@@ -795,20 +839,50 @@ export class GameRenderer {
     this.droneViews = [];
   }
 
+  /** Un drone : petit corps de la couleur du robot, visière, deux bras à hélice, pattes pour se poser. */
   private makeDroneView(): Container {
     const d = new Container();
-    const dg = new Graphics();
-    dg.circle(0, 0, 7).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
-    dg.moveTo(-10, -9).lineTo(10, -9).stroke({ width: 2, color: PALETTE.ink, cap: 'round' });
-    dg.moveTo(0, -7).lineTo(0, -9).stroke({ width: 2, color: PALETTE.ink });
-    dg.circle(0, 0, 2.5).fill(robotColor(this.game.look).main);
+    const ink = PALETTE.ink, col = robotColor(this.game.look);
+    const body = new Container();
+    body.label = 'body';
+    const g = new Graphics();
+    // Bras et moyeux
+    g.moveTo(-12, -4).lineTo(12, -4).stroke({ width: 2.5, color: ink, cap: 'round' });
+    g.circle(-12, -4, 2).circle(12, -4, 2).fill(ink);
+    // Pattes
+    g.moveTo(-5, 5).lineTo(-7, 9).moveTo(5, 5).lineTo(7, 9).moveTo(-9, 9).lineTo(-5, 9).moveTo(5, 9).lineTo(9, 9)
+      .stroke({ width: 2, color: ink, cap: 'round', join: 'round' });
+    // Corps et visière
+    g.roundRect(-8, -8, 16, 14, 6).fill(col.main).stroke({ width: 2, color: ink });
+    g.roundRect(-5.5, -5, 11, 6, 3).fill(0xffffff).stroke({ width: 1.5, color: ink });
+    g.circle(2, -2, 1.7).fill(ink);
+    // Hélices (elles tournent en vol)
+    const rotors: Graphics[] = [];
+    for (const x of [-12, 12]) {
+      const rg = new Graphics().ellipse(0, 0, 7.5, 1.8).fill({ color: ink, alpha: 0.6 });
+      rg.position.set(x, -7);
+      rg.label = 'rotor';
+      rotors.push(rg);
+    }
+    body.addChild(g, ...rotors);
     const cargo = new Sprite();
     cargo.anchor.set(0.5);
-    cargo.position.set(0, 12);
+    cargo.position.set(0, 15);
     cargo.label = 'cargo';
-    d.addChild(cargo, dg);
+    d.addChild(cargo, body);
     this.actorLayer.addChild(d);
     return d;
+  }
+
+  /** Anime un drone : hélices qui tournent en vol ; posé, il est plus petit et ses hélices s'arrêtent. */
+  private styleDrone(v: Container, down: boolean, seed: number): void {
+    const body = v.getChildByLabel('body') as Container;
+    const k = down ? 0.68 : 1;
+    body.scale.set(k);
+    for (const c of body.children) if (c.label === 'rotor') c.scale.x = down ? 1 : Math.cos(this.time * 32 + seed);
+    const cargo = v.getChildByLabel('cargo') as Sprite;
+    cargo.y = down ? 10 : 15;
+    cargo.scale.set(k);
   }
 
   private updateActors(): void {
@@ -816,6 +890,7 @@ export class GameRenderer {
     while (this.droneViews.length > this.game.drones.length) this.droneViews.pop()!.destroy({ children: true });
     const r = this.game.robot, v = this.robotView;
     v.root.position.set(r.x * CELL, r.y * CELL);
+    v.shadow.position.set(r.x * CELL, r.y * CELL);
     v.spin.scale.x = Math.cos(this.time * 18);
     v.flip.scale.x = Math.cos(r.heading) < -0.1 ? -1 : 1;
     v.body.y = r.moving ? Math.abs(Math.sin(this.time * 14)) * -1.5 : 0;
@@ -834,13 +909,14 @@ export class GameRenderer {
       const dv = this.droneViews[i];
       if (d.state === 'parked' || d.state === 'rest') {
         // Posé sur le robot : en panne de charbon (pâle), ou simplement au repos.
-        dv.position.set(r.x * CELL + (i - (this.game.drones.length - 1) / 2) * 14, r.y * CELL + v.body.y - 40);
+        dv.position.set(r.x * CELL + (i - (this.game.drones.length - 1) / 2) * 17, r.y * CELL + v.body.y - 38);
         dv.alpha = d.state === 'parked' ? 0.75 : 1;
       } else {
         dv.position.set(d.x * CELL, d.y * CELL - 22 + Math.sin(this.time * 4 + i) * 2.5);
         dv.alpha = 1;
       }
       dv.visible = this.inView(dv.x, dv.y, CELL);
+      this.styleDrone(dv, d.state === 'parked' || d.state === 'rest', i);
       const cargo = dv.getChildByLabel('cargo') as Sprite;
       cargo.visible = !!d.cargo;
       if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
@@ -967,6 +1043,7 @@ export class GameRenderer {
       v.position.set(d.x * CELL, d.y * CELL - (down ? 10 : 22) + (down ? 0 : Math.sin(this.time * 4 + id) * 2.5));
       v.alpha = d.state === 'parked' ? 0.75 : 1;
       v.visible = this.inView(v.x, v.y, CELL);
+      this.styleDrone(v, down, id);
       const cargo = v.getChildByLabel('cargo') as Sprite;
       cargo.visible = !!d.cargo;
       if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
@@ -1007,7 +1084,17 @@ export class GameRenderer {
     const g = this.overlay;
     g.clear();
     const pv = this.preview;
-    if (pv?.kind === 'trace') {
+    if (pv?.kind === 'cable') {
+      const cells = pv.tracer.cells;
+      if (cells.length) {
+        g.moveTo((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL);
+        for (const c of cells.slice(1)) g.lineTo((c.x + 0.5) * CELL, (c.y + 0.5) * CELL);
+        if (cells.length === 1) g.circle((cells[0].x + 0.5) * CELL, (cells[0].y + 0.5) * CELL, 3);
+        g.stroke({ width: 7, color: PALETTE.ink, alpha: 0.75, cap: 'round', join: 'round' });
+        dashedPolyline(g, cells.map((c) => ({ x: (c.x + 0.5) * CELL, y: (c.y + 0.5) * CELL })), 5, 4);
+        g.stroke({ width: 2.5, color: pv.tracer.blocked ? PALETTE.coral : PALETTE.yellow, cap: 'round' });
+      }
+    } else if (pv?.kind === 'trace') {
       const cells = pv.tracer.result();
       const ok = pv.tracer.valid && !pv.tracer.blocked;
       for (const c of cells) {
@@ -1100,7 +1187,7 @@ export class GameRenderer {
     const g = new Graphics();
     drawMachineBody(g, 46, 46, 15);
     const ig = new Graphics();
-    drawMachineIcon(ig, type, type === 'foreuse' ? 'fer' : undefined);
+    drawMachineIcon(ig, type, type === 'foreuse' || type === 'foreuse_elec' ? 'fer' : undefined);
     if (type === 'coffre') ig.scale.set(1.8);
     c.addChild(g, ig);
     const canvas = this.app.renderer.extract.canvas({ target: c, resolution: 3 }) as HTMLCanvasElement;
@@ -1359,7 +1446,11 @@ export class GameRenderer {
     this.portG.alpha = portA;
     this.portG.visible = portA > 0;
     this.updateChunks();
+    const cablesChanged = this.beltsDirty || this.game.factory.cables.size !== this.cableCount;
     if (this.beltsDirty) this.redrawBelts();
+    // Les câbles : redessinés quand l'usine change, et deux fois par seconde (réseau alimenté ou non).
+    this.cableT += dt;
+    if (cablesChanged || (this.cableCount > 0 && this.cableT > 0.5)) this.drawCables();
     this.view = cam.bounds(CELL * 3);
     const span = CHUNK * CELL;
     for (const c of this.beltChunks.values()) {

@@ -39,3 +39,13 @@ export const NODE_ICONS: Record<string, string> = {
   chenilles: '<svg width="100%" height="100%" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><rect x="3" y="12" width="26" height="12" rx="6" fill="none" stroke="#2E3A4B" stroke-width="2.6"></rect><circle cx="9" cy="18" r="2.4" fill="#2E3A4B"></circle><circle cx="16" cy="18" r="2.4" fill="#2E3A4B"></circle><circle cx="23" cy="18" r="2.4" fill="#2E3A4B"></circle></svg>',
   laboratoire: '<svg width="100%" height="100%" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M12 4 H20 M13 4 V12 L6 25 A2.5 2.5 0 0 0 8.2 28.5 H23.8 A2.5 2.5 0 0 0 26 25 L19 12 V4" fill="none" stroke="#2E3A4B" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path><path d="M9 21 H23 L25 25.5 H7 Z" fill="#8BD17C"></path></svg>',
 };
+
+// Versions électriques : l'icône de la machine, un peu plus petite, avec un éclair jaune.
+const BOLT = '<path d="M24 3 L18 12 H22 L20 19 L28 9 H24 Z" fill="#FFC857" stroke="#2E3A4B" stroke-width="1.6" stroke-linejoin="round"></path>';
+for (const id of ['foreuse', 'four', 'presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'broyeur', 'melangeur', 'raffinerie', 'fabricant', 'centrifugeuse']) {
+  const key = `${id}_elec`;
+  const svg = NODE_ICONS[id];
+  if (NODE_ICONS[key] || !svg) continue;
+  const inner = svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');
+  NODE_ICONS[key] = `<svg width="100%" height="100%" focusable="false" viewBox="0 0 32 32" aria-hidden="true"><g transform="translate(-2 4) scale(0.8)">${inner}</g>${BOLT}</svg>`;
+}
