@@ -32,6 +32,8 @@ const RAW: ItemDef[] = [
   { id: 'petrole', name: 'Pétrole', plural: 'barils de pétrole', color: 0x2b2f38, patch: 0xa9adb6, shape: 'drop', tier: 0, value: 3, rarity: 'peu commune' },
   { id: 'or', name: "Minerai d'or", plural: "minerais d'or", color: 0xd4a72c, patch: 0xf1dc9c, shape: 'ore', tier: 0, value: 8, rarity: 'rare' },
   { id: 'uranium', name: 'Uranium', plural: "minerais d'uranium", color: 0x7fa33b, patch: 0xcbdcae, shape: 'ore', tier: 0, value: 10, rarity: 'rare' },
+  { id: 'titane', name: 'Minerai de titane', plural: 'minerais de titane', color: 0x9fb4c7, patch: 0xdde7f0, shape: 'ore', tier: 0, value: 12, rarity: 'rare' },
+  { id: 'cristal_pur', name: 'Cristal pur', plural: 'cristaux purs', color: 0xb9e6f5, patch: 0xe4f6fc, shape: 'crystal', tier: 0, value: 12, rarity: 'rare' },
   { id: 'eau', name: 'Eau', plural: 'eau', color: 0x3d8fd1, patch: 0xa9d6f2, shape: 'drop', tier: 0, value: 0 },
 ];
 
@@ -77,6 +79,13 @@ const MADE: ItemDef[] = [
   { id: 'robot', name: 'Robot', plural: 'robots', color: 0xffc857, shape: 'block', tier: 6, value: 300 },
   { id: 'drone', name: 'Drone', plural: 'drones', color: 0xffc857, shape: 'block', tier: 6, value: 200 },
   { id: 'reacteur', name: 'Réacteur', plural: 'réacteurs', color: 0x9ad04a, shape: 'block', tier: 6, value: 300 },
+  // 7 · Espace (filons rares des toundras lointaines)
+  { id: 'lingot_titane', name: 'Lingot de titane', plural: 'lingots de titane', color: 0x9fb4c7, shape: 'ingot', tier: 2, value: 30 },
+  { id: 'alliage', name: 'Alliage de titane', plural: 'alliages de titane', color: 0x7d93a8, shape: 'plate', tier: 3, value: 60 },
+  { id: 'lentille', name: 'Lentille', plural: 'lentilles', color: 0xb9e6f5, shape: 'crystal', tier: 3, value: 40 },
+  { id: 'structure_fusee', name: 'Structure de fusée', plural: 'structures de fusée', color: 0xdfe7ee, shape: 'block', tier: 6, value: 400 },
+  { id: 'moteur_fusee', name: 'Moteur de fusée', plural: 'moteurs de fusée', color: 0xf47c64, shape: 'block', tier: 6, value: 450 },
+  { id: 'guidage', name: 'Guidage', plural: 'guidages', color: 0x4b6cb7, shape: 'chip', tier: 6, value: 500 },
   // Objectif lointain
   { id: 'fusee', name: 'Fusée', plural: 'fusées', color: 0xf47c64, shape: 'block', tier: 7, value: 2000 },
 ];

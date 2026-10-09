@@ -51,6 +51,7 @@ const BIOME_ORES: Record<BiomeId, { type: string; w: number; rich?: boolean }[]>
   marais: [{ type: 'petrole', w: 3 }, { type: 'charbon', w: 2, rich: true }, { type: 'eau', w: 4 }],
   montagnes: [{ type: 'fer', w: 3, rich: true }, { type: 'or', w: 2 }],
   crateres: [{ type: 'uranium', w: 3 }, { type: 'quartz', w: 2, rich: true }],
+  toundra: [{ type: 'titane', w: 3 }, { type: 'cristal_pur', w: 2 }],
 };
 
 /** Filons garantis autour du départ (le Noyau occupe les cases 0 à 3). */
@@ -86,6 +87,8 @@ export class World {
     if (d + warp < 60) return 'plaine';
     const n2 = fbm(this.seedNum + 2, x / 110, y / 110);
     if (d > 320 && n2 < 0.36) return 'crateres';
+    // Les toundras, loin du départ : titane et cristal pur.
+    if (d > 240 && fbm(this.seedNum + 5, x / 90, y / 90) > 0.62) return 'toundra';
     if (d > 160 && n2 > 0.6) return 'montagnes';
     const n1 = fbm(this.seedNum + 1, x / 70, y / 70);
     if (n1 < 0.4) return 'plaine';

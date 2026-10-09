@@ -34,6 +34,7 @@ export const BIOME_COLORS = {
   marais: 0xd2d9b6,
   montagnes: 0xd5dde6,
   crateres: 0xe3ddef,
+  toundra: 0xeef3f7,
 } as const;
 
 export type BiomeId = keyof typeof BIOME_COLORS;
@@ -45,6 +46,7 @@ export const BIOME_NAMES: Record<BiomeId, string> = {
   marais: 'Marais',
   montagnes: 'Montagnes',
   crateres: 'Cratères',
+  toundra: 'Toundra',
 };
 
 export const RULES = {
@@ -72,6 +74,8 @@ export const RULES = {
   chargerKw: 80,
   /** Hangar : nombre de drones. */
   hangarDrones: 3,
+  /** Rampe de lancement : compte à rebours avant le décollage (s). */
+  rocketCountdown: 5,
   /** Le carburant dure 5 fois plus longtemps qu'un charbon (et brûle en premier). */
   carburantMult: 5,
   /** Véhicules : prix d'une case de route ou de rail, prix du véhicule, charge, vitesse (cases par seconde). */

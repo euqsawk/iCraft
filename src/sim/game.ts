@@ -4,7 +4,7 @@ import { MACHINES, machineDef } from '../data/machines.ts';
 import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
 import { addTo, burnOne, moveFuel } from './fuel.ts';
 import { World } from '../world/world.ts';
-import { Factory, type Belt, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
+import { Factory, ROCKET_NEEDS, type Belt, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
@@ -134,6 +134,7 @@ export type GameEvent =
   | { type: 'reveal' }
   | { type: 'factory' }
   | { type: 'view' }
+  | { type: 'rocket'; id: number; n: number }
   | { type: 'drones' }
   | { type: 'sold'; money: number; count: number }
   | { type: 'inventory' }
@@ -188,6 +189,7 @@ export interface GameSave {
   /** Statistiques de production et succès. */
   stats?: { made: Record<string, number>; used: Record<string, number> };
   achievements?: string[];
+  rockets?: number;
   gifts?: Record<string, number>;
   ordersDone?: number;
   sellT?: number;
@@ -474,6 +476,7 @@ export class Game {
     this.world = new World(seed);
     this.factory = new Factory(this.world);
     this.factory.onDeliver = (m, item) => this.receive(m, item, 1);
+    this.factory.onRocket = (m) => { this.rockets++; this.emit({ type: 'rocket', id: m.id, n: this.rockets }); };
     this.factory.buildingAccepts = (m, item) => this.accepts(m, item) > 0;
     if (save) {
       this.load(save);
@@ -1546,6 +1549,7 @@ export class Game {
   /** Combien une machine (four, foreuse…) accepte encore de cet objet : charbon dans sa case carburant, ingrédients. */
   machineAccepts(m: Machine, t: string): number {
     const def = machineDef(m.type);
+    if (m.built && def.kind === 'rocket') return m.craft ? 0 : Math.max(0, (ROCKET_NEEDS[t] ?? 0) - (m.inBuf[t] ?? 0));
     if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill' && def.kind !== 'station' && def.kind !== 'generator')) return 0;
     let n = 0;
     const ingredient = def.recipes.some((r) => r.in[t]);
@@ -2023,6 +2027,9 @@ export class Game {
 
   private wasNight: boolean | null = null;
 
+  /** Fusées lancées. */
+  rockets = 0;
+
   /** Succès obtenus. */
   achievements = new Set<string>();
   private achT = 0;
@@ -2104,7 +2111,7 @@ export class Game {
       palier: this.palier, palierDone: this.palierDone, lab: this.lab, extraDrones: this.extraDrones,
       look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
       gifts: this.gifts, ordersDone: this.ordersDone,
-      stats: this.factory.stats, achievements: [...this.achievements],
+      stats: this.factory.stats, achievements: [...this.achievements], rockets: this.rockets,
       crew: {
         robot: { fuel: r.fuel, carb: r.carb, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
         drones: this.drones.map((d) => ({ fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
@@ -2120,6 +2127,7 @@ export class Game {
     this.factory.load(s.factory);
     if (s.stats) { this.factory.stats.made = { ...s.stats.made }; this.factory.stats.used = { ...s.stats.used }; }
     for (const id of s.achievements ?? []) this.achievements.add(id);
+    this.rockets = s.rockets ?? 0;
     this.pending = s.pending.filter((j) => (j.kind === 'belt' ? this.factory.belts.has(j.k) : this.factory.machines.has(j.id)));
     this.order = s.order; this.choices = s.choices;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;

@@ -12,6 +12,7 @@ import { decodeSave, encodeSave } from '../src/save/code.ts';
 import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
+import { ROCKET_NEEDS } from '../src/sim/factory.ts';
 
 let failed = 0, passed = 0;
 function test(name: string, fn: () => void): void {
@@ -28,7 +29,7 @@ function assert(cond: unknown, msg: string): void {
 
 /** Trace un tapis en suivant une liste de points (en cases, valeurs continues). */
 function trace(g: Game, pts: [number, number][]): BeltTracer {
-  const t = new BeltTracer(g.factory, pts[0][0], pts[0][1]);
+  const t = new BeltTracer(g.view, pts[0][0], pts[0][1]);
   for (const p of pts.slice(1)) {
     // On interpole pour imiter un doigt qui glisse.
     const prev = pts[pts.indexOf(p) - 1];
@@ -1010,6 +1011,44 @@ test('eau : pompe sur le lac, tuyaux, réacteur refroidi ; hangar à trois drone
   d.fuel = 1; d.carb = 0; d.task = null; d.state = 'home';
   run(g, 15);
   assert(d.fuel >= 9 || d.fuel === RULES.fuelStack, `drone rechargé : ${d.fuel} (recharge ${ch.status})`);
+});
+test('toundras lointaines (titane, cristal pur), fusée, monte-charge', () => {
+  const g = new Game('TEST-R1');
+  // Une toundra existe loin du départ, avec ses filons rares.
+  let found = 0, rare = 0;
+  for (let y = -400; y <= 400 && !rare; y += 6) for (let x = -400; x <= 400 && !rare; x += 6) {
+    if (g.world.biomeAt(x, y) === 'toundra') { found++; const p = g.world.patchAt(x, y); if (p && (p.type === 'titane' || p.type === 'cristal_pur')) rare++; }
+  }
+  assert(found > 0, 'une toundra');
+  assert(g.world.biomeAt(0, 0) === 'plaine', 'le départ reste en plaine');
+  // La fusée.
+  g.money = 1e6; g.world.reveal(10, 10, 25);
+  g.unlocks.add('rampe');
+  const pad = g.placeMachine('rampe', 10, 10)!;
+  pad.built = true; g.pending = []; g.factory.markBuilt();
+  let launched = 0;
+  g.on((e) => { if (e.type === 'rocket') launched++; });
+  for (const [k, n] of Object.entries(ROCKET_NEEDS)) assert(g.factory.putInMachine(pad, k, n + 5) === n, `rampe : ${k}`);
+  run(g, RULES.rocketCountdown + 1);
+  assert(launched === 1 && g.rockets === 1 && !Object.keys(pad.inBuf).length && g.achievements.has('fusee') !== undefined, `décollage : ${launched}`);
+  // Monte-charge : l'atelier prend le fer dans le coffre collé et y range les lingots.
+  for (const id of ['module', 'monte_charge', 'grand_coffre']) g.unlocks.add(id);
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const a = g.placeMachine('atelier', 20, 20)!;
+  a.built = true; g.pending = []; a.fuel = 10;
+  const chest = g.placeMachine('grand_coffre', 23, 20)!;
+  chest.built = true; g.factory.markBuilt();
+  g.factory.putInStorage(chest, 'sable', 20);
+  g.enterAtelier(a);
+  const lift = g.placeMachine('monte_charge', 4, 5)!;
+  const four = g.placeMachine('four', 7, 5)!;
+  const out = g.placeMachine('sortie', 12, 5)!;
+  assert(lift && four && out, 'posés dans l’atelier');
+  assert(g.placeBelts(trace(g, [[4.5, 5.5], [6.5, 5.5], [7.5, 5.5]]).result()), 'monte-charge → four');
+  assert(g.placeBelts(trace(g, [[8.5, 5.5], [11.5, 5.5], [12.5, 5.5]]).result()), 'four → sortie');
+  g.leaveAtelier();
+  run(g, 60);
+  assert((chest.inBuf.verre ?? 0) >= 5 && (chest.inBuf.sable ?? 0) < 20, `monte-charge : ${JSON.stringify(chest.inBuf)}`);
 });
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {

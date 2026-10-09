@@ -45,5 +45,9 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'objets10k', name: 'Dix mille', hint: 'Fabriquer ou extraire 10 000 objets en tout.', test: (g) => totalMade(g) >= 10000 },
   { id: 'loin', name: 'Explorateur', hint: 'Emmener le robot à 100 cases du Noyau.', test: (g) => Math.hypot(g.robot.x - 2, g.robot.y - 2) >= 100 },
   { id: 'palier5', name: 'À mi-chemin', hint: 'Atteindre le palier 5.', test: (g) => g.palier >= 5 },
-  { id: 'palier8', name: 'Le Noyau est complet', hint: 'Atteindre le palier 8.', test: (g) => g.palier >= 8 },
+  { id: 'palier8', name: 'Équipage au complet', hint: 'Atteindre le palier 8.', test: (g) => g.palier >= 8 },
+  { id: 'titane', name: 'Grand Nord', hint: 'Fondre un lingot de titane.', test: (g) => made(g, 'lingot_titane') >= 1 },
+  { id: 'palier10', name: 'Le Noyau est complet', hint: 'Atteindre le palier 10.', test: (g) => g.palier >= 10 },
+  { id: 'fusee', name: 'Décollage', hint: 'Lancer une fusée.', test: (g) => g.rockets >= 1 },
+  { id: 'fusee5', name: 'Programme spatial', hint: 'Lancer cinq fusées.', test: (g) => g.rockets >= 5 },
 ];

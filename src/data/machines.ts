@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger' | 'rocket';
 
 export interface MachineDef {
   id: string;
@@ -54,6 +54,7 @@ export const MACHINES: Record<string, MachineDef> = {
       r({ cuivre: 1 }, { lingot_cuivre: 1 }, 1.6),
       r({ sable: 1 }, { verre: 1 }, 1.6),
       r({ or: 1 }, { lingot_or: 1 }, 2.4),
+      r({ titane: 1 }, { lingot_titane: 1 }, 3),
     ],
   },
   presse: {
@@ -63,6 +64,7 @@ export const MACHINES: Record<string, MachineDef> = {
       r({ lingot_fer: 1 }, { plaque_fer: 1 }, 1.2),
       r({ aluminium: 1 }, { tole_alu: 1 }, 1.4),
       r({ acier: 1 }, { poutre_acier: 1 }, 1.6),
+      r({ cristal_pur: 1 }, { lentille: 1 }, 2),
     ],
   },
   tour: {
@@ -84,7 +86,7 @@ export const MACHINES: Record<string, MachineDef> = {
   haut_fourneau: {
     id: 'haut_fourneau', name: 'Fourneau', kind: 'crafter', coal: true, w: 2, h: 2, cost: 120, unlock: 4, buildable: true,
     hint: 'Lingot de fer + charbon → acier',
-    recipes: [r({ lingot_fer: 1, charbon: 1 }, { acier: 1 }, 2)],
+    recipes: [r({ lingot_fer: 1, charbon: 1 }, { acier: 1 }, 2), r({ lingot_titane: 1, acier: 1 }, { alliage: 1 }, 3)],
   },
   assembleur: {
     id: 'assembleur', name: 'Assembleur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 150, unlock: 5, buildable: true,
@@ -134,6 +136,9 @@ export const MACHINES: Record<string, MachineDef> = {
       r({ moteur: 1, ordinateur: 1, cadre: 1 }, { robot: 1 }, 4),
       r({ moteur: 1, batterie: 1, processeur: 1 }, { drone: 1 }, 4),
       r({ uranium_enrichi: 1, cadre: 1, ordinateur: 1 }, { reacteur: 1 }, 4),
+      r({ alliage: 1, cadre: 1, poutre_acier: 1 }, { structure_fusee: 1 }, 5),
+      r({ alliage: 1, moteur: 1, carburant: 1 }, { moteur_fusee: 1 }, 5),
+      r({ ordinateur: 1, lentille: 1, processeur: 1 }, { guidage: 1 }, 5),
     ],
   },
   centrifugeuse: {
@@ -212,6 +217,14 @@ export const MACHINES: Record<string, MachineDef> = {
   batterie: {
     id: 'batterie', name: 'Batterie', kind: 'battery', coal: false, w: 2, h: 2, cost: 150, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde le surplus du solaire (10 kWh) et le rend la nuit',
+  },
+  rampe: {
+    id: 'rampe', name: 'Rampe de lancement', kind: 'rocket', coal: false, w: 4, h: 4, cost: 5000, unlock: 1, recipes: [], buildable: true,
+    hint: 'Remplis-la de structures, de moteurs de fusée, de guidages et de carburant : la fusée décolle',
+  },
+  monte_charge: {
+    id: 'monte_charge', name: 'Monte-charge', kind: 'port_in', coal: false, w: 1, h: 1, cost: 40, unlock: 1, recipes: [], buildable: true,
+    hint: 'Dans un atelier : l’atelier se sert dans les coffres collés à lui, dehors, et y range ce qui sort',
   },
   atelier: {
     id: 'atelier', name: 'Atelier', kind: 'atelier', coal: true, w: 3, h: 3, cost: 200, unlock: 1, recipes: [], buildable: true,

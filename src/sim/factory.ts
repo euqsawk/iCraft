@@ -93,6 +93,8 @@ export interface Machine {
   charge?: number;
   /** Eau reçue par les tuyaux (0 à 1 : la part de ce qu'elle demande). Non sauvegardé. */
   water?: number;
+  /** Monte-charge d'un atelier : minuteur des échanges avec les coffres collés. */
+  liftT?: number;
   /** Atelier (module) : l'usine rangée dedans, et le côté de son intérieur en cases. */
   inner?: Factory;
   size?: number;
@@ -100,6 +102,9 @@ export interface Machine {
 
 /** L'intérieur d'un atelier : pas de filons, tout est découvert. */
 const ROOM_WORLD = { patchAt: () => null, isRevealed: () => true } as unknown as World;
+
+/** Ce qu'il faut sur la rampe de lancement pour que la fusée décolle. */
+export const ROCKET_NEEDS: Record<string, number> = { structure_fusee: 20, moteur_fusee: 8, guidage: 4, carburant: 100 };
 
 /** Objets qu'un atelier garde à l'entrée, en attendant que l'intérieur les prenne. */
 const ATELIER_BUFFER = 40;
@@ -258,6 +263,8 @@ export class Factory {
   buildingAccepts: (m: Machine, item: string) => boolean = () => true;
   /** Appelé quand un objet entre dans un bâtiment spécial. */
   onDeliver: (m: Machine, item: string) => void = () => {};
+  /** Appelé quand une fusée décolle. */
+  onRocket: (m: Machine) => void = () => {};
 
   readonly world: World;
   /** Dans un atelier : l'atelier qui contient cette usine (ses ports y prennent et y déposent). */
@@ -1227,6 +1234,7 @@ export class Factory {
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) return true;
     if (def.kind === 'atelier') return this.bufCount(m.inBuf) < ATELIER_BUFFER && this.atelierWants(m, item);
     if (def.kind === 'reactor') return item === 'uranium_enrichi' && (m.inBuf[item] ?? 0) < RULES.fuelStack;
+    if (def.kind === 'rocket') return !m.craft && (m.inBuf[item] ?? 0) < (ROCKET_NEEDS[item] ?? 0);
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
@@ -1236,6 +1244,7 @@ export class Factory {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
     if (def.kind === 'port_out') { if (this.host) this.host.outBuf[item] = (this.host.outBuf[item] ?? 0) + 1; return; }
+    if (def.kind === 'rocket') { m.inBuf[item] = (m.inBuf[item] ?? 0) + 1; return; }
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) {
       // Le carburant d'abord ; un fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = def.recipes.some((r) => r.in[item]) && m.fuel >= 3 && (m.inBuf[item] ?? 0) < RULES.machineBuffer;
@@ -1263,6 +1272,7 @@ export class Factory {
   putInMachine(m: Machine, item: string, n: number): number {
     const def = machineDef(m.type);
     if (def.kind === 'storage') return this.putInStorage(m, item, n);
+    if (def.kind === 'rocket') { const k = m.craft ? 0 : Math.max(0, Math.min(n, (ROCKET_NEEDS[item] ?? 0) - (m.inBuf[item] ?? 0))); if (k) m.inBuf[item] = (m.inBuf[item] ?? 0) + k; return k; }
     if (def.kind !== 'crafter' || !this.acceptSet(def).has(item) || (isFuel(item) && !def.recipes.some((r) => r.in[item]))) return 0;
     const k = Math.min(n, RULES.machineBuffer - (m.inBuf[item] ?? 0));
     if (k > 0) m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
@@ -1411,6 +1421,7 @@ export class Factory {
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
       else if (def.kind === 'atelier') this.tickAtelier(m, def, dt);
+      else if (def.kind === 'rocket') this.tickRocket(m, dt);
       else if (def.kind === 'port_in' && this.host) {
         // Une entrée d'atelier : ce qui est entré dans l'atelier ressort ici, vers ce qui en a l'usage.
         const buf = this.host.inBuf;
@@ -1594,6 +1605,41 @@ export class Factory {
     return false;
   }
 
+  /** Rampe de lancement : pleine, elle compte cinq secondes, puis la fusée décolle (la rampe se vide). */
+  private tickRocket(m: Machine, dt: number): void {
+    if (m.craft) {
+      m.craft.t += dt;
+      m.status = 'working';
+      if (m.craft.t >= RULES.rocketCountdown) {
+        m.craft = null;
+        for (const [k, n] of Object.entries(ROCKET_NEEDS)) { m.inBuf[k] = (m.inBuf[k] ?? 0) - n; if (m.inBuf[k] <= 0) delete m.inBuf[k]; }
+        m.made++;
+        this.stats.made.fusee = (this.stats.made.fusee ?? 0) + 1;
+        this.onRocket(m);
+      }
+      return;
+    }
+    const full = Object.entries(ROCKET_NEEDS).every(([k, n]) => (m.inBuf[k] ?? 0) >= n);
+    if (full) { m.craft = { ri: 0, t: 0 }; m.status = 'working'; return; }
+    m.status = Object.keys(m.inBuf).length ? 'noinput' : 'idle';
+  }
+
+  /** Monte-charge : l'atelier se sert dans les coffres collés à lui (ce que son intérieur sait utiliser) et y range ce qui sort. */
+  private tickLift(m: Machine, dt: number): void {
+    const f = m.inner;
+    if (!f || ![...f.machines.values()].some((x) => x.type === 'monte_charge' && x.built)) return;
+    m.liftT = (m.liftT ?? 0) + dt;
+    if (m.liftT < 0.25) return;
+    m.liftT = 0;
+    for (const s of this.machines.values()) {
+      if (!s.built || machineDef(s.type).kind !== 'storage' || !this.touching(m, s)) continue;
+      const k = Object.keys(s.inBuf).find((t) => s.inBuf[t] > 0 && this.bufCount(m.inBuf) < ATELIER_BUFFER && this.atelierWants(m, t));
+      if (k) { s.inBuf[k]--; if (!s.inBuf[k]) delete s.inBuf[k]; m.inBuf[k] = (m.inBuf[k] ?? 0) + 1; }
+      const o = Object.keys(m.outBuf).find((t) => m.outBuf[t] > 0 && this.storageRoom(s, t) > 0);
+      if (o) { m.outBuf[o]--; if (!m.outBuf[o]) delete m.outBuf[o]; s.inBuf[o] = (s.inBuf[o] ?? 0) + 1; }
+    }
+  }
+
   /** Un atelier : son usine intérieure tourne tant qu'il a de quoi (charbon ou courant) pour toutes ses machines. */
   private tickAtelier(m: Machine, def: MachineDef, dt: number): void {
     const f = m.inner;
@@ -1615,6 +1661,7 @@ export class Factory {
       if (k <= 0) { m.status = this.noEnergy(m); return; }
     }
     f.tick(dt * k);
+    this.tickLift(m, dt);
     m.status = busy > 0 ? 'working' : any ? 'idle' : 'idle';
     if (busy > 0) {
       let made = 0;

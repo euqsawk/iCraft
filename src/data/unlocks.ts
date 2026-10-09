@@ -75,6 +75,7 @@ export const BRANCHES: Branch[] = [
       n('assembleur', 'Assembleur', 'assembleur', 3, 1, 3, { vis: 60, acier: 40 }, ['tour'], 'Combine deux pièces en une pièce travaillée.', m('assembleur'), ['Plaque de fer + Vis → Engrenage', 'Engrenage + Fil → Rotor']),
       n('centrifugeuse', 'Centrifugeuse', 'centrifugeuse', 3, 2, 6, { moteur: 20, processeur: 30 }, ['haut_fourneau'], 'Enrichit l’uranium des cratères.', m('centrifugeuse'), ['Uranium → Uranium enrichi']),
       n('fabricant', 'Fabricant', 'fabricant', 4, 1, 4, { engrenage: 60, beton: 60 }, ['assembleur'], 'Assemble trois composants en machine.', m('fabricant'), ['Rotor + Stator + Vis → Moteur']),
+      n('rampe', 'Rampe de lancement', 'rampe', 5, 1, 10, { alliage: 40, guidage: 2 }, ['fabricant'], 'La Rampe de lancement (4 × 4) : remplis-la de 20 structures, 8 moteurs de fusée, 4 guidages et 100 carburants. La fusée décolle : c’est la fin du voyage (et on peut recommencer).', m('rampe')),
     ],
   },
   {
@@ -141,6 +142,7 @@ export const BRANCHES: Branch[] = [
       n('imbrication', 'Imbrication', 'imbrication', 2, 1, 6, { ordinateur: 10 }, ['module'], 'Un atelier peut contenir d’autres ateliers : une usine dans l’usine dans l’usine.', { kind: 'nesting' }),
       n('place2', 'Place +6', 'place', 2, 2, 6, { cadre: 50 }, ['place1'], 'L’intérieur d’un atelier passe à 30 × 30 cases.', { kind: 'atelierSize', size: 30 }),
       n('copie25', 'Copie à 25 %', 'copie', 3, 0, 7, { ordinateur: 20 }, ['copie50'], 'Une copie ne coûte plus qu’un quart.', { kind: 'copyRate', rate: 0.25 }),
+      n('monte_charge', 'Monte-charge', 'module', 3, 2, 9, { alliage: 30, processeur: 20 }, ['place2'], 'Le Monte-charge : posé dans un atelier, il fait entrer ce qu’il faut depuis les coffres collés à l’atelier, dehors, et y range ce qui sort. Plus besoin de tapis jusqu’à l’atelier.', m('monte_charge')),
     ],
   },
 ];

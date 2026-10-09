@@ -17,7 +17,9 @@ export const PALIERS: PalierMission[] = [
   { to: 5, pitch: 'Le Noyau apprend à bouger.', lines: { moteur: 60, plastique: 200, cable: 150, tole_alu: 150 } },
   { to: 6, pitch: 'Le Noyau se met à réfléchir.', lines: { ordinateur: 40, batterie: 80, panneau_solaire: 40, processeur: 60 } },
   { to: 7, pitch: 'Le Noyau construit son équipage.', lines: { robot: 30, drone: 30, reacteur: 12 } },
-  { to: 8, pitch: 'Dernière étape : le Noyau assemble la fusée.', lines: { robot: 40, drone: 40, reacteur: 20, panneau_solaire: 60 } },
+  { to: 8, pitch: 'Le Noyau complète son équipage.', lines: { robot: 40, drone: 40, reacteur: 20, panneau_solaire: 60 } },
+  { to: 9, pitch: 'Le Noyau regarde vers le ciel : il lui faut du titane et du cristal pur, tout au nord, dans les toundras.', lines: { alliage: 200, lentille: 150, ordinateur: 100 } },
+  { to: 10, pitch: 'Il ne manque plus que les pièces de la fusée.', lines: { structure_fusee: 40, moteur_fusee: 20, guidage: 20 } },
 ];
 
 export const MAX_PALIER = PALIERS[PALIERS.length - 1].to;

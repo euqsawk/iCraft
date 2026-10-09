@@ -147,6 +147,16 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.rect(-9, 0, 18, 12).fill(0x8a99ad);
       g.circle(0, -8, 4.5).fill(0xffffff).stroke({ width: 2, color: coral });
       break;
+    case 'rampe':
+      g.roundRect(-30, -30, 60, 60, 8).fill(0xdfe7ee).stroke({ width: 3, color: ink });
+      g.circle(0, 0, 18).fill(0xc5d0da).stroke({ width: 2.4, color: ink });
+      g.moveTo(-26, -26).lineTo(-14, -14).moveTo(26, -26).lineTo(14, -14).moveTo(-26, 26).lineTo(-14, 14).moveTo(26, 26).lineTo(14, 14).stroke({ width: 2.4, color: coral, cap: 'round' });
+      break;
+    case 'monte_charge':
+      g.roundRect(-8, -8, 16, 16, 4).fill(0xe3f3dd).stroke({ width: 2, color: PALETTE.green });
+      g.moveTo(-3, 4).lineTo(-3, -4).moveTo(-5.5, -1.5).lineTo(-3, -4.5).lineTo(-0.5, -1.5).stroke({ width: 2, color: PALETTE.green, cap: 'round', join: 'round' });
+      g.moveTo(3, -4).lineTo(3, 4).moveTo(0.5, 1.5).lineTo(3, 4.5).lineTo(5.5, 1.5).stroke({ width: 2, color: coral, cap: 'round', join: 'round' });
+      break;
     case 'lampadaire':
       g.moveTo(0, 9).lineTo(0, -5).stroke({ width: 2.4, color: ink, cap: 'round' });
       g.moveTo(-4, 9).lineTo(4, 9).stroke({ width: 2.4, color: ink, cap: 'round' });

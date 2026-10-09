@@ -182,6 +182,9 @@ export class GameRenderer {
   private glowLayer = new Container();
   private lightRT: RenderTexture | null = null;
   private lightSprite = new Sprite();
+  /** La fusée : debout sur sa rampe pendant le compte à rebours, puis le décollage. */
+  private rocketG = new Graphics();
+  private rocketAnim: { x: number; y: number; t: number } | null = null;
   /** Tri : l'objet trié, en petit, sur la case du séparateur. */
   private filterLayer = new Container();
   private glowPool: Sprite[] = [];
@@ -199,7 +202,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.rocketG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -216,6 +219,13 @@ export class GameRenderer {
     game.on((e) => {
       if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
       if (e.type === 'deliver' && e.at === 'noyau' && this.noyauView) this.noyauView.pulse = 1;
+      if (e.type === 'rocket') {
+        const m = game.factory.machines.get(e.id);
+        if (m) {
+          this.rocketAnim = { x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL, t: 0 };
+          if (!game.inAtelier) this.focusOn(this.rocketAnim.x, this.rocketAnim.y - CELL * 4, 0.8, 1.2);
+        }
+      }
     });
     const r = game.robot;
     this.camera.x = ((r.x + 2) / 2) * CELL;
@@ -2177,6 +2187,44 @@ export class GameRenderer {
   private robotFace = 0;
   private frameDt = 1 / 60;
 
+  /** Dessine une fusée (pointe en haut), son pied en (x, y). */
+  private drawRocket(g: Graphics, x: number, y: number, s: number, flame: number): void {
+    const ink = PALETTE.ink;
+    if (flame > 0) {
+      const fl = (14 + Math.sin(this.time * 40) * 3) * flame * s;
+      g.poly([x - 5 * s, y, x, y + fl, x + 5 * s, y]).fill(PALETTE.yellow);
+      g.poly([x - 3 * s, y, x, y + fl * 0.6, x + 3 * s, y]).fill(0xffffff);
+    }
+    g.poly([x - 7 * s, y - 8 * s, x - 12 * s, y, x - 7 * s, y - 2 * s]).fill(PALETTE.coral).stroke({ width: 1.6, color: ink, join: 'round' });
+    g.poly([x + 7 * s, y - 8 * s, x + 12 * s, y, x + 7 * s, y - 2 * s]).fill(PALETTE.coral).stroke({ width: 1.6, color: ink, join: 'round' });
+    g.moveTo(x - 7 * s, y - 2 * s).lineTo(x - 7 * s, y - 24 * s).quadraticCurveTo(x, y - 40 * s, x + 7 * s, y - 24 * s).lineTo(x + 7 * s, y - 2 * s).closePath()
+      .fill(0xffffff).stroke({ width: 2, color: ink, join: 'round' });
+    g.circle(x, y - 20 * s, 3.2 * s).fill(0x7cc3f0).stroke({ width: 1.6, color: ink });
+  }
+
+  /** La fusée sur sa rampe (compte à rebours), puis son décollage avec de la fumée. */
+  private drawRockets(dt: number): void {
+    const g = this.rocketG;
+    g.clear();
+    for (const m of this.game.view.machines.values()) {
+      if (m.type !== 'rampe' || !m.built || !m.craft) continue;
+      const x = (m.x + m.w / 2) * CELL + Math.sin(this.time * 50) * m.craft.t * 0.3, y = (m.y + m.h / 2) * CELL + CELL * 0.8;
+      this.drawRocket(g, x, y, 2.2, Math.min(1, m.craft.t / 4) * 0.6);
+    }
+    const a = this.rocketAnim;
+    if (!a) return;
+    a.t += dt;
+    const rise = a.t * a.t * 42;
+    // La fumée qui s'étale au sol.
+    for (let i = 0; i < 10; i++) {
+      const ang = (i / 10) * Math.PI * 2;
+      const r = Math.min(1, a.t / 1.2) * CELL * (1.6 + (i % 3) * 0.5);
+      g.circle(a.x + Math.cos(ang) * r, a.y + CELL * 0.8 + Math.sin(ang) * r * 0.45, CELL * 0.6 * Math.max(0, 1 - a.t / 6)).fill({ color: 0xe6ebf0, alpha: Math.max(0, 0.8 - a.t / 7) });
+    }
+    this.drawRocket(g, a.x, a.y + CELL * 0.8 - rise, 2.2, 1.4);
+    if (a.t > 6) this.rocketAnim = null;
+  }
+
   render(dt: number): void {
     this.frameDt = dt;
     if (this.game.view !== this.shownFactory) this.switchView();
@@ -2222,6 +2270,7 @@ export class GameRenderer {
     this.updateActors();
     this.updateStationDrones();
     this.updatePickups();
+    this.drawRockets(dt);
     this.drawNight();
     this.drawOverlay();
     this.renderLoupe();

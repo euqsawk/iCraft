@@ -4,7 +4,7 @@ import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import { FLOW_WINDOW, type Belt, type Line, type Machine } from '../sim/factory.ts';
+import { FLOW_WINDOW, ROCKET_NEEDS, type Belt, type Line, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
@@ -300,6 +300,7 @@ export class Hud implements GestureHandlers {
       case 'lab': this.refreshLevel(); this.treeDirty = true; this.sheetDirty = true; break;
       case 'unlock': this.renderPalette(); this.refreshLevel(); this.refreshTools(); this.sheetDirty = true; break;
       case 'view': this.onView(); break;
+      case 'rocket': this.rocketLaunched(e.n); break;
       case 'order': this.refreshOrder(); this.sheetDirty = true; break;
       case 'inventory': if (this.sheetKind) this.sheetDirty = true; break;
       case 'crafted': this.toast(`${this.game.look.name} a fabriqué ${itemLabel(e.item, e.n)}`, 'good'); break;
@@ -640,7 +641,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && machineDef(m.type).kind === 'storage') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
-    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
+    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger', 'rocket'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -1663,6 +1664,24 @@ export class Hud implements GestureHandlers {
         sheet.append(acts);
         return;
       }
+      if (def.kind === 'rocket') {
+        const counting = !!mm.craft;
+        sheet.append(this.sheetHead(def.name, esc(counting ? `Décollage dans ${Math.max(0, Math.ceil(RULES.rocketCountdown - mm.craft!.t))} s !` : `${g.rockets ? `${g.rockets} fusée${g.rockets > 1 ? 's' : ''} lancée${g.rockets > 1 ? 's' : ''}. ` : ''}Remplis-la par tapis (ou depuis l’inventaire du robot) : quand tout y est, la fusée décolle.`), close));
+        const card = h('div', 'card');
+        card.innerHTML = Object.entries(ROCKET_NEEDS).map(([k, n]) => this.gauge(item(k).name, Math.min(n, mm.inBuf[k] ?? 0), n, false).replace(this.itemIcons.get('charbon')!, this.itemIcons.get(k)!)).join('');
+        sheet.append(card);
+        const dep = h('div', 'card');
+        dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)}</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
+        this.wireGrid(dep, mm);
+        if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
+        sheet.append(dep);
+        const acts = h('div', 'row');
+        const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+        mv.onclick = () => { close(); this.startMove(mm); };
+        acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close));
+        sheet.append(acts);
+        return;
+      }
       if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'charger') {
         const wn = g.view.waterNetOf(mm);
         const waterLine = wn ? `Réseau d’eau : ${fmtN(wn.demand)} L/s demandés pour ${fmtN(wn.supply)} L/s pompés.` : 'Aucun tuyau ne la touche.';
@@ -1673,7 +1692,7 @@ export class Hud implements GestureHandlers {
         const card = h('div', 'card');
         if (def.kind === 'reactor') {
           const rods = mm.inBuf.uranium_enrichi ?? 0;
-          card.innerHTML = `${this.gauge('Barreaux', rods, RULES.fuelStack, rods <= 1)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${(mm.water ?? 0) * 100}%"></span></span><b>${Math.round((mm.water ?? 0) * 100)} %</b></div>${this.powerCard(mm)}<p class="muted small">Un barreau d’uranium enrichi dure 2 minutes à pleine charge ; apporte-les par tapis.</p>`;
+          card.innerHTML = `${this.gauge('Barreaux', rods, RULES.fuelStack, rods <= 1).replace(this.itemIcons.get('charbon')!, this.itemIcons.get('uranium_enrichi')!)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${(mm.water ?? 0) * 100}%"></span></span><b>${Math.round((mm.water ?? 0) * 100)} %</b></div>${this.powerCard(mm)}<p class="muted small">Un barreau d’uranium enrichi dure 2 minutes à pleine charge ; apporte-les par tapis.</p>`;
         } else if (def.kind === 'charger') {
           card.innerHTML = this.powerCard(mm);
         } else {
@@ -2438,6 +2457,21 @@ export class Hud implements GestureHandlers {
       if (act) sheet.append(act);
     }, true);
     this.sheetKind = 'building';
+  }
+
+  /** La fusée a décollé : un grand bravo. */
+  private rocketLaunched(n: number): void {
+    this.closeSheet();
+    this.root.querySelector('.celebrate.rocket')?.remove();
+    const box = h('div', 'celebrate level rocket');
+    box.innerHTML = `<div class="lv-badge">${n}</div><h2>${n === 1 ? 'La fusée décolle !' : `Fusée n° ${n} !`}</h2>
+      <p>${n === 1 ? 'Ton usine a construit une fusée et l’a envoyée dans l’espace. C’est la fin du voyage… et rien n’empêche d’en lancer d’autres.' : 'Encore une ! Le programme spatial continue.'}</p>
+      <p class="muted-small">${playTime(this.game.played)} de jeu · ${fmt(Object.values(this.game.factory.stats.made).reduce((a, b) => a + b, 0))} objets fabriqués</p>`;
+    const ok = h('button', 'btn primary', 'Continuer');
+    ok.style.width = '100%';
+    ok.onclick = () => box.remove();
+    box.append(ok);
+    setTimeout(() => this.root.append(box), 2600);
   }
 
   private celebrate(o: Order): void {
