@@ -1,5 +1,5 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
-import { BIOME_COLORS, CELL, PALETTE, RULES } from '../config.ts';
+import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
 import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
@@ -168,7 +168,25 @@ export class Hud implements GestureHandlers {
     this.minimap = h('canvas');
     this.minimap.width = 52 * 3; this.minimap.height = 52 * 3;
     mm.append(this.minimap);
-    mm.onclick = () => { this.r.centerOnRobot(); this.closePopover(); };
+    // Toucher : la caméra se recentre sur le robot et le suit, jusqu'à ce qu'on la déplace.
+    // Rester appuyé : la vraie carte.
+    let pressT = 0, long = false;
+    mm.addEventListener('pointerdown', () => {
+      long = false;
+      clearTimeout(pressT);
+      pressT = window.setTimeout(() => { long = true; this.openMap(); }, 550);
+    });
+    const cancelPress = () => clearTimeout(pressT);
+    mm.addEventListener('pointerup', cancelPress);
+    mm.addEventListener('pointercancel', cancelPress);
+    mm.addEventListener('pointerleave', cancelPress);
+    mm.addEventListener('contextmenu', (e) => e.preventDefault());
+    mm.onclick = () => {
+      if (long) { long = false; return; }
+      this.r.centerOnRobot();
+      this.r.follow = true;
+      this.closePopover();
+    };
     row.append(this.orderCard, mm);
 
     this.palette = h('div', 'palette hidden');
@@ -324,31 +342,57 @@ export class Hud implements GestureHandlers {
       <div class="side"><b>${fmt(done)} / ${fmt(total)}</b><span class="mini-bar"><span style="width:${g.palierProgress() * 100}%"></span></span><small>Palier ${mission.to}</small></div>`;
   }
 
+  /** Catégorie de la palette où range une machine. */
+  private static paletteCat(m: MachineDef): string {
+    if (m.kind === 'drill') return 'extraction';
+    if (m.kind === 'generator' || m.power) return 'electricite';
+    if (m.kind === 'crafter') return 'fabrication';
+    if (m.kind === 'storage' || m.kind === 'sell') return 'stockage';
+    return 'outils';
+  }
+
+  private paletteTab = '';
+
   private renderPalette(): void {
     const p = this.palette;
     p.innerHTML = '';
     const placed = new Set([...this.game.factory.machines.values()].map((x) => x.type));
-    // Le Laboratoire et le Comptoir viennent en tête ; une fois posés, ils disparaissent de la liste.
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
-    for (const m of BUILDABLE) {
-      if (!this.game.hasMachine(m.id)) continue;
-      if (m.gift || (m.unique && placed.has(m.id))) continue;
-      const b = h('button', `mcard${this.machineType === m.id ? ' selected' : ''}`);
+    const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id)));
+    // À partir de 10 machines, un sous-menu : des catégories, puis les machines de la catégorie choisie.
+    const CATS: [string, string][] = [['extraction', 'Extraction'], ['fabrication', 'Fabrication'], ['electricite', 'Électricité'], ['stockage', 'Stockage'], ['outils', 'Outils']];
+    let shown = list;
+    if (list.length >= 10) {
+      const present = CATS.filter(([id]) => list.some((m) => Hud.paletteCat(m) === id));
+      if (!present.some(([id]) => id === this.paletteTab)) this.paletteTab = present[0]?.[0] ?? '';
+      const cats = h('div', 'pal-cats');
+      for (const [id, label] of present) {
+        const n = list.filter((m) => Hud.paletteCat(m) === id).length;
+        const c = h('button', `pal-cat${id === this.paletteTab ? ' on' : ''}`, `${esc(label)}<small>${n}</small>`);
+        c.onclick = () => { this.paletteTab = id; this.renderPalette(); };
+        cats.append(c);
+      }
+      p.append(cats);
+      shown = list.filter((m) => Hud.paletteCat(m) === this.paletteTab);
+    }
+    const row = h('div', 'pal-row');
+    for (const m of shown) {
+      const b = h('button', 'mcard');
       b.innerHTML = `<img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)}<small>${ICONS.coinSm}${m.cost}</small>`;
+      // On ne pose qu'en glissant la carte jusqu'à sa place (un toucher ne fait que l'expliquer).
       b.onclick = () => {
         if (this.dragEnded) return;
-        this.machineType = m.id;
-        this.renderPalette();
-        this.toast(`${m.name} : glisse-la sur la carte, ou touche la carte pour la poser`, 'info');
+        this.toast(`${m.name} : glisse sa carte jusqu’à sa place sur la carte`, 'info');
       };
       b.addEventListener('pointerdown', (e) => this.cardDown(e, m.id, b));
-      p.append(b);
+      row.append(b);
     }
     // Dernière carte : l'arbre, pour débloquer d'autres machines.
     const ready = this.game.unlockableCount();
     const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${NODE_ICONS.assembleur}</span>Débloquer<small>${ready ? `${ready} prêt${ready > 1 ? 's' : ''}` : `Palier ${this.game.palier}`}</small>`);
     more.onclick = () => this.openTree('production');
-    p.append(more);
+    row.append(more);
+    p.append(row);
   }
 
   // ---------- Glisser une machine depuis la palette ----------
@@ -476,7 +520,8 @@ export class Hud implements GestureHandlers {
   }
 
   toolActive(): boolean {
-    return this.tool !== 'none' && !this.r.introRunning;
+    // Avec la palette ouverte, la carte se déplace normalement : les machines se posent en glissant leur carte.
+    return this.tool !== 'none' && this.tool !== 'machine' && !this.r.introRunning;
   }
 
   /** Pendant l'animation d'arrivée, l'interface reste cachée. */
@@ -696,6 +741,7 @@ export class Hud implements GestureHandlers {
 
   cameraMoved(): void {
     this.r.stopFocus();
+    this.r.follow = false;
     if (!this.popover.classList.contains('hidden')) this.positionPopover();
   }
 
@@ -1855,6 +1901,82 @@ export class Hud implements GestureHandlers {
   }
 
   // ---------- Mini-carte ----------
+
+  /** La vraie carte (appui long sur la mini-carte) : tout ce qui a été exploré ; toucher un endroit y emmène la caméra. */
+  openMap(): void {
+    this.closePopover();
+    this.root.querySelector('.map-screen')?.remove();
+    const g = this.game, w = g.world;
+    const keys = [...w.fogVersion.keys()].map((k) => k.split(',').map(Number));
+    if (!keys.length) return;
+    const cx0 = Math.min(...keys.map((k) => k[0])), cx1 = Math.max(...keys.map((k) => k[0]));
+    const cy0 = Math.min(...keys.map((k) => k[1])), cy1 = Math.max(...keys.map((k) => k[1]));
+    const x0 = cx0 * CHUNK, y0 = cy0 * CHUNK, cols = (cx1 - cx0 + 1) * CHUNK, rows = (cy1 - cy0 + 1) * CHUNK;
+    // Le sol, une case par pixel.
+    const base = document.createElement('canvas');
+    base.width = cols; base.height = rows;
+    const bctx = base.getContext('2d')!;
+    const img = bctx.createImageData(cols, rows);
+    const fog = PALETTE.fog;
+    for (let i = 0; i < cols * rows; i++) {
+      img.data[i * 4] = (fog >> 16) & 255; img.data[i * 4 + 1] = (fog >> 8) & 255; img.data[i * 4 + 2] = fog & 255; img.data[i * 4 + 3] = 255;
+    }
+    for (const [cx, cy] of keys) {
+      const f = w.fogData(cx, cy);
+      if (!f) continue;
+      for (let i = 0; i < f.length; i++) {
+        if (!f[i]) continue;
+        const x = cx * CHUNK + (i % CHUNK), y = cy * CHUNK + Math.floor(i / CHUNK);
+        const pa = w.patchAt(x, y);
+        const c = pa ? item(pa.type).patch ?? 0xcccccc : BIOME_COLORS[w.biomeAt(x, y)];
+        const o = ((y - y0) * cols + (x - x0)) * 4;
+        img.data[o] = (c >> 16) & 255; img.data[o + 1] = (c >> 8) & 255; img.data[o + 2] = c & 255;
+      }
+    }
+    bctx.putImageData(img, 0, 0);
+    const screen = h('div', 'map-screen');
+    const head = h('div', 'map-head', '<div><h2>Carte</h2><p>Touche un endroit pour y aller</p></div>');
+    const x = h('button', 'round', ICONS.close);
+    x.setAttribute('aria-label', 'Fermer');
+    const close = () => screen.remove();
+    x.onclick = close;
+    head.append(x);
+    const wrap = h('div', 'map-wrap');
+    const canvas = h('canvas');
+    wrap.append(canvas);
+    screen.append(head, wrap);
+    this.root.append(screen);
+    // Échelle : toute la zone explorée tient dans l'écran (8 pixels par case au plus).
+    const box = wrap.getBoundingClientRect();
+    const scale = Math.max(1, Math.min((box.width - 8) / cols, (box.height - 8) / rows, 8));
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    canvas.style.width = `${cols * scale}px`; canvas.style.height = `${rows * scale}px`;
+    canvas.width = Math.round(cols * scale * dpr); canvas.height = Math.round(rows * scale * dpr);
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(base, 0, 0, cols * scale, rows * scale);
+    const px = (cx: number) => (cx - x0) * scale, py = (cy: number) => (cy - y0) * scale;
+    ctx.fillStyle = '#ffffff';
+    for (const b of g.factory.belts.values()) ctx.fillRect(px(b.x), py(b.y), scale, scale);
+    for (const m of g.factory.machines.values()) {
+      ctx.fillStyle = m.type === 'noyau' ? '#F47C64' : '#2E3A4B';
+      ctx.fillRect(px(m.x), py(m.y), m.w * scale, m.h * scale);
+    }
+    // La caméra (cadre) et le robot (pastille jaune).
+    const cam = this.r.camera.bounds();
+    ctx.strokeStyle = 'rgba(46,58,75,.55)'; ctx.lineWidth = 2;
+    ctx.strokeRect(px(cam.x0 / CELL), py(cam.y0 / CELL), (cam.x1 - cam.x0) / CELL * scale, (cam.y1 - cam.y0) / CELL * scale);
+    ctx.fillStyle = '#FFC857'; ctx.strokeStyle = '#2E3A4B'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(px(g.robot.x), py(g.robot.y), Math.max(5, scale * 1.2), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    canvas.onclick = (e) => {
+      const r = canvas.getBoundingClientRect();
+      const wx = x0 + (e.clientX - r.left) / scale, wy = y0 + (e.clientY - r.top) / scale;
+      this.r.follow = false;
+      this.r.camera.x = wx * CELL; this.r.camera.y = wy * CELL;
+      close();
+    };
+  }
 
   private drawMinimap(): void {
     const c = this.minimap, ctx = c.getContext('2d')!;

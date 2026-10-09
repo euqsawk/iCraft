@@ -132,10 +132,17 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 /* ---------- Palette des machines ---------- */
 .palette {
   position: absolute; left: 10px; right: 10px; bottom: calc(var(--bottom) + 84px);
-  display: flex; gap: 8px; overflow-x: auto; padding: 10px; border-radius: 22px; background: #fff;
-  box-shadow: 0 5px 0 var(--shadow); scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 22px; background: #fff;
+  box-shadow: 0 5px 0 var(--shadow);
 }
-.palette::-webkit-scrollbar { display: none; }
+.pal-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.pal-row::-webkit-scrollbar, .pal-cats::-webkit-scrollbar { display: none; }
+/* Sous-menu de la palette (à partir de 10 machines) : une rangée de catégories. */
+.pal-cats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.pal-cat { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding: 6px 11px; border-radius: 12px; background: #F4F8F6; font-size: 12px; font-weight: 800; color: var(--ink2); }
+.pal-cat small { font-size: 10px; padding: 0 5px; border-radius: 8px; background: #fff; color: var(--ink2); }
+.pal-cat.on { background: var(--ink); color: #fff; }
+.pal-cat.on small { background: rgba(255,255,255,.18); color: #fff; }
 .palette.hidden, .hidden { display: none !important; }
 .mcard {
   flex: 0 0 auto; width: 84px; padding: 8px 4px 6px; border-radius: 16px; background: #F4F8F6;
@@ -690,3 +697,11 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 @keyframes trash-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } }
 .gauge .g-carb { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 1px 6px 1px 3px; border-radius: 9px; background: #FFF1D6; font-weight: 800; font-size: 11px; color: var(--ink); }
 .gauge .g-carb img { width: 13px; height: 13px; }
+
+/* La vraie carte (appui long sur la mini-carte) */
+.map-screen { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg, #E6F0EB); padding: calc(env(safe-area-inset-top, 0px) + 14px) 12px calc(env(safe-area-inset-bottom, 0px) + 14px); animation: trash-in .18s ease-out; }
+.map-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.map-head h2 { margin: 0; font-size: 24px; font-weight: 900; color: var(--ink); }
+.map-head p { margin: 2px 0 0; font-size: 13px; font-weight: 700; color: var(--ink2); }
+.map-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: auto; border-radius: 18px; background: #fff; box-shadow: 0 5px 0 var(--shadow); }
+.map-wrap canvas { border-radius: 10px; touch-action: manipulation; }

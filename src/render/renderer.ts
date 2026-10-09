@@ -215,6 +215,9 @@ export class GameRenderer {
   }
 
   /** Recentre la caméra sur le robot. */
+  /** La caméra suit le robot (après un toucher sur la mini-carte), jusqu'à ce que le joueur la déplace. */
+  follow = false;
+
   centerOnRobot(): void {
     this.camera.x = this.game.robot.x * CELL;
     this.camera.y = this.game.robot.y * CELL;
@@ -1628,6 +1631,7 @@ export class GameRenderer {
 
   /** Glisse la caméra vers un point du monde (en cases), avec un zoom. */
   focusOn(x: number, y: number, zoom: number, dur = 1.3): void {
+    this.follow = false;
     const c = this.camera;
     this.focus = { fx: c.x, fy: c.y, fz: c.zoom, tx: x * CELL, ty: y * CELL, tz: zoom, t: 0, dur };
   }
@@ -1671,6 +1675,7 @@ export class GameRenderer {
     this.time += dt;
     if (this.intro) this.stepIntro(dt);
     this.stepFocus(dt);
+    if (this.follow) this.centerOnRobot();
     this.stepScan(dt);
     const cam = this.camera;
     cam.setSize(this.app.screen.width, this.app.screen.height);
