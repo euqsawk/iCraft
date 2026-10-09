@@ -146,10 +146,15 @@ test('pont : un tapis passe par-dessus un autre, et les deux continuent de roule
   }
   // Autant qu'un tapis droit de même longueur (42 en 20 s).
   assert(a.inBuf.cuivre >= 1 + 40, `débit sur le pont : ${a.inBuf.cuivre - 1} en 20 s`);
+  // Gomme sur la case enjambée : d'abord le pont (remboursé), puis le tapis du dessous.
+  const m0 = g.money;
+  assert(g.removeAt(7, 6) && !g.factory.beltAt(6, 6) && !!g.factory.beltAt(7, 6), 'le pont part, pas le tapis du dessous');
+  assert(g.money - m0 === RULES.beltCost + RULES.bridgeCost, `remboursé ${g.money - m0}`);
+  assert(g.removeAt(7, 6) && !g.factory.beltAt(7, 6), 'puis le tapis');
   // Sauvegarde
   const g2 = new Game('TEST-B1');
   g2.factory.load(g.factory.serialize());
-  assert(g2.factory.beltAt(6, 6)!.jump === 1 && g2.factory.chainOf(g2.factory.beltAt(8, 6)!).length === 6, 'pont rechargé, chaîne entière');
+  assert(!g2.factory.beltAt(6, 6) && g2.factory.belts.size === g.factory.belts.size, 'rechargé');
 });
 test('pont depuis un tapis collé à un autre : dérivation ou bout de tapis, par-dessus le voisin', () => {
   const g = new Game('TEST-B2');
@@ -187,6 +192,10 @@ test('pont depuis un tapis collé à un autre : dérivation ou bout de tapis, pa
   const r2 = t2.result();
   assert(r2[0].existing && r2[0].jump === 1 && r2[0].dir === 1 && r2[1].y === 7, `bout en pont : ${JSON.stringify(r2)}`);
   assert(g.placeBelts(r2) && g.factory.beltAt(10, 5)!.jump === 1, 'pont posé depuis le bout');
+  // Gomme sur la case sous la dérivation en pont : la dérivation part, le séparateur redevient un tapis simple.
+  const snap = g.factory.serialize();
+  assert(g.removeAt(5, 6) && g.factory.beltAt(5, 5)!.split === undefined && !!g.factory.beltAt(5, 6), 'dérivation en pont retirée');
+  g.factory.load(snap);
   // Sauvegarde
   const g2 = new Game('TEST-B2');
   g2.factory.load(g.factory.serialize());
@@ -449,6 +458,14 @@ test('station : son drone travaille autour d’elle, loin du robot', () => {
   four.fuel = 0;
   run(g, 30);
   assert(four.fuel > 0, `le drone de la station aurait dû recharger le four (${four.fuel})`);
+  // Sans coffre : il se sert dans la case carburant de la station (50 charbons), en lui en laissant 2.
+  g.factory.takeFromStorage(chest, 'charbon', 1000);
+  four.fuel = 0; four.burn = 0;
+  st.fuel = 0;
+  assert(g.factory.addFuel(st, 60) === RULES.stationCoal && st.fuel === 50, `station : ${st.fuel} charbons`);
+  const before = st.fuel;
+  run(g, 30);
+  assert(four.fuel > 0 && st.fuel < before && st.fuel >= RULES.stationReserve - 1, `four ${four.fuel}, station ${before} → ${st.fuel}`);
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
   assert(g2.stationDrones.size === 1, 'drone de station rechargé');

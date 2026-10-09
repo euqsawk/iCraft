@@ -57,7 +57,7 @@ export type GiftType = typeof GIFTS[number];
 export type Job = { kind: 'belt'; k: number } | { kind: 'machine'; id: number };
 
 /** D'où un drone prend un objet : un coffre (jamais l'inventaire du robot). */
-export type Source = { kind: 'chest'; id: number };
+export type Source = { kind: 'chest' | 'station'; id: number };
 
 export type DroneTask =
   | { kind: 'build'; job: Job }
@@ -658,11 +658,23 @@ export class Game {
     this.factory.removeBelt(b);
     const k = key(b.x, b.y);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
-    return RULES.beltCost;
+    return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0);
   }
 
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
   removeAt(x: number, y: number): boolean {
+    // Un pont passe au-dessus : on retire d'abord le pont, le tapis du dessous reste.
+    const over = this.factory.bridgeOver(x, y);
+    if (over) {
+      if (over.split) {
+        this.factory.clearSplit(over.belt);
+        this.earn(RULES.bridgeCost);
+      } else {
+        this.earn(this.refundBelt(over.belt));
+      }
+      this.emit({ type: 'factory' });
+      return true;
+    }
     const b = this.factory.beltAt(x, y);
     if (b) {
       this.earn(this.refundBelt(b));
@@ -1214,6 +1226,11 @@ export class Game {
 
   /** Le coffre à portée le plus proche du drone qui contient cet objet. Les drones ne se servent jamais dans l'inventaire du robot. */
   private sourceFor(d: Drone, item: string): Source | null {
+    // Le drone d'une station prend d'abord le charbon de sa station (elle en garde 2 pour lui).
+    if (item === 'charbon' && d.station !== undefined) {
+      const st = this.factory.machines.get(d.station);
+      if (st?.built && st.fuel > RULES.stationReserve) return { kind: 'station', id: st.id };
+    }
     let best: Source | null = null, bd = Infinity;
     for (const m of this.factory.machines.values()) {
       if (m.type !== 'coffre' || !m.built || !(m.inBuf[item] > 0)) continue;
@@ -1229,7 +1246,10 @@ export class Game {
   private returnChest(d: Drone): Machine | null {
     if (!d.cargo || d.from === undefined) return null;
     const m = this.factory.machines.get(d.from);
-    if (!m || !m.built || machineDef(m.type).kind !== 'storage') return null;
+    if (!m || !m.built) return null;
+    // Le charbon pris dans une station y retourne.
+    if (machineDef(m.type).kind === 'station') return d.cargo.t === 'charbon' && this.factory.fuelRoom(m) > 0 ? m : null;
+    if (machineDef(m.type).kind !== 'storage') return null;
     return this.factory.storageRoom(m, d.cargo.t) > 0 ? m : null;
   }
 
@@ -1252,7 +1272,7 @@ export class Game {
     }
     // Machines à portée qui ont besoin de charbon, la plus vide d'abord.
     const needy = [...this.factory.machines.values()]
-      .filter((m) => m.built && this.factory.fuelRoom(m) > 0 && !reservedFuel.has(m.id) && this.near(this.center(m), this.anchor.supply))
+      .filter((m) => m.built && this.factory.fuelRoom(m) > 0 && !reservedFuel.has(m.id) && m.id !== d.station && this.near(this.center(m), this.anchor.supply))
       .sort((a, b) => a.fuel - b.fuel);
     const order = d.priorities;
     const refueler = order[0] === 'carburant';
@@ -1279,7 +1299,7 @@ export class Game {
       // retour au coffre d'où elle vient ; s'il n'existe plus ou qu'il est plein, la cargaison est détruite.
       if (!(cargo.t === 'charbon' && refueler)) {
         const home = this.returnChest(d);
-        if (home) return { kind: 'deliver', id: home.id };
+        if (home) return machineDef(home.type).kind === 'station' ? { kind: 'refuel', id: home.id } : { kind: 'deliver', id: home.id };
         d.cargo = null;
         d.from = undefined;
       }
@@ -1332,7 +1352,14 @@ export class Game {
       const take = (n: number): number => {
         if (n <= 0) return 0;
         const m = f.machines.get(t.from.id);
-        return m ? f.takeFromStorage(m, t.item, n) : 0;
+        if (!m) return 0;
+        if (t.from.kind === 'station') {
+          // Dans la case carburant de la station (on lui en laisse un peu pour le drone).
+          const k = Math.max(0, Math.min(n, m.fuel - RULES.stationReserve));
+          m.fuel -= k;
+          return k;
+        }
+        return f.takeFromStorage(m, t.item, n);
       };
       if (t.self) d.fuel += take(RULES.fuelStack - d.fuel);
       if (!d.cargo || d.cargo.t === t.item) {

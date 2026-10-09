@@ -151,6 +151,26 @@ export class Factory {
     return this.nextOf.get(b) ?? null;
   }
 
+  /** Le pont qui passe au-dessus de cette case, s'il y en a un (split : c'est la dérivation d'un séparateur). */
+  bridgeOver(x: number, y: number): { belt: Belt; split: boolean } | null {
+    for (const b of this.belts.values()) {
+      if (!b.jump && !b.splitJump) continue;
+      const spans: [number, number, boolean][] = [];
+      if (b.jump) spans.push([b.dir, b.jump, false]);
+      if (b.splitJump && b.split !== undefined) spans.push([b.split, b.splitJump, true]);
+      for (const [d, n, split] of spans) {
+        for (let k = 1; k <= n; k++) if (b.x + DX[d] * k === x && b.y + DY[d] * k === y) return { belt: b, split };
+      }
+    }
+    return null;
+  }
+
+  /** Retire la dérivation d'un séparateur. */
+  clearSplit(b: Belt): void {
+    delete b.split; delete b.splitJump;
+    this.dirty = true;
+  }
+
   /** La case de tapis qui nourrit celle-ci par l'arrière (voisine, ou un pont qui atterrit ici). */
   feederOf(b: Belt): Belt | null {
     for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
@@ -412,16 +432,22 @@ export class Factory {
 
   // ---------- Charbon et coffres ----------
 
+  /** Taille de la case carburant (10, ou 50 pour une station). */
+  fuelCap(m: Machine): number {
+    return machineDef(m.type).kind === 'station' ? RULES.stationCoal : RULES.fuelStack;
+  }
+
   /** Place restante dans la case carburant. */
   fuelRoom(m: Machine): number {
     const def = machineDef(m.type);
     if (this.selfFed(m)) return 0;
-    return def.coal ? Math.max(0, RULES.fuelStack - m.fuel) : 0;
+    return def.coal ? Math.max(0, this.fuelCap(m) - m.fuel) : 0;
   }
 
-  /** Une foreuse sur du charbon s'alimente elle-même : personne n'a besoin de la recharger. */
+  /** Une foreuse au charbon posée sur du charbon s'alimente elle-même : personne n'a besoin de la recharger. */
   selfFed(m: Machine): boolean {
-    return m.ore === 'charbon' && machineDef(m.type).kind === 'drill';
+    const def = machineDef(m.type);
+    return m.ore === 'charbon' && def.kind === 'drill' && def.coal;
   }
 
   /** Ajoute du charbon dans la case carburant ; renvoie la quantité ajoutée. */
@@ -468,7 +494,7 @@ export class Factory {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
-    if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) return true;
+    if (item === 'charbon' && def.coal && m.fuel < this.fuelCap(m)) return true;
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
@@ -482,7 +508,7 @@ export class Factory {
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
-    if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) {
+    if (item === 'charbon' && def.coal && m.fuel < this.fuelCap(m)) {
       // Le carburant d'abord ; un fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = this.coalIngredient(def) && m.fuel >= 3 && (m.inBuf.charbon ?? 0) < RULES.machineBuffer;
       if (!asIngredient) { m.fuel++; return; }
@@ -802,7 +828,7 @@ export class Factory {
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
-      Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
+      Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);

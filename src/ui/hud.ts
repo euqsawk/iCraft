@@ -84,6 +84,8 @@ export class Hud implements GestureHandlers {
   private moving: Machine | null = null;
   private tracer: BeltTracer | null = null;
   private lastErase: { x: number; y: number } | null = null;
+  /** Cases déjà gommées pendant ce geste. */
+  private erased = new Set<string>();
   private itemIcons = new Map<string, string>();
   private machineIcons = new Map<string, string>();
 
@@ -542,6 +544,7 @@ export class Hud implements GestureHandlers {
       this.updatePlacement(sx, sy);
     } else if (this.tool === 'gomme') {
       this.lastErase = null;
+      this.erased.clear();
       this.erase(w.x, w.y);
     }
   }
@@ -612,6 +615,10 @@ export class Hud implements GestureHandlers {
     const steps = Math.max(Math.abs(x - from.x), Math.abs(y - from.y), 1);
     for (let i = 0; i <= steps; i++) {
       const cx = Math.round(from.x + ((x - from.x) * i) / steps), cy = Math.round(from.y + ((y - from.y) * i) / steps);
+      // Une case n'est gommée qu'une fois par geste : sous un pont, le premier coup retire le pont, le suivant le tapis.
+      const ck = `${cx},${cy}`;
+      if (this.erased.has(ck)) continue;
+      this.erased.add(ck);
       const m = this.game.factory.machineAt(cx, cy);
       if (m?.type === 'noyau' || (m && machineDef(m.type).gift)) continue;
       this.game.removeAt(cx, cy);
@@ -669,7 +676,7 @@ export class Hud implements GestureHandlers {
           ? `${def.hint}. ${this.game.factory.storageSlots(m)} cases sur 10 occupées.`
           : `${STATUS_TEXT[m.status]}. ${def.hint}.`;
       }
-      const fuelLine = m.built && def.coal ? this.gauge('Charbon', m.fuel, 10, this.game.factory.lowFuel(m)) : '';
+      const fuelLine = m.built && def.coal ? this.gauge('Charbon', m.fuel, this.game.factory.fuelCap(m), this.game.factory.lowFuel(m)) : '';
       const inChips = this.chips(m.inBuf);
       const outChips = this.chips(m.outBuf);
       const recipes = m.built ? this.recipesHtml(def, m) : '';
@@ -1158,7 +1165,7 @@ export class Hud implements GestureHandlers {
       }
       // Charbon et recettes
       const top = h('div', 'card mrec');
-      top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, 10, g.factory.lowFuel(mm)) : ''}${this.recipesHtml(def, mm)}`;
+      top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm)) : ''}${this.recipesHtml(def, mm)}`;
       if (mm.type === 'raffinerie') {
         const cur = mm.choice ?? 'plastique';
         const row = h('div', 'row');

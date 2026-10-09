@@ -64,6 +64,10 @@ export const RULES = {
   giftCoal: 10,
   /** Charbon : case carburant de 10 partout ; durée d'un charbon en secondes de travail. */
   fuelStack: 10,
+  /** Une station garde plus de charbon : son drone s'y sert pour recharger les machines autour. */
+  stationCoal: 50,
+  /** Charbon que le drone d'une station laisse dans sa station (pour lui-même). */
+  stationReserve: 2,
   coalMachineSeconds: 10,
   coalRobotSeconds: 30,
   coalDroneSeconds: 20,
