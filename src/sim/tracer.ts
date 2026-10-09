@@ -67,7 +67,8 @@ export class BeltTracer {
   }
 
   private usable(x: number, y: number): boolean {
-    return this.factory.isFree(x, y) && this.factory.world.isRevealed(x, y);
+    // On construit aussi dans le brouillard.
+    return this.factory.isFree(x, y);
   }
 
   private occupied(x: number, y: number): boolean {

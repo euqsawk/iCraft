@@ -1,5 +1,5 @@
 // Tracé des câbles au doigt : comme les tapis (lignes droites, virages à angle droit),
-// mais un câble passe partout où le sol est découvert, sous les tapis et sous les machines.
+// mais un câble passe partout (même dans le brouillard), sous les tapis et sous les machines.
 import { DX, DY, type Dir } from './geom.ts';
 import type { World } from '../world/world.ts';
 
@@ -8,15 +8,12 @@ const HYSTERESIS = 0.85;
 
 export class CableTracer {
   cells: { x: number; y: number }[] = [];
-  /** Le tracé a buté sur le brouillard. */
+  /** Le tracé est bloqué (plus utilisé : on construit aussi dans le brouillard). */
   blocked = false;
-  private world: World;
 
-  constructor(world: World, fx: number, fy: number) {
-    this.world = world;
+  constructor(_world: World, fx: number, fy: number) {
     const x = Math.floor(fx), y = Math.floor(fy);
-    if (world.isRevealed(x, y)) this.cells.push({ x, y });
-    else this.blocked = true;
+    this.cells.push({ x, y });
   }
 
   private dir(): Dir | null {
@@ -51,7 +48,6 @@ export class CableTracer {
       const nx = c.x + DX[step], ny = c.y + DY[step];
       const seen = this.cells.findIndex((p) => p.x === nx && p.y === ny);
       if (seen >= 0) { this.cells.length = seen + 1; continue; }
-      if (!this.world.isRevealed(nx, ny)) { this.blocked = true; break; }
       this.cells.push({ x: nx, y: ny });
     }
   }

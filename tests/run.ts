@@ -859,10 +859,14 @@ test('générateur, câbles et machines qui passent au courant', () => {
   four.inBuf = { fer: 10 }; four.fuel = 0;
   run(g, 3);
   assert(four.status === 'nofuel', `four au charbon, sans charbon : ${four.status}`);
-  // Câble du générateur (cases 4-5) jusqu'au four (cases 9-10) : il touche les deux.
-  const cells = [6, 7, 8].map((x) => ({ x, y: 4 }));
+  // Un câble collé au four ne suffit pas : il doit passer sous lui.
+  assert(g.placeCables([6, 7, 8].map((x) => ({ x, y: 4 }))), 'câbles collés');
+  g.unlocks.add('four_elec'); apply();
+  assert(!g.factory.netOf(four) && !g.factory.netOf(gen), 'collé à côté : pas branché');
+  // Câble sous le générateur (cases 4-5) et sous le four (cases 9-10).
   const m0 = g.money;
-  assert(g.placeCables(cells) && m0 - g.money === 3 * RULES.cableCost, 'câbles posés');
+  assert(g.placeCables([{ x: 5, y: 4 }, { x: 9, y: 4 }]) && m0 - g.money === 2 * RULES.cableCost, 'câbles sous les machines');
+  g.unlocks.delete('four_elec'); apply();
   gen.fuel = 10;
   assert(!g.factory.netOf(four), 'four pas encore électrique : il ne se branche pas');
   // Le nœud « Four électrique » : les fours déjà posés se branchent.
@@ -900,7 +904,7 @@ test('générateur, câbles et machines qui passent au courant', () => {
   const extra = g.placeMachine('four', 14, 7)!;
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
-  g.placeCables([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((x) => ({ x, y: 6 })));
+  g.placeCables([{ x: 4, y: 5 }, { x: 4, y: 6 }, ...[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((x) => ({ x, y: 7 }))]);
   for (const p of presses) p.inBuf = { lingot_fer: 10 };
   extra.inBuf = { fer: 10 };
   four.inBuf = { fer: 10 };
@@ -912,6 +916,17 @@ test('générateur, câbles et machines qui passent au courant', () => {
   assert(g2.factory.cables.size === g.factory.cables.size && g2.factory.hasCable(7, 4), 'câbles rechargés');
   const m1 = g.money;
   assert(g.removeAt(7, 4) && !g.factory.hasCable(7, 4) && g.money - m1 === RULES.cableCost, 'câble gommé');
+  // Ancienne sauvegarde : le câble collé est prolongé sous la machine.
+  const old2 = new Game('TEST-E1b');
+  old2.money = 100000; old2.world.reveal(8, 8, 20); old2.unlocks.add('generateur');
+  old2.placeMachine('generateur', 4, 4);
+  old2.placeCables([{ x: 6, y: 4 }, { x: 7, y: 4 }]);
+  const legacy = JSON.parse(JSON.stringify(old2.serialize()));
+  delete legacy.factory.cableV;
+  const g3 = new Game('TEST-E1b', legacy);
+  assert(g3.factory.hasCable(5, 4) && !g3.factory.hasCable(4, 4) && !g3.factory.hasCable(5, 5), 'migration : une case sous le générateur, du côté du câble');
+  const g4 = new Game('TEST-E1b', JSON.parse(JSON.stringify(old2.serialize())));
+  assert(!g4.factory.hasCable(5, 4), 'sauvegarde récente : rien n’est ajouté');
   assert(g.factory.netOf(four) !== g.factory.netOf(gen) || g.factory.netOf(four)!.gens.length === 1, 'réseau recalculé');
 });
 test('tracé de câble : passe sous les tapis et les machines, reprend en revenant', () => {

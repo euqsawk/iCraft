@@ -33,7 +33,7 @@ const STATUS_TEXT: Record<string, string> = {
   nofuel: 'Plus de charbon : le voyant clignote, un drone va en apporter',
   noinput: 'Il manque un ingrédient',
   noore: 'Pas de filon dessous',
-  nopower: 'Pas de courant : relie-la par un câble à un générateur qui a du charbon',
+  nopower: 'Pas de courant : fais passer un câble sous elle, relié à un générateur qui a du charbon',
 };
 
 /** Le verbe d'une étape de fabrication à la main, selon la machine qu'on imite. */
@@ -545,6 +545,8 @@ export class Hud implements GestureHandlers {
     this.tool = t;
     // Sous-sol : la surface pâlit, on voit les tapis souterrains.
     this.r.underground = t === 'souterrain';
+    // Câble : mode électricité, on voit les câbles sous les blocs et les machines alimentées.
+    this.r.electric = t === 'cable';
     for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t || (id === 'tapis' && t === 'souterrain') || (id === 'gomme' && t === 'zone'));
     this.renderToolOpts();
     this.palette.classList.toggle('hidden', t !== 'machine');
@@ -1061,7 +1063,7 @@ export class Hud implements GestureHandlers {
     const f = this.game.factory, def = machineDef(m.type), net = f.netOf(m);
     const bar = (pct: number, low: boolean, label: string, right: string) =>
       `<div class="gauge power${low ? ' low' : ''}"><span class="g-label">${ICONS.cable}${label}</span><span class="g-bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></span><b>${right}</b></div>`;
-    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.supply ? 'Aucun câble ne le touche' : 'Elle marche au charbon tant qu’aucun câble ne la touche'} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
+    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.supply ? 'Aucun câble ne passe sous lui' : 'Elle marche au charbon tant qu’aucun câble ne passe sous elle'} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
     if (def.supply) {
       const used = Math.min(net.demand, net.supply);
       const gens = net.gens.length;

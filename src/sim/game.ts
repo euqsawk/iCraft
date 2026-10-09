@@ -896,7 +896,7 @@ export class Game {
       this.emit({ type: 'toast', text: 'Câbles : débloque le Générateur dans l’arbre (Énergie)', tone: 'warn' });
       return false;
     }
-    const fresh = cells.filter((c) => !this.factory.hasCable(c.x, c.y) && this.world.isRevealed(c.x, c.y));
+    const fresh = cells.filter((c) => !this.factory.hasCable(c.x, c.y));
     if (!fresh.length) return false;
     if (!this.spend(fresh.length * RULES.cableCost)) return false;
     for (const c of fresh) this.factory.addCable(c.x, c.y);

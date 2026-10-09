@@ -106,6 +106,11 @@ export class GameRenderer {
   /** Vue du sous-sol (outil Sous-sol) : la surface pâlit, on voit les tapis souterrains et ce qu'ils transportent. */
   underground = false;
   private undergroundOn = false;
+  /** Mode électricité (outil Câble) : la surface pâlit, on voit les câbles sous les blocs et les machines alimentées. */
+  electric = false;
+  private electricOn = false;
+  /** Câbles et machines du réseau, par-dessus le voile, en mode électricité. */
+  private powerG = new Graphics();
   private undergroundTint = new Graphics();
   private tunnelG = new Graphics();
   private tunnelItems = new Container();
@@ -166,7 +171,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -664,13 +669,17 @@ export class GameRenderer {
   /** Surface pâlie ou normale, tapis souterrains et trappes. */
   private updateUnderground(): void {
     const on = this.underground;
+    const elec = this.electric && !on;
     const f = this.game.factory;
-    if (on !== this.undergroundOn) {
+    if (on !== this.undergroundOn || elec !== this.electricOn) {
       this.undergroundOn = on;
-      const a = on ? 0.22 : 1;
+      this.electricOn = elec;
+      const a = on ? 0.22 : elec ? 0.3 : 1;
       for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
-      this.actorLayer.alpha = on ? 0.45 : 1;
-      this.undergroundTint.visible = on;
+      this.actorLayer.alpha = on || elec ? 0.45 : 1;
+      this.undergroundTint.visible = on || elec;
+      this.powerG.visible = elec;
+      this.drawCables();
       this.tunnelG.visible = on;
       this.tunnelItems.visible = on;
       this.tunnelMarks.visible = !on;
@@ -685,6 +694,11 @@ export class GameRenderer {
     if (sig !== this.tunnelSig) {
       this.tunnelSig = sig;
       this.drawTunnels();
+    }
+    if (elec) {
+      // Mode électricité : un voile bleu nuit.
+      const b = this.camera.bounds(CELL * 2);
+      this.undergroundTint.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill({ color: 0x1f2a3d, alpha: 0.42 });
     }
     if (on) {
       // Un voile couleur de terre sur la surface.
@@ -758,12 +772,18 @@ export class GameRenderer {
     for (let i = used; i < this.tunnelPool.length; i++) this.tunnelPool[i].visible = false;
   }
 
-  /** Les câbles : un trait sombre de case en case, jaune au milieu quand le réseau a du courant. */
+  /**
+   * Les câbles : un trait sombre de case en case, jaune au milieu quand le réseau a du courant.
+   * En mode électricité, ils passent par-dessus le voile, avec les machines du réseau colorées.
+   */
   private drawCables(): void {
     this.cableT = 0;
-    const f = this.game.factory, g = this.cableG;
+    const f = this.game.factory;
     this.cableCount = f.cables.size;
-    g.clear();
+    this.cableG.clear();
+    this.powerG.clear();
+    const g = this.electricOn ? this.powerG : this.cableG;
+    if (this.electricOn) this.drawPowerMachines(g);
     if (!f.cables.size) return;
     const segs: { x0: number; y0: number; x1: number; y1: number; on: boolean }[] = [];
     const dots: { x: number; y: number; on: boolean }[] = [];
@@ -775,13 +795,7 @@ export class GameRenderer {
       let links = 0;
       for (let d = 0; d < 4; d++) {
         const nx = x + DX[d], ny = y + DY[d];
-        if (f.hasCable(nx, ny)) { links++; if (d < 2) segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL, y1: cy + DY[d] * CELL, on }); continue; }
-        // Une machine électrique collée au câble : il file jusqu'à son bord.
-        const m = f.machineAt(nx, ny);
-        if (m && (f.powerUse(m) || machineDef(m.type).supply)) {
-          links++;
-          segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL * 0.6, y1: cy + DY[d] * CELL * 0.6, on });
-        }
+        if (f.hasCable(nx, ny)) { links++; if (d < 2) segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL, y1: cy + DY[d] * CELL, on }); }
       }
       if (links !== 2) dots.push({ x: cx, y: cy, on });
     }
@@ -790,6 +804,32 @@ export class GameRenderer {
     for (const d of dots) g.circle(d.x, d.y, 4).fill({ color: PALETTE.ink, alpha: 0.85 });
     for (const s of segs) g.moveTo(s.x0, s.y0).lineTo(s.x1, s.y1).stroke({ width: 2, color: s.on ? PALETTE.yellow : 0x8a99ad, cap: 'round' });
     for (const d of dots) g.circle(d.x, d.y, 2).fill(d.on ? PALETTE.yellow : 0x8a99ad);
+  }
+
+  /**
+   * Mode électricité : les machines qui peuvent se brancher, colorées selon leur état.
+   * Jaune vif : alimentée (ou générateur qui tourne) ; gris bleu : branchée mais sans courant ; contour clair : pas branchée.
+   */
+  private drawPowerMachines(g: Graphics): void {
+    const f = this.game.factory;
+    for (const m of f.machines.values()) {
+      const def = machineDef(m.type);
+      const gen = def.kind === 'generator';
+      if (!gen && !f.powerUse(m)) continue;
+      const net = f.netOf(m);
+      const x = m.x * CELL + 2, y = m.y * CELL + 2, w = m.w * CELL - 4, hh = m.h * CELL - 4, r = 12;
+      const lit = !!net && net.supply > 0 && (gen ? m.status === 'working' || m.fuel > 0 || m.burn > 0 : (m.power ?? 0) > 0);
+      if (lit) {
+        g.roundRect(x - 3, y - 3, w + 6, hh + 6, r + 3).fill({ color: PALETTE.yellow, alpha: 0.25 });
+        g.roundRect(x, y, w, hh, r).fill({ color: PALETTE.yellow, alpha: 0.85 }).stroke({ width: 2.5, color: 0xffffff });
+        drawBolt(g, x + w / 2, y + hh / 2, m.w === 1 ? 0.8 : 1.2);
+      } else if (net) {
+        g.roundRect(x, y, w, hh, r).fill({ color: 0x8a99ad, alpha: 0.75 }).stroke({ width: 2, color: 0xd5dde6 });
+      } else {
+        dashedPolyline(g, roundRectPoints(x, y, w, hh, r), 6, 5, true);
+        g.stroke({ width: 2, color: 0xffffff, alpha: 0.75 });
+      }
+    }
   }
 
   /** Tabliers des ponts : du milieu de la rampe jusqu'à la case d'arrivée, au-dessus des tapis enjambés. */
@@ -1866,7 +1906,7 @@ export class GameRenderer {
     if (this.beltsDirty) this.redrawBelts();
     // Les câbles : redessinés quand l'usine change, et deux fois par seconde (réseau alimenté ou non).
     this.cableT += dt;
-    if (cablesChanged || (this.cableCount > 0 && this.cableT > 0.5)) this.drawCables();
+    if (cablesChanged || ((this.cableCount > 0 || this.electricOn) && this.cableT > 0.5)) this.drawCables();
     this.view = cam.bounds(CELL * 3);
     this.updateUnderground();
     this.updateRoutes();

@@ -162,10 +162,10 @@ export class BaseBuilder {
     return path.length;
   }
 
-  /** Câbles en ligne droite puis en équerre, d'une machine à l'autre (ils passent sous tout). */
+  /** Câbles en ligne droite puis en équerre, de dessous une machine à dessous l'autre (ils passent sous tout). */
   cable(a: Machine, b: Machine): void {
-    const ax = a.x + Math.floor(a.w / 2), ay = a.y + a.h; // sous a
-    const bx = b.x + Math.floor(b.w / 2), by = b.y + b.h;
+    const ax = a.x + Math.floor(a.w / 2), ay = a.y + a.h - 1; // une case de a
+    const bx = b.x + Math.floor(b.w / 2), by = b.y + b.h - 1;
     const cells: P[] = [];
     const sx = Math.sign(bx - ax), sy = Math.sign(by - ay);
     for (let x = ax; x !== bx; x += sx) cells.push({ x, y: ay });

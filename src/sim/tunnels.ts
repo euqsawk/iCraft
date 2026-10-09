@@ -11,10 +11,9 @@ export class TunnelTracer {
   /** La machine d'arrivée, quand le tracé y entre. */
   target: Machine | null = null;
   cells: { x: number; y: number }[] = [];
-  /** Le tracé a buté sur le brouillard. */
+  /** Le tracé est bloqué (plus utilisé : on construit aussi dans le brouillard). */
   blocked = false;
   private factory: Factory;
-  private world: World;
   private startDir: Dir | null = null;
 
   /**
@@ -23,12 +22,11 @@ export class TunnelTracer {
    */
   readonly start: { x: number; y: number } | null = null;
 
-  constructor(factory: Factory, world: World, fx: number, fy: number, free = false) {
+  constructor(factory: Factory, _world: World, fx: number, fy: number, free = false) {
     this.factory = factory;
-    this.world = world;
     const x = Math.floor(fx), y = Math.floor(fy);
     this.source = factory.machineAt(x, y) ?? null;
-    if (!this.source && free && world.isRevealed(x, y) && factory.isFree(x, y)) {
+    if (!this.source && free && factory.isFree(x, y)) {
       this.start = { x, y };
       this.cells = [{ x, y }];
     }
@@ -84,7 +82,6 @@ export class TunnelTracer {
       this.startDir = dirBetween(inX, inY, x, y);
       const o = this.factory.machineAt(x, y);
       if (o && o !== m) { this.target = o; return; }
-      if (!this.world.isRevealed(x, y)) { this.blocked = true; return; }
       this.cells.push({ x, y });
     }
     let tx = cx, ty = cy;
@@ -113,7 +110,6 @@ export class TunnelTracer {
       if (o === m) break;
       // On entre dans une autre machine : c'est l'arrivée.
       if (o) { this.target = o; break; }
-      if (!this.world.isRevealed(nx, ny)) { this.blocked = true; break; }
       this.cells.push({ x: nx, y: ny });
     }
   }
