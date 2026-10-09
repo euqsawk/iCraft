@@ -573,6 +573,38 @@ test('les drones ne se servent jamais dans l’inventaire du robot', () => {
 });
 
 console.log('Sauvegardes');
+test('sauvegarde : aucune machine ne disparaît, même après des suppressions', () => {
+  const g = new Game('TEST-70');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  const placed = [];
+  for (let i = 0; i < 6; i++) placed.push(g.placeMachine('coffre', 6 + i * 2, 9)!);
+  g.removeMachine(placed[1]); g.removeMachine(placed[3]); // des trous dans les numéros
+  g.placeMachine('four', 6, 12);
+  const types = () => [...g.factory.machines.values()].map((m) => `${m.type}@${m.x},${m.y}`).sort().join();
+  let s = JSON.parse(JSON.stringify(g.serialize()));
+  let g2 = new Game(s.seed, s);
+  s = JSON.parse(JSON.stringify(g2.serialize()));
+  g2 = new Game(s.seed, s);
+  const t2 = [...g2.factory.machines.values()].map((m) => `${m.type}@${m.x},${m.y}`).sort().join();
+  assert(t2 === types(), `avant ${types()}\naprès ${t2}`);
+  const fresh = g2.placeMachine('coffre', 20, 9)!;
+  assert(fresh && !s.factory.machines.some((m: { id: number }) => m.id === fresh.id), 'numéro déjà utilisé');
+  assert(!g2.factory.machineAt(8, 9), 'case fantôme occupée là où était un coffre supprimé');
+});
+test('un bâtiment offert disparu est rendu par le Noyau', () => {
+  const g = new Game('TEST-71');
+  g.giveBuilding('comptoir'); g.giveBuilding('laboratoire');
+  g.lab = { lingot_fer: 12 };
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  s.factory.machines = s.factory.machines.filter((m: { type: string }) => m.type !== 'laboratoire');
+  const g2 = new Game(s.seed, s);
+  const events: boolean[] = [];
+  g2.on((e) => { if (e.type === 'gift') events.push(!!e.again); });
+  run(g2, 1);
+  assert(g2.hasLab() && events.join() === 'true' && g2.lab.lingot_fer === 12, `rendu : ${events}`);
+  run(g2, 5);
+  assert([...g2.factory.machines.values()].filter((m) => m.type === 'laboratoire').length === 1, 'un seul');
+});
 test('apparence, conseils et temps de jeu sont sauvegardés ; une ancienne partie n’a pas de conseils', () => {
   const g = new Game('TEST-50');
   g.look = { color: 'ciel', accessory: 'helice', name: 'Zébulon' };

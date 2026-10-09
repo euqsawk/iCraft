@@ -249,7 +249,7 @@ export class Hud implements GestureHandlers {
       case 'order': this.refreshOrder(); this.sheetDirty = true; break;
       case 'inventory': if (this.sheetKind) this.sheetDirty = true; break;
       case 'crafted': this.toast(`${this.game.look.name} a fabriqué ${itemLabel(e.item, e.n)}`, 'good'); break;
-      case 'gift': this.onGift(e.building, e.id); break;
+      case 'gift': this.onGift(e.building, e.id, !!e.again); break;
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
@@ -1069,7 +1069,7 @@ export class Hud implements GestureHandlers {
   }
 
   /** Le Noyau offre un bâtiment : la caméra va le voir, une carte explique à quoi il sert. */
-  private onGift(type: string, id: number): void {
+  private onGift(type: string, id: number, again = false): void {
     const m = this.game.factory.machines.get(id);
     if (!m) return;
     this.closePopover();
@@ -1083,8 +1083,11 @@ export class Hud implements GestureHandlers {
     if (!text) return;
     const name = this.game.look.name;
     const card = h('div', 'gift-card');
-    card.innerHTML = `<div class="gc-head"><img src="${this.machineIcons.get(type)}" alt=""><div><span class="gc-tag">Cadeau du Noyau</span><b>${esc(text.title)}</b></div></div>
-      ${text.lines.map((l) => `<p>${esc(l.replace('{robot}', name))}</p>`).join('')}
+    const lines = again
+      ? [`Il avait disparu à cause d’une erreur de sauvegarde, désormais corrigée. Le Noyau te le rend, avec tout ce qu’il gardait.`]
+      : text.lines.map((l) => l.replace('{robot}', name));
+    card.innerHTML = `<div class="gc-head"><img src="${this.machineIcons.get(type)}" alt=""><div><span class="gc-tag">${again ? 'Le Noyau te le rend' : 'Cadeau du Noyau'}</span><b>${esc(text.title)}</b></div></div>
+      ${lines.map((l) => `<p>${esc(l)}</p>`).join('')}
       <p class="gc-note">Tu peux le déplacer, mais pas le supprimer.</p>`;
     const row = h('div', 'row');
     const ok = h('button', 'btn', 'Compris');

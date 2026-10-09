@@ -125,7 +125,7 @@ export type GameEvent =
   | { type: 'sold'; money: number; count: number }
   | { type: 'inventory' }
   | { type: 'crafted'; item: string; n: number }
-  | { type: 'gift'; building: GiftType; id: number }
+  | { type: 'gift'; building: GiftType; id: number; again?: boolean }
   | { type: 'unlock'; id: string };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
@@ -237,7 +237,7 @@ export class Game {
     this.factory.buildingAccepts = (m, item) => this.accepts(m, item) > 0;
     if (save) {
       this.load(save);
-      this.noyau = [...this.factory.machines.values()].find((m) => m.type === 'noyau')!;
+      this.noyau = [...this.factory.machines.values()].find((m) => m.type === 'noyau') ?? this.factory.addMachine('noyau', 0, 0, true);
     } else {
       this.world.reveal(2, 2, RULES.revealStart);
       this.noyau = this.factory.addMachine('noyau', 0, 0, true);
@@ -917,6 +917,10 @@ export class Game {
   /** Le Comptoir arrive après les premiers pas, le Laboratoire un peu plus tard. */
   private tickGifts(): void {
     const t = this.played;
+    // Un bâtiment offert qui a disparu (ancienne erreur de sauvegarde) : le Noyau le rend.
+    for (const type of GIFTS) {
+      if (this.gifts[type] !== undefined && ![...this.factory.machines.values()].some((m) => m.type === type)) this.giveBuilding(type, true);
+    }
     if (this.gifts.comptoir === undefined) {
       const delivered = Object.values(this.palierDone).some((v) => v > 0) || this.palier > 1;
       if (t >= 90 && (delivered || t >= 240)) this.giveBuilding('comptoir');
@@ -956,16 +960,16 @@ export class Game {
     return null;
   }
 
-  giveBuilding(type: GiftType): Machine | null {
-    if (this.gifts[type] !== undefined) return null;
+  giveBuilding(type: GiftType, again = false): Machine | null {
+    if (this.gifts[type] !== undefined && !again) return null;
     const spot = this.findGiftSpot(type);
     if (!spot) return null;
     const m = this.factory.addMachine(type, spot.x, spot.y, true);
     this.factory.markBuilt();
-    this.gifts[type] = this.played;
+    if (!again) this.gifts[type] = this.played;
     this.world.reveal(spot.x + 1, spot.y + 1, RULES.revealBuilding);
     this.emit({ type: 'factory' });
-    this.emit({ type: 'gift', building: type, id: m.id });
+    this.emit({ type: 'gift', building: type, id: m.id, again });
     return m;
   }
 

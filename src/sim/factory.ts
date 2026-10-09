@@ -1,6 +1,6 @@
 // L'usine : tapis et machines sur la grille, et leur simulation.
 import { RULES } from '../config.ts';
-import { acceptedInputs, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
+import { acceptedInputs, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
 
@@ -189,11 +189,13 @@ export class Factory {
     return { ok: true };
   }
 
-  addMachine(type: string, x: number, y: number, built = false): Machine {
+  addMachine(type: string, x: number, y: number, built = false, id?: number): Machine {
     const def = machineDef(type);
     const check = def.kind === 'drill' ? this.checkMachine(type, x, y) : { ok: true } as PlaceCheck;
+    if (id === undefined) id = this.nextId++;
+    else this.nextId = Math.max(this.nextId, id + 1);
     const m: Machine = {
-      id: this.nextId++, type, x, y, w: def.w, h: def.h, built,
+      id, type, x, y, w: def.w, h: def.h, built,
       inBuf: {}, outBuf: {}, fuel: 0, burn: 0, craft: null, drillT: 0,
       status: 'idle', rrOut: 0, rrRecipe: 0, made: 0,
       ore: check.ore, rate: check.rate,
@@ -638,14 +640,15 @@ export class Factory {
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
     }
+    this.nextId = 1;
     for (const sm of s.machines) {
-      const m = this.addMachine(sm.type, sm.x, sm.y, sm.built);
-      this.machines.delete(m.id);
-      m.id = sm.id;
-      this.machines.set(m.id, m);
+      // Chaque machine garde son numéro. (Avant, un numéro provisoire pouvait effacer
+      // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
+      if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
+      const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
     }
-    this.nextId = s.nextId;
+    this.nextId = Math.max(this.nextId, s.nextId);
     this.dirty = true;
   }
 }
