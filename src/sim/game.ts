@@ -2,6 +2,7 @@
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
 import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
+import { addTo, burnOne, moveFuel } from './fuel.ts';
 import { World } from '../world/world.ts';
 import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
@@ -81,9 +82,10 @@ export interface Drone {
   t: number;
   /** Angle de rangement autour du robot. */
   slot: number;
-  /** Case carburant (0 à 10) et secondes restantes du charbon en cours. */
+  /** Case carburant (0 à 10) et secondes restantes du charbon en cours ; carb : dont du carburant. */
   fuel: number;
   burn: number;
+  carb?: number;
   /** Une case d'inventaire. */
   cargo: Slot | null;
   /** Le coffre d'où vient la cargaison : si plus personne n'en veut, elle y retourne. */
@@ -104,6 +106,8 @@ export interface Robot {
   /** Case carburant (0 à 10) et secondes restantes du charbon en cours. */
   fuel: number;
   burn: number;
+  /** Dont du carburant (brûlé en premier, 5 fois plus long). */
+  carb?: number;
   /** Cinq cases d'inventaire (piles de 10). */
   inv: Inventory;
   /** Matière en cours de minage, si le robot est arrêté sur un filon. */
@@ -182,9 +186,9 @@ export interface GameSave {
   sellT?: number;
   /** Charbon et inventaires du robot et des drones (depuis la version 2). */
   crew?: {
-    robot: { fuel: number; burn: number; inv: (Slot | null)[]; craft?: CraftJob[] };
-    drones: { fuel: number; burn: number; cargo: Slot | null; from?: number; priority?: DronePriority; priorities?: DronePriority[] }[];
-    stations?: { id: number; fuel: number; burn: number; cargo: Slot | null; from?: number; priorities?: DronePriority[] }[];
+    robot: { fuel: number; carb?: number; burn: number; inv: (Slot | null)[]; craft?: CraftJob[] };
+    drones: { fuel: number; carb?: number; burn: number; cargo: Slot | null; from?: number; priority?: DronePriority; priorities?: DronePriority[] }[];
+    stations?: { id: number; fuel: number; carb?: number; burn: number; cargo: Slot | null; from?: number; priorities?: DronePriority[] }[];
   };
 }
 
@@ -924,15 +928,10 @@ export class Game {
   /** Le robot a-t-il du charbon pour travailler ? (Il brûle seulement quand il travaille.) */
   private robotPowered(dt: number): boolean {
     const r = this.robot;
-    // Le robot remplit sa case carburant avec le charbon de son inventaire.
-    // Charbon d'abord, puis carburant : les deux brûlent pareil.
-    for (const f of FUELS) if (r.fuel < RULES.fuelStack) r.fuel += r.inv.take(f, RULES.fuelStack - r.fuel);
+    // Le robot remplit sa case carburant avec son inventaire : le carburant d'abord (il dure 5 fois plus), puis le charbon.
+    for (const f of FUELS) if (r.fuel < RULES.fuelStack) addTo(r, r.inv.take(f, RULES.fuelStack - r.fuel), f);
     if (!r.active) return r.burn > 0 || r.fuel > 0;
-    if (r.burn <= 0) {
-      if (r.fuel <= 0) return false;
-      r.fuel--;
-      r.burn += RULES.coalRobotSeconds;
-    }
+    if (r.burn <= 0 && !burnOne(r, RULES.coalRobotSeconds)) return false;
     r.burn -= dt;
     return true;
   }
@@ -1146,7 +1145,7 @@ export class Game {
     if (k <= 0) return 0;
     this.robot.inv.takeAt(slot, k);
     let rest = k;
-    if (isFuel(t)) rest -= this.factory.addFuel(m, rest);
+    if (isFuel(t)) rest -= this.factory.addFuel(m, rest, t);
     if (rest > 0) m.inBuf[t] = (m.inBuf[t] ?? 0) + rest;
     this.emit({ type: 'inventory' });
     return k;
@@ -1310,6 +1309,10 @@ export class Game {
       const st = this.factory.machines.get(d.station);
       if (st?.built && st.fuel > RULES.stationReserve) return { kind: 'station', id: st.id };
     }
+    if (item === 'carburant' && d.station !== undefined) {
+      const st = this.factory.machines.get(d.station);
+      if (st?.built && (st.carb ?? 0) > 0 && st.fuel > RULES.stationReserve) return { kind: 'station', id: st.id };
+    }
     let best: Source | null = null, bd = Infinity;
     for (const m of this.factory.machines.values()) {
       if (machineDef(m.type).kind !== 'storage' || !m.built || !(m.inBuf[item] > 0)) continue;
@@ -1443,13 +1446,11 @@ export class Game {
         if (!m) return 0;
         if (t.from.kind === 'station') {
           // Dans la case carburant de la station (on lui en laisse un peu pour le drone).
-          const k = Math.max(0, Math.min(n, m.fuel - RULES.stationReserve));
-          m.fuel -= k;
-          return k;
+          return f.takeFuel(m, n, t.item, RULES.stationReserve);
         }
         return f.takeFromStorage(m, t.item, n);
       };
-      if (t.self) d.fuel += take(RULES.fuelStack - d.fuel);
+      if (t.self) addTo(d, take(RULES.fuelStack - d.fuel), t.item);
       if (!d.cargo || d.cargo.t === t.item) {
         const room = RULES.invStack - (d.cargo?.n ?? 0);
         const got = take(t.max !== undefined ? Math.min(room, t.max) : room);
@@ -1492,11 +1493,7 @@ export class Game {
 
   /** Le drone brûle du charbon en vol ; faux s'il n'en a plus. */
   private droneFuel(d: Drone, dt: number): boolean {
-    if (d.burn <= 0) {
-      if (d.fuel <= 0) return false;
-      d.fuel--;
-      d.burn += RULES.coalDroneSeconds;
-    }
+    if (d.burn <= 0 && !burnOne(d, RULES.coalDroneSeconds)) return false;
     d.burn -= dt;
     return true;
   }
@@ -1510,16 +1507,14 @@ export class Game {
       if (d.state === 'parked' && st) {
         // Posé sur sa station : il repart dès qu'elle a du charbon dans sa case carburant.
         d.x = this.anchor.x; d.y = this.anchor.y - 0.6;
-        const got = Math.min(RULES.fuelStack - d.fuel, st.fuel);
-        if (got > 0) { st.fuel -= got; d.fuel += got; d.state = 'home'; }
+        if (moveFuel(st, d, RULES.fuelStack - d.fuel) > 0) d.state = 'home';
         continue;
       }
       if (d.state === 'parked') {
         // Posé sur le robot : il repart dès que le robot peut partager sa case carburant
         // (jamais son inventaire ; le robot y remplit lui-même sa case carburant).
         d.x = r.x; d.y = r.y - 0.9;
-        const got = Math.min(RULES.fuelStack - d.fuel, Math.floor(r.fuel / 2));
-        if (got > 0) { r.fuel -= got; d.fuel += got; d.state = 'home'; }
+        if (moveFuel(r, d, Math.min(RULES.fuelStack - d.fuel, Math.floor(r.fuel / 2))) > 0) d.state = 'home';
         continue;
       }
       // Sans travail, il se pose sur le robot (qui le porte) ou sur sa station : il ne brûle plus de charbon.
@@ -1594,9 +1589,9 @@ export class Game {
       look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
       gifts: this.gifts, ordersDone: this.ordersDone,
       crew: {
-        robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
-        drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
-        stations: [...this.stationDrones.entries()].map(([id, d]) => ({ id, fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
+        robot: { fuel: r.fuel, carb: r.carb, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
+        drones: this.drones.map((d) => ({ fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
+        stations: [...this.stationDrones.entries()].map(([id, d]) => ({ id, fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
       },
     };
   }
@@ -1641,16 +1636,16 @@ export class Game {
     this.rebuildDrones();
     if (s.crew) {
       const r = this.robot;
-      r.fuel = s.crew.robot.fuel; r.burn = s.crew.robot.burn; r.inv.load(s.crew.robot.inv);
+      r.fuel = s.crew.robot.fuel; r.burn = s.crew.robot.burn; r.carb = Math.min(s.crew.robot.carb ?? 0, r.fuel); r.inv.load(s.crew.robot.inv);
       this.craftQueue = (s.crew.robot.craft ?? []).filter((j) => j && typeof j.target === 'string').map((j) => ({ ...j }));
       this.syncStations();
       for (const sd of s.crew.stations ?? []) {
         const d = this.stationDrones.get(sd.id);
-        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? []); }
+        if (d) { d.fuel = sd.fuel; d.carb = Math.min(sd.carb ?? 0, sd.fuel); d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? []); }
       }
       s.crew.drones.forEach((sd, i) => {
         const d = this.drones[i];
-        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
+        if (d) { d.fuel = sd.fuel; d.carb = Math.min(sd.carb ?? 0, sd.fuel); d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
       });
     } else if (this.drones[0]) {
       // Sauvegarde d'avant le charbon : le cadeau de départ.

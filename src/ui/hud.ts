@@ -744,7 +744,7 @@ export class Hud implements GestureHandlers {
           ? `${def.hint}. ${this.game.factory.storageSlots(m)} cases sur 10 occupées.`
           : `${STATUS_TEXT[m.status]}. ${def.hint}.`;
       }
-      const fuelLine = m.built && def.coal ? this.gauge('Charbon', m.fuel, this.game.factory.fuelCap(m), this.game.factory.lowFuel(m)) : '';
+      const fuelLine = m.built && def.coal ? this.gauge('Carburant', m.fuel, this.game.factory.fuelCap(m), this.game.factory.lowFuel(m), m.carb) : '';
       const inChips = this.chips(m.inBuf);
       const outChips = this.chips(m.outBuf);
       const recipes = m.built ? this.recipesHtml(def, m) : '';
@@ -839,8 +839,10 @@ export class Hud implements GestureHandlers {
     return `${bar(pct, pct < 100, 'Courant', `${pct} %`)}${pct < 100 ? `<p class="muted small">Trop de machines pour ce réseau (${fmtN(net.demand)} pour ${fmtN(net.supply)}) : elles tournent moins vite. Ajoute un générateur.</p>` : ''}`;
   }
 
-  private gauge(label: string, n: number, max: number, low: boolean): string {
-    return `<div class="gauge${low ? ' low' : ''}"><span class="g-label"><img src="${this.itemIcons.get('charbon')}" alt="">${label}</span><span class="g-bar"><span style="width:${(n / max) * 100}%"></span></span><b>${n}/${max}</b></div>`;
+  /** Jauge de la case carburant ; s'il y a du carburant dedans (il brûle en premier), une petite pastille le dit. */
+  private gauge(label: string, n: number, max: number, low: boolean, carb = 0): string {
+    const c = carb > 0 ? `<span class="g-carb" title="Carburant : brûle en premier, 5 fois plus long"><img src="${this.itemIcons.get('carburant')}" alt="">${carb}</span>` : '';
+    return `<div class="gauge${low ? ' low' : ''}"><span class="g-label"><img src="${this.itemIcons.get(carb > 0 ? 'carburant' : 'charbon')}" alt="">${label}</span><span class="g-bar"><span style="width:${(n / max) * 100}%"></span></span><b>${n}/${max}</b>${c}</div>`;
   }
 
   // ---------- Inventaires en grand : robot, coffre, fabrication ----------
@@ -1062,7 +1064,7 @@ export class Hud implements GestureHandlers {
     sheet.classList.add('inv-sheet');
     sheet.append(this.sheetHead(g.look.name, esc(this.robotStatus()), close));
     const inv = h('div', 'card');
-    inv.innerHTML = `${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}<p class="muted">Inventaire · touche une pile pour la séparer ou la détruire</p>${this.gridHtml(r.inv.slots, 'robot')}`;
+    inv.innerHTML = `${this.gauge('Carburant', r.fuel, 10, g.robotOutOfCoal, r.carb)}<p class="muted">Inventaire · touche une pile pour la séparer ou la détruire</p>${this.gridHtml(r.inv.slots, 'robot')}`;
     this.wireGrid(inv, null);
     const bar = this.invBar(null);
     if (bar) inv.append(bar);
@@ -1071,7 +1073,7 @@ export class Hud implements GestureHandlers {
     const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
     const dr = h('div', 'card');
     dr.innerHTML = g.drones.length
-      ? `<p class="muted">Drones · touche un drone pour ranger ses tâches</p>${g.drones.map((d, i) => `<button class="prio-btn big" data-drone="${i}"><span>Drone ${i + 1}</span>${this.gauge('', d.fuel, 10, d.fuel <= 2)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>`).join('')}`
+      ? `<p class="muted">Drones · touche un drone pour ranger ses tâches</p>${g.drones.map((d, i) => `<button class="prio-btn big" data-drone="${i}"><span>Drone ${i + 1}</span>${this.gauge('', d.fuel, 10, d.fuel <= 2, d.carb)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>`).join('')}`
       : '<p class="muted">Pas encore de drone.</p>';
     dr.querySelectorAll<HTMLButtonElement>('[data-drone]').forEach((b) => { b.onclick = () => this.openPriorities(Number(b.dataset.drone)); });
     sheet.append(dr);
@@ -1224,8 +1226,8 @@ export class Hud implements GestureHandlers {
         const d = g.stationDrones.get(mm.id);
         const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
         const card = h('div', 'card');
-        card.innerHTML = `${this.gauge('Charbon de la station', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm))}<p class="muted small">Son drone s’y sert pour recharger les machines autour (et lui-même). Un tapis ou les autres drones la remplissent.</p>
-          ${d ? `<button class="prio-btn big" data-st="1"><span>Drone</span>${this.gauge('', d.fuel, 10, d.fuel <= 2)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>` : ''}`;
+        card.innerHTML = `${this.gauge('Carburant de la station', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm), mm.carb)}<p class="muted small">Son drone s’y sert pour recharger les machines autour (et lui-même). Un tapis ou les autres drones la remplissent.</p>
+          ${d ? `<button class="prio-btn big" data-st="1"><span>Drone</span>${this.gauge('', d.fuel, 10, d.fuel <= 2, d.carb)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>` : ''}`;
         card.querySelector<HTMLButtonElement>('[data-st]')?.addEventListener('click', () => this.openPriorities(0, mm.id));
         sheet.append(card);
         const dep = h('div', 'card');
@@ -1243,7 +1245,7 @@ export class Hud implements GestureHandlers {
       if (def.kind === 'generator') {
         sheet.append(this.sheetHead('Générateur', esc(status), close));
         const card = h('div', 'card');
-        card.innerHTML = `${this.gauge('Charbon', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm))}${this.powerCard(mm)}`;
+        card.innerHTML = `${this.gauge('Carburant', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm), mm.carb)}${this.powerCard(mm)}`;
         sheet.append(card);
         const dep = h('div', 'card');
         dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · charbon</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
@@ -1277,7 +1279,7 @@ export class Hud implements GestureHandlers {
       if (tc) sheet.append(tc);
       // Charbon et recettes
       const top = h('div', 'card mrec');
-      top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm)) : ''}${def.power ? this.powerCard(mm) : ''}${this.recipesHtml(def, mm)}`;
+      top.innerHTML = `${def.coal ? this.gauge('Carburant', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm), mm.carb) : ''}${def.power ? this.powerCard(mm) : ''}${this.recipesHtml(def, mm)}`;
       if (mm.type === 'raffinerie') {
         const cur = mm.choice ?? 'plastique';
         const row = h('div', 'row');

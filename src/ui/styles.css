@@ -688,3 +688,5 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .drop-trash svg { width: 18px; height: 18px; }
 .drop-trash.hot { background: var(--coral); color: #fff; transform: translateX(-50%) scale(1.08); }
 @keyframes trash-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } }
+.gauge .g-carb { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 1px 6px 1px 3px; border-radius: 9px; background: #FFF1D6; font-weight: 800; font-size: 11px; color: var(--ink); }
+.gauge .g-carb img { width: 13px; height: 13px; }

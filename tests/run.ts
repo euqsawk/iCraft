@@ -574,6 +574,27 @@ test('le carburant brûle comme le charbon : machines, robot, drones', () => {
   run(g, 1);
   assert(g.robot.fuel >= 4 && g.robot.inv.count('carburant') <= 1, `robot : ${g.robot.fuel}`);
 });
+test('le carburant passe avant le charbon et dure 5 fois plus longtemps', () => {
+  const g = new Game('TEST-F2');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const four = g.placeMachine('four', -9, -1)!;
+  run(g, 40);
+  four.fuel = 0; four.burn = 0; four.carb = 0; four.outBuf = {};
+  g.factory.addFuel(four, 1, 'charbon');
+  g.factory.addFuel(four, 1, 'carburant');
+  four.inBuf = { fer: 30 };
+  run(g, 1);
+  assert(four.fuel === 1 && (four.carb ?? 0) === 0, `le carburant brûle d'abord : ${four.fuel} dont ${four.carb}`);
+  assert(four.burn > RULES.coalMachineSeconds * 4, `il dure 5 fois plus : ${four.burn}`);
+  // Robot : il prend le carburant de son inventaire avant le charbon.
+  g.robot.fuel = 0; g.robot.burn = 0; g.robot.carb = 0;
+  g.robot.inv.add('charbon', 5); g.robot.inv.add('carburant', 3);
+  run(g, 0.1);
+  assert(g.robot.inv.count('carburant') === 0 && (g.robot.carb ?? 0) + (g.robot.burn > RULES.coalRobotSeconds ? 1 : 0) === 3, `robot : carburant ${g.robot.carb}, charbon restant ${g.robot.inv.count('charbon')}`);
+  // Sauvegarde
+  const g2 = new Game('TEST-F2', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.robot.carb === g.robot.carb, 'carburant du robot sauvegardé');
+});
 test('le robot mine à l’arrêt sur un filon et se ravitaille avec son charbon', () => {
   const g = new Game('TEST-22');
   g.drones[0].cargo = null;

@@ -4,6 +4,7 @@ import { acceptedInputs, MACHINES, machineDef, type MachineDef, type Recipe } fr
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
+import { addTo, burnOne, takeOf } from './fuel.ts';
 
 export interface BeltItem {
   t: string;
@@ -58,6 +59,8 @@ export interface Machine {
   outBuf: Record<string, number>;
   /** Charbon dans la case carburant (0 à 10). */
   fuel: number;
+  /** Dont du carburant (il brûle en premier, 5 fois plus longtemps). */
+  carb?: number;
   /** Secondes de travail restantes du charbon en cours. */
   burn: number;
   craft: { ri: number; t: number } | null;
@@ -579,10 +582,9 @@ export class Factory {
     if (!g.built) return;
     if (load <= 0) { g.status = g.fuel > 0 || g.burn > 0 ? 'idle' : 'nofuel'; return; }
     if (g.burn <= 0) {
-      if (g.fuel <= 0) { g.status = 'nofuel'; return; }
-      g.fuel--;
-      this.flow(g, 'charbon', 1, false);
-      g.burn += RULES.genCoalSeconds;
+      const k = burnOne(g, RULES.genCoalSeconds);
+      if (!k) { g.status = 'nofuel'; return; }
+      this.flow(g, k, 1, false);
     }
     g.burn -= dt * load;
     g.status = 'working';
@@ -712,10 +714,15 @@ export class Factory {
   }
 
   /** Ajoute du charbon dans la case carburant ; renvoie la quantité ajoutée. */
-  addFuel(m: Machine, n: number): number {
-    const k = Math.min(n, this.fuelRoom(m));
-    m.fuel += k;
+  addFuel(m: Machine, n: number, item = 'charbon'): number {
+    const k = Math.max(0, Math.min(n, this.fuelRoom(m)));
+    addTo(m, k, item);
     return k;
+  }
+
+  /** Prend du charbon ou du carburant dans la case carburant d'une machine (une station), en lui en laissant `keep`. */
+  takeFuel(m: Machine, n: number, item: string, keep = 0): number {
+    return takeOf(m, n, item, keep);
   }
 
   /** La machine fait clignoter son voyant : il lui faut du charbon. */
@@ -746,10 +753,9 @@ export class Factory {
   private useFuel(m: Machine, def: MachineDef, dt: number): boolean {
     if (!def.coal) return true;
     if (m.burn <= 0) {
-      if (m.fuel <= 0) return false;
-      m.fuel--;
-      this.flow(m, 'charbon', 1, false);
-      m.burn += RULES.coalMachineSeconds;
+      const k = burnOne(m, RULES.coalMachineSeconds);
+      if (!k) return false;
+      this.flow(m, k, 1, false);
     }
     m.burn -= dt;
     return true;
@@ -772,7 +778,7 @@ export class Factory {
     if (isFuel(item) && def.coal && m.fuel < this.fuelCap(m)) {
       // Le carburant d'abord ; un fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = def.recipes.some((r) => r.in[item]) && m.fuel >= 3 && (m.inBuf[item] ?? 0) < RULES.machineBuffer;
-      if (!asIngredient) { m.fuel++; return; }
+      if (!asIngredient) { addTo(m, 1, item); return; }
     }
     m.inBuf[item] = (m.inBuf[item] ?? 0) + 1;
   }
@@ -1076,7 +1082,7 @@ export class Factory {
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
-        fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
+        fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
       })),
     };
   }
@@ -1103,6 +1109,7 @@ export class Factory {
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
+      if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
       if (sm.links?.length) m.links = [...sm.links];
     }
     this.nextId = Math.max(this.nextId, s.nextId);
@@ -1125,7 +1132,7 @@ export interface FactorySave {
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
-    inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;
+    inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
   }[];
 }
