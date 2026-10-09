@@ -9,6 +9,7 @@ import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEve
 import { PRIO_ICONS } from './prioIcons.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
+import { TunnelTracer } from '../sim/tunnels.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { DX, DY } from '../sim/geom.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
@@ -22,7 +23,7 @@ import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
 
-type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'move' | 'cable';
+type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'move' | 'cable' | 'souterrain';
 
 const STATUS_TEXT: Record<string, string> = {
   idle: 'En attente',
@@ -87,6 +88,7 @@ export class Hud implements GestureHandlers {
   private tracer: BeltTracer | null = null;
   private lastErase: { x: number; y: number } | null = null;
   private cableTracer: CableTracer | null = null;
+  private tunnelTracer: TunnelTracer | null = null;
   /** Cases déjà gommées pendant ce geste. */
   private erased = new Set<string>();
   private itemIcons = new Map<string, string>();
@@ -176,14 +178,14 @@ export class Hud implements GestureHandlers {
       ['tapis', 'Tapis', ICONS.tapis, false],
       ['cable', 'Câble', ICONS.cable, true],
       ['machine', 'Machine', ICONS.machine, false],
-      ['transport', 'Transport', ICONS.transport, true],
+      ['souterrain', 'Sous-sol', ICONS.sousSol, true],
       ['module', 'Module', ICONS.module, true],
       ['gomme', 'Gomme', ICONS.gomme, false],
     ];
     for (const [id, label, icon, locked] of tools) {
       const b = h('button', `tool${locked ? ' locked' : ''}`, `${icon}${label}${locked ? `<span class="tool-lock">${ICONS.lock}</span>` : ''}`);
       // Le câble s'ouvre avec le Générateur.
-      b.onclick = () => this.pickTool(id, id === 'cable' ? !this.game.isUnlocked('generateur') : locked);
+      b.onclick = () => this.pickTool(id, id === 'cable' ? !this.game.isUnlocked('generateur') : id === 'souterrain' ? !this.game.isUnlocked('souterrain') : locked);
       this.toolButtons.set(id, b);
       toolbar.append(b);
     }
@@ -284,11 +286,13 @@ export class Hud implements GestureHandlers {
 
   /** Le bouton Câble perd son cadenas quand le Générateur est débloqué. */
   private refreshTools(): void {
-    const b = this.toolButtons.get('cable');
-    if (!b) return;
-    const locked = !this.game.isUnlocked('generateur');
-    b.classList.toggle('locked', locked);
-    b.querySelector('.tool-lock')?.toggleAttribute('hidden', !locked);
+    for (const [id, node] of [['cable', 'generateur'], ['souterrain', 'souterrain']]) {
+      const b = this.toolButtons.get(id);
+      if (!b) continue;
+      const locked = !this.game.isUnlocked(node);
+      b.classList.toggle('locked', locked);
+      b.querySelector('.tool-lock')?.toggleAttribute('hidden', !locked);
+    }
   }
 
   private refreshLevel(): void {
@@ -407,6 +411,7 @@ export class Hud implements GestureHandlers {
       const msg: Record<string, string> = {
         cable: 'Câbles : débloque le Générateur dans l’arbre (Énergie)',
         transport: 'Camions et trains : bientôt',
+        souterrain: 'Tapis souterrains : à débloquer dans l’arbre (Logistique, palier 5)',
         module: 'Modules : bientôt',
       };
       this.toast(msg[id] ?? 'Bientôt', 'info');
@@ -441,6 +446,8 @@ export class Hud implements GestureHandlers {
       this.root.querySelector('.move-banner')?.remove();
     }
     this.tool = t;
+    // Sous-sol : la surface pâlit, on voit les tapis souterrains.
+    this.r.underground = t === 'souterrain';
     for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t);
     this.palette.classList.toggle('hidden', t !== 'machine');
     if (t === 'machine' && !this.machineType) {
@@ -548,9 +555,14 @@ export class Hud implements GestureHandlers {
 
   toolStart(sx: number, sy: number): void {
     this.closePopover();
-    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable') this.updateLoupe(sx, sy);
+    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain') this.updateLoupe(sx, sy);
     const w = this.worldAt(sx, sy);
-    if (this.tool === 'cable') {
+    if (this.tool === 'souterrain') {
+      this.tunnelTracer = new TunnelTracer(this.game.factory, this.game.world, w.x, w.y);
+      this.r.preview = { kind: 'tunnel', tracer: this.tunnelTracer };
+      const src = this.tunnelTracer.source;
+      if (!src || !this.game.canSendUnder(src)) this.showBubble(sx, sy - 56, 'Pars d’un coffre ou d’une machine', true);
+    } else if (this.tool === 'cable') {
       this.cableTracer = new CableTracer(this.game.world, w.x, w.y);
       this.r.preview = { kind: 'cable', tracer: this.cableTracer };
     } else if (this.tool === 'tapis') {
@@ -568,7 +580,17 @@ export class Hud implements GestureHandlers {
 
   toolMove(sx: number, sy: number): void {
     const w = this.worldAt(sx, sy);
-    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable') this.updateLoupe(sx, sy);
+    if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'souterrain') this.updateLoupe(sx, sy);
+    if (this.tool === 'souterrain' && this.tunnelTracer) {
+      const t = this.tunnelTracer;
+      if (!t.source || !this.game.canSendUnder(t.source)) return;
+      t.move(w.x, w.y);
+      const price = this.game.tunnelPrice(t.cells.length);
+      const name = t.target ? machineDef(t.target.type).name.toLowerCase() : '';
+      const label = t.target ? `Lâche pour relier à ${esc(name)} · ${ICONS.coinSm}${price}` : t.cells.length ? `${t.cells.length + 1} cases sous terre · glisse jusqu’à un coffre ou une machine` : 'Glisse vers un coffre ou une machine';
+      this.showBubble(sx, sy - 56, label, t.blocked || (!!t.target && this.game.money < price));
+      return;
+    }
     if (this.tool === 'cable' && this.cableTracer) {
       const t = this.cableTracer;
       t.move(w.x, w.y);
@@ -610,7 +632,9 @@ export class Hud implements GestureHandlers {
     this.bubble.classList.add('hidden');
     const pv = this.r.preview;
     if (!cancelled) {
-      if (this.tool === 'cable' && this.cableTracer) {
+      if (this.tool === 'souterrain' && this.tunnelTracer?.source && this.tunnelTracer.target) {
+        this.game.placeTunnel(this.tunnelTracer.source, this.tunnelTracer.target, this.tunnelTracer.cells);
+      } else if (this.tool === 'cable' && this.cableTracer) {
         this.game.placeCables(this.cableTracer.cells);
       } else if (this.tool === 'tapis' && this.tracer?.linkMachine && this.tracer.startMachine) {
         this.game.linkMachines(this.tracer.startMachine, this.tracer.linkMachine);
@@ -630,6 +654,7 @@ export class Hud implements GestureHandlers {
     }
     this.tracer = null;
     this.cableTracer = null;
+    this.tunnelTracer = null;
     this.r.preview = null;
     this.r.guides = [];
     this.r.loupe = null;
@@ -1225,6 +1250,8 @@ export class Hud implements GestureHandlers {
         }
         sheet.append(lc);
       }
+      const tc = this.tunnelsCard(mm);
+      if (tc) sheet.append(tc);
       // Charbon et recettes
       const top = h('div', 'card mrec');
       top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm)) : ''}${def.power ? this.powerCard(mm) : ''}${this.recipesHtml(def, mm)}`;
@@ -1335,6 +1362,25 @@ export class Hud implements GestureHandlers {
     this.sheetKind = 'sell';
   }
 
+  /** Les tapis souterrains d'une machine (départs et arrivées), avec de quoi les couper. */
+  private tunnelsCard(m: Machine): HTMLElement | null {
+    const g = this.game, list = g.factory.tunnelsOf(m);
+    if (!list.length) return null;
+    const card = h('div', 'card');
+    card.innerHTML = '<p class="muted">Tapis souterrains</p>';
+    for (const t of list) {
+      const out = t.from === m.id;
+      const other = g.factory.machines.get(out ? t.to : t.from);
+      const moving = t.items.length ? ` · ${t.items.length} en route` : '';
+      const row = h('div', 'row link-row', `<span>${out ? '↓ vers' : '↑ depuis'} ${esc(other ? machineDef(other.type).name.toLowerCase() : '?')} · ${g.factory.tunnelLength(t)} cases${moving}</span>`);
+      const cut = h('button', 'btn', 'Couper');
+      cut.onclick = () => { g.removeTunnel(t.id); this.refreshSheet(); };
+      row.append(cut);
+      card.append(row);
+    }
+    return card;
+  }
+
   /** Un coffre en grand, avec l'inventaire du robot dessous. */
   openChest(m: Machine): void {
     this.closePopover();
@@ -1358,6 +1404,8 @@ export class Hud implements GestureHandlers {
       sheet.append(c1, swap, c2);
       const bar = this.invBar(chest);
       if (bar) { bar.classList.add('floating'); sheet.append(bar); }
+      const tc = this.tunnelsCard(chest);
+      if (tc) sheet.append(tc);
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(chest); };
