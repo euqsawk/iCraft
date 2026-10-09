@@ -15,14 +15,13 @@ import { MAX_PALIER, palierMission } from '../data/paliers.ts';
 import { cleanLook, DEFAULT_LOOK, type RobotLook } from '../data/look.ts';
 
 /** Ce qu'un drone fait en premier ; ensuite il fait le reste dans l'ordre habituel. */
-export type DronePriority = 'carburant' | 'chantiers' | 'noyau' | 'laboratoire' | 'comptoir' | 'robot';
+export type DronePriority = 'carburant' | 'chantiers' | 'noyau' | 'laboratoire' | 'comptoir';
 export const DRONE_PRIORITIES: { id: DronePriority; label: string }[] = [
   { id: 'carburant', label: 'Recharger le charbon' },
   { id: 'chantiers', label: 'Construire' },
   { id: 'noyau', label: 'Livrer le Noyau' },
   { id: 'laboratoire', label: 'Livrer le Laboratoire' },
   { id: 'comptoir', label: 'Livrer le Comptoir' },
-  { id: 'robot', label: 'Distribuer le minerai du robot' },
 ];
 export const DEFAULT_ORDER: DronePriority[] = DRONE_PRIORITIES.map((p) => p.id);
 
@@ -57,15 +56,14 @@ export type GiftType = typeof GIFTS[number];
 
 export type Job = { kind: 'belt'; k: number } | { kind: 'machine'; id: number };
 
-/** D'où un drone prend un objet : l'inventaire du robot ou un coffre. */
-export type Source = { kind: 'robot' } | { kind: 'chest'; id: number };
+/** D'où un drone prend un objet : un coffre (jamais l'inventaire du robot). */
+export type Source = { kind: 'chest'; id: number };
 
 export type DroneTask =
   | { kind: 'build'; job: Job }
   /** Prendre un objet ; `self` : remplir sa propre case carburant. */
   | { kind: 'fetch'; from: Source; item: string; self?: boolean; max?: number }
-  /** Rendre au robot ce qu'on lui a pris et dont personne ne veut plus. */
-  | { kind: 'return' }
+
   /** Recharger une machine en charbon. */
   | { kind: 'refuel'; id: number }
   /** Déposer la cargaison (minerai du robot) dans une machine ou un coffre. */
@@ -85,8 +83,7 @@ export interface Drone {
   burn: number;
   /** Une case d'inventaire. */
   cargo: Slot | null;
-  /** La cargaison vient de l'inventaire du robot : si personne n'en veut, elle y retourne. */
-  fromRobot?: boolean;
+
   /** Ses tâches, de la plus importante à la moins importante. */
   priorities: DronePriority[];
 }
@@ -994,13 +991,9 @@ export class Game {
     return null;
   }
 
-  /** La source la plus proche du drone pour un objet : un coffre à portée ou l'inventaire du robot. */
+  /** Le coffre à portée le plus proche du drone qui contient cet objet. Les drones ne se servent jamais dans l'inventaire du robot. */
   private sourceFor(d: Drone, item: string): Source | null {
     let best: Source | null = null, bd = Infinity;
-    if (this.robot.inv.count(item) > 0) {
-      best = { kind: 'robot' };
-      bd = Math.hypot(this.robot.x - d.x, this.robot.y - d.y);
-    }
     for (const m of this.factory.machines.values()) {
       if (m.type !== 'coffre' || !m.built || !(m.inBuf[item] > 0)) continue;
       const c = this.center(m);
@@ -1067,19 +1060,12 @@ export class Game {
         } else if (cat === 'chantiers') {
           const job = this.freeJob();
           if (job) return { kind: 'build', job };
-        } else if (cat === 'robot') {
-          if (cargo.t !== 'charbon') {
-            const dest = this.destinationFor(cargo.t, false);
-            if (dest) return { kind: 'deliver', id: dest.id };
-          }
         } else {
           const nb = this.needsOf(cat);
           if (nb && nb.needs[cargo.t]) return { kind: 'deliver', id: nb.m.id };
         }
       }
-      // Personne n'en veut : ce qui vient du robot lui revient ; le reste va dans un coffre
-      // (sauf le charbon d'un drone ravitailleur).
-      if (d.fromRobot && this.robot.inv.room(cargo.t) > 0) return { kind: 'return' };
+      // Personne n'en veut : on la range dans un coffre (sauf le charbon d'un drone ravitailleur).
       if (!(cargo.t === 'charbon' && refueler)) {
         const dest = this.destinationFor(cargo.t);
         if (dest) return { kind: 'deliver', id: dest.id };
@@ -1097,13 +1083,6 @@ export class Game {
       } else if (cat === 'chantiers') {
         const job = this.freeJob();
         if (job) return { kind: 'build', job };
-      } else if (cat === 'robot') {
-        for (const t of this.robot.inv.kinds()) {
-          if (t === 'charbon') continue;
-          const dest = this.destinationFor(t, false);
-          // On ne prend que ce que la machine peut recevoir.
-          if (dest) return { kind: 'fetch', from: { kind: 'robot' }, item: t, max: Math.max(1, RULES.machineBuffer - (dest.inBuf[t] ?? 0)) };
-        }
       } else {
         const nb = this.needsOf(cat);
         if (!nb) continue;
@@ -1129,7 +1108,6 @@ export class Game {
 
   private taskPos(t: DroneTask): { x: number; y: number } | null {
     if (t.kind === 'build') return this.jobPos(t.job);
-    if ((t.kind === 'fetch' && t.from.kind === 'robot') || t.kind === 'return') return { x: this.robot.x, y: this.robot.y - 0.6 };
     const id = t.kind === 'fetch' ? (t.from as { id: number }).id : t.id;
     const m = this.factory.machines.get(id);
     return m && m.built ? this.center(m) : null;
@@ -1140,7 +1118,6 @@ export class Game {
     if (t.kind === 'fetch') {
       const take = (n: number): number => {
         if (n <= 0) return 0;
-        if (t.from.kind === 'robot') return this.robot.inv.take(t.item, n);
         const m = f.machines.get(t.from.id);
         return m ? f.takeFromStorage(m, t.item, n) : 0;
       };
@@ -1149,12 +1126,10 @@ export class Game {
         const room = RULES.invStack - (d.cargo?.n ?? 0);
         const got = take(t.max !== undefined ? Math.min(room, t.max) : room);
         if (got > 0) {
-          if (!d.cargo) d.fromRobot = t.from.kind === 'robot';
           d.cargo = { t: t.item, n: (d.cargo?.n ?? 0) + got };
         }
       }
-    } else if (t.kind === 'return' && d.cargo) {
-      d.cargo.n -= this.robot.inv.add(d.cargo.t, d.cargo.n);
+
     } else if (t.kind === 'refuel' && d.cargo?.t === 'charbon') {
       const m = f.machines.get(t.id);
       if (m) d.cargo.n -= f.addFuel(m, d.cargo.n);
@@ -1168,7 +1143,6 @@ export class Game {
       }
     }
     if (d.cargo && d.cargo.n <= 0) d.cargo = null;
-    if (!d.cargo) d.fromRobot = false;
   }
 
   /** Range les tâches d'un drone, de la plus importante à la moins importante. */
@@ -1202,10 +1176,11 @@ export class Game {
     for (const d of this.drones) {
       const home = { x: r.x + Math.cos(d.slot + this.time * 0.8) * 1.1, y: r.y - 1.4 + Math.sin(d.slot + this.time * 0.8) * 0.35 };
       if (d.state === 'parked') {
-        // Posé sur le robot : il repart dès que le robot a du charbon à lui donner.
+        // Posé sur le robot : il repart dès que le robot peut partager sa case carburant
+        // (jamais son inventaire ; le robot y remplit lui-même sa case carburant).
         d.x = r.x; d.y = r.y - 0.9;
-        const got = r.inv.take('charbon', RULES.fuelStack - d.fuel);
-        if (got > 0) { d.fuel += got; d.state = 'home'; }
+        const got = Math.min(RULES.fuelStack - d.fuel, Math.floor(r.fuel / 2));
+        if (got > 0) { r.fuel -= got; d.fuel += got; d.state = 'home'; }
         continue;
       }
       if (d.task && !this.taskPos(d.task)) d.task = null;
