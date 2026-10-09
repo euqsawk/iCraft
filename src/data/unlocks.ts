@@ -5,6 +5,7 @@
 export type UnlockEffect =
   | { kind: 'machine'; id: string }
   | { kind: 'splitter' }
+  | { kind: 'bridge' }
   | { kind: 'beltSpeed'; mult: number }
   | { kind: 'chestSlots'; slots: number }
   | { kind: 'drone' }
@@ -67,7 +68,7 @@ export const BRANCHES: Branch[] = [
       n('tapis', 'Tapis', 'tapis', 0, 1, 1, {}, [], 'Tracés au doigt, droits et rangés.', base),
       n('separateur', 'Séparateur', 'separateur', 1, 0, 1, { lingot_fer: 20 }, ['tapis'], 'Glisse depuis le milieu d’un tapis : un objet sur deux part dans la dérivation.', { kind: 'splitter' }),
       n('rapide', 'Tapis rapide', 'rapide', 1, 1, 2, { plaque_fer: 30, fil_cuivre: 30 }, ['tapis'], 'Tous les tapis vont deux fois plus vite.', { kind: 'beltSpeed', mult: 2 }),
-      n('pont', 'Ponts', 'pont', 1, 2, 3, { acier: 40 }, ['tapis'], 'Un tapis passe par-dessus un autre.', soon),
+      n('pont', 'Ponts', 'pont', 1, 2, 3, { acier: 40 }, ['tapis'], 'En traçant un tapis, continue tout droit par-delà un autre tapis : il passe par-dessus (jusqu’à 4 cases).', { kind: 'bridge' }),
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 0, 2, { plaque_fer: 60 }, ['separateur'], 'Les coffres gardent 300 objets au lieu de 100.', { kind: 'chestSlots', slots: 30 }),
       n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tous les tapis vont trois fois plus vite qu’au départ.', { kind: 'beltSpeed', mult: 3 }),
       n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Une route tracée au doigt, des allers-retours entre deux points.', soon),

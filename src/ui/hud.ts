@@ -536,6 +536,7 @@ export class Hud implements GestureHandlers {
     const w = this.worldAt(sx, sy);
     if (this.tool === 'tapis') {
       this.tracer = new BeltTracer(this.game.factory, w.x, w.y);
+      this.tracer.bridges = this.game.isUnlocked('pont');
       this.r.preview = { kind: 'trace', tracer: this.tracer };
     } else if (this.tool === 'machine' || this.tool === 'move') {
       this.updatePlacement(sx, sy);
@@ -550,10 +551,11 @@ export class Hud implements GestureHandlers {
     if (this.tool === 'tapis' || this.tool === 'gomme') this.updateLoupe(sx, sy);
     if (this.tool === 'tapis' && this.tracer) {
       this.tracer.move(w.x, w.y);
-      const n = this.tracer.newCount;
+      const n = this.tracer.newCount, nb = this.tracer.bridgeCount;
+      const price = n * RULES.beltCost + nb * RULES.bridgeCost;
       const ok = this.tracer.valid && !this.tracer.blocked;
-      const affordable = this.game.money >= n;
-      const what = this.tracer.splitFrom ? 'Séparateur · ' : '';
+      const affordable = this.game.money >= price;
+      const what = (this.tracer.splitFrom ? 'Séparateur · ' : '') + (nb ? `${nb > 1 ? `${nb} ponts` : 'Pont'} · ` : '');
       if (this.tracer.linkBelt) {
         this.showBubble(sx, sy - 56, 'Lâche pour relier la machine à ce tapis', false);
         return;
@@ -567,7 +569,7 @@ export class Hud implements GestureHandlers {
         return;
       }
       const locked = !!this.tracer.splitFrom && !this.game.isUnlocked('separateur');
-      const label = locked ? 'Séparateur : à débloquer dans l’arbre' : n > 0 ? `${what}${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${n}` : this.tracer.splitFrom ? 'Glisse sur le côté pour séparer' : 'Glisse pour tracer';
+      const label = locked ? 'Séparateur : à débloquer dans l’arbre' : n > 0 ? `${what}${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${price}` : this.tracer.splitFrom ? 'Glisse sur le côté pour séparer' : 'Glisse pour tracer';
       this.showBubble(sx, sy - 56, label, locked || !ok || !affordable);
     } else if (this.tool === 'machine' || this.tool === 'move') {
       this.updatePlacement(sx, sy);
@@ -835,7 +837,7 @@ export class Hud implements GestureHandlers {
         verb = t === 'charbon' ? 'Recharger en charbon' : `Mettre dans la machine`;
         if (!max) why = g.machineAccepts(machine, t) === 0 && !machineDef(machine.type).recipes.some((r) => r.in[t]) && t !== 'charbon' ? `La ${name} ne s’en sert pas` : 'Elle est pleine pour l’instant';
       }
-      else { max = sl.n - 1; verb = ''; if (!max) why = 'Une seule unité : rien à séparer'; }
+      else { max = sl.n; verb = ''; }
     } else {
       const src = sel.side === 'chest' ? chest?.inBuf : sel.side === 'min' ? machine?.inBuf : machine?.outBuf;
       if (!src || !(src[sel.item] > 0)) { this.invSel = null; return null; }
@@ -867,7 +869,7 @@ export class Hud implements GestureHandlers {
     if (sel.side === 'robot') {
       const slot = sel.slot;
       const sl = g.robot.inv.slots[slot]!;
-      const canSplit = sl.n > 1 && g.robot.inv.slots.includes(null);
+      const canSplit = sl.n > 1 && g.robot.inv.slots.includes(null) && (!!target || this.invQty < sl.n);
       const split = h('button', 'btn', 'Séparer la pile');
       split.disabled = !canSplit;
       split.onclick = () => {
@@ -877,6 +879,36 @@ export class Hud implements GestureHandlers {
         this.refreshSheet();
       };
       acts.append(split);
+      if (!target) {
+        // Détruire : en deux temps, pour ne rien perdre par erreur.
+        const armed = this.armedTrash?.slot === slot && performance.now() < this.armedTrash.until;
+        const n = this.invQty;
+        const trash = h('button', `btn danger${armed ? ' armed' : ''}`, armed ? `Confirmer : détruire ${n}` : `Détruire ${n}`);
+        trash.onclick = () => {
+          if (!(this.armedTrash?.slot === slot && performance.now() < this.armedTrash.until)) {
+            this.armedTrash = { slot, until: performance.now() + 4000 };
+            this.refreshSheet();
+            setTimeout(() => { if (this.armedTrash && performance.now() >= this.armedTrash.until) { this.armedTrash = null; this.refreshSheet(); } }, 4100);
+            return;
+          }
+          this.armedTrash = null;
+          const name = sl.t;
+          const k = g.destroyRobotItems(slot, this.invQty);
+          if (k) this.toast(`${itemLabel(name, k)} détruit${k > 1 ? 's' : ''}`, 'warn');
+          this.invSel = null;
+          this.refreshSheet();
+        };
+        // Changer la quantité désarme la confirmation.
+        bar.querySelectorAll<HTMLElement>('.ib-step, [data-set], .ib-range').forEach((el) => {
+          el.addEventListener(el.classList.contains('ib-range') ? 'input' : 'click', () => {
+            this.armedTrash = null;
+            trash.classList.remove('armed');
+            trash.textContent = `Détruire ${this.invQty}`;
+            split.disabled = !(sl.n > 1 && g.robot.inv.slots.includes(null) && this.invQty < sl.n);
+          });
+        });
+        acts.append(trash);
+      }
       if (chest) {
         const dep = h('button', 'btn primary', verb);
         dep.disabled = !max;
@@ -930,7 +962,7 @@ export class Hud implements GestureHandlers {
     sheet.classList.add('inv-sheet');
     sheet.append(this.sheetHead(g.look.name, esc(this.robotStatus()), close));
     const inv = h('div', 'card');
-    inv.innerHTML = `${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}<p class="muted">Inventaire · touche une pile pour la séparer</p>${this.gridHtml(r.inv.slots, 'robot')}`;
+    inv.innerHTML = `${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}<p class="muted">Inventaire · touche une pile pour la séparer ou la détruire</p>${this.gridHtml(r.inv.slots, 'robot')}`;
     this.wireGrid(inv, null);
     const bar = this.invBar(null);
     if (bar) inv.append(bar);
@@ -1049,6 +1081,8 @@ export class Hud implements GestureHandlers {
    * même si la fenêtre se redessine entre les deux touchers (elle se rafraîchit toute seule).
    */
   private armedDelete: { id: number; until: number } | null = null;
+  /** Destruction d'objets du robot en attente de confirmation. */
+  private armedTrash: { slot: number; until: number } | null = null;
 
   private deleteButton(m: Machine, label: string, confirm: string, close: () => void): HTMLButtonElement {
     const armed = () => this.armedDelete?.id === m.id && performance.now() < this.armedDelete.until;

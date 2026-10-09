@@ -50,6 +50,9 @@ export const BIOME_NAMES: Record<BiomeId, string> = {
 export const RULES = {
   startMoney: 300,
   beltCost: 1,
+  /** Pont : un tapis passe par-dessus d'autres tapis, sur 4 cases au plus ; prix en plus des cases. */
+  bridgeSpan: 4,
+  bridgeCost: 5,
   /** Vitesse des tapis, en cases par seconde. */
   beltSpeed: 1.5,
   /** Écart minimal entre deux objets sur un tapis, en cases. */

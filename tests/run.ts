@@ -1,6 +1,6 @@
 // Tests de la simulation (sans rendu). Lancer : npm test
 import { Game } from '../src/sim/game.ts';
-import { BeltTracer } from '../src/sim/tracer.ts';
+import { BeltTracer, type TraceCell } from '../src/sim/tracer.ts';
 import { World } from '../src/world/world.ts';
 import { producibleItems, generateChoices } from '../src/sim/orders.ts';
 import { item, ITEM_LIST } from '../src/data/items.ts';
@@ -9,6 +9,7 @@ import { NODE } from '../src/data/unlocks.ts';
 import { decodeSave, encodeSave } from '../src/save/code.ts';
 import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { MACHINES } from '../src/data/machines.ts';
+import { RULES } from '../src/config.ts';
 
 let failed = 0, passed = 0;
 function test(name: string, fn: () => void): void {
@@ -105,6 +106,50 @@ test('virage à angle droit et retour en arrière', () => {
   assert(r[4].x === 8 && r[4].y === 8 && r[4].inDir === 0 && r[4].dir === 1, 'virage mal orienté');
   for (let s = 1; s <= 6; s++) t.move(8.5, 11.5 - s * 0.5);
   assert(t.result().length === 5, `retour en arrière : ${t.result().length}`);
+});
+test('pont : un tapis passe par-dessus un autre, et les deux continuent de rouler', () => {
+  const g = new Game('TEST-B1');
+  g.money = 10000; g.world.reveal(7, 6, 14);
+  const down: TraceCell[] = [];
+  for (let y = 2; y <= 10; y++) down.push({ x: 7, y, dir: 1, inDir: 1 });
+  assert(g.placeBelts(down), 'tapis vertical');
+  // Sans le déblocage : le tracé s'arrête sur le tapis (il s'y branche).
+  const t0 = trace(g, [[4.5, 6.5], [10.5, 6.5]]);
+  assert(t0.result().length === 3 && !t0.result().some((c) => c.jump), `sans pont : ${t0.result().length} cases`);
+  const t = new BeltTracer(g.factory, 4.5, 6.5);
+  t.bridges = true;
+  for (let s = 1; s <= 24; s++) t.move(4.5 + s * 0.25, 6.5);
+  const r = t.result();
+  const bridge = r.find((c) => c.jump);
+  assert(bridge && bridge.x === 6 && bridge.jump === 1 && bridge.dir === 0, `pont attendu en (6,6) : ${JSON.stringify(r)}`);
+  assert(r.length === 6 && r[r.length - 1].x === 10 && r[3].x === 8 && r[3].inDir === 0, `cases : ${r.map((c) => c.x).join(',')}`);
+  assert(!g.placeBelts(r), 'refusé tant que les ponts ne sont pas débloqués');
+  g.unlocks.add('pont');
+  const before = g.money;
+  assert(g.placeBelts(r), 'pont posé');
+  assert(before - g.money === 6 * RULES.beltCost + RULES.bridgeCost, `prix ${before - g.money}`);
+  const a = g.placeMachine('coffre', 11, 6)!, b = g.placeMachine('coffre', 7, 11)!;
+  for (const x of g.factory.belts.values()) x.built = true;
+  a.built = true; b.built = true; g.pending = []; g.factory.markBuilt();
+  assert(g.factory.beltAt(7, 6)!.jump === undefined && g.factory.beltAt(6, 6)!.jump === 1, 'le tapis du dessous est intact');
+  g.factory.beltAt(4, 6)!.items.push({ t: 'cuivre', p: 0 });
+  g.factory.beltAt(7, 2)!.items.push({ t: 'charbon', p: 0 });
+  run(g, 12);
+  assert(a.inBuf.cuivre === 1 && !a.inBuf.charbon, `coffre au bout du pont : ${JSON.stringify(a.inBuf)}`);
+  assert(b.inBuf.charbon === 1 && !b.inBuf.cuivre, `coffre sous le pont : ${JSON.stringify(b.inBuf)}`);
+  // Débit : un pont ne ralentit pas la file.
+  const first = g.factory.beltAt(4, 6)!;
+  for (let i = 0; i < 30 * 20; i++) {
+    const rear = first.items[first.items.length - 1];
+    if (!rear || rear.p >= RULES.beltGap) first.items.push({ t: 'cuivre', p: 0 });
+    g.tick(1 / 30);
+  }
+  // Autant qu'un tapis droit de même longueur (42 en 20 s).
+  assert(a.inBuf.cuivre >= 1 + 40, `débit sur le pont : ${a.inBuf.cuivre - 1} en 20 s`);
+  // Sauvegarde
+  const g2 = new Game('TEST-B1');
+  g2.factory.load(g.factory.serialize());
+  assert(g2.factory.beltAt(6, 6)!.jump === 1 && g2.factory.chainOf(g2.factory.beltAt(8, 6)!).length === 6, 'pont rechargé, chaîne entière');
 });
 test('un tapis tracé depuis une machine en sort, et entre dans la machine visée', () => {
   const g = new Game('TEST-4');
@@ -670,6 +715,13 @@ test('fabrication : les composants déjà faits passent avant ; annuler rend tou
   g2.cancelCraft(0);
   assert(JSON.stringify(g2.robot.inv.kinds().sort()) === JSON.stringify(JSON.parse(before).filter(Boolean).map((x: { t: string }) => x.t).filter((t: string, i: number, a: string[]) => a.indexOf(t) === i).sort()), 'annuler rend les ingrédients');
 });
+test('le robot peut détruire des objets de son inventaire', () => {
+  const g = new Game('TEST-67');
+  g.robot.inv.add('cuivre', 8);
+  const slot = g.robot.inv.slots.findIndex((s) => s?.t === 'cuivre');
+  assert(g.destroyRobotItems(slot, 5) === 5 && g.robot.inv.count('cuivre') === 3, 'cinq de moins');
+  assert(g.destroyRobotItems(slot, 50) === 3 && g.robot.inv.count('cuivre') === 0 && g.robot.inv.slots[slot] === null, 'la case se vide');
+});
 test('coffre ↔ robot : prendre, déposer, séparer une pile', () => {
   const g = new Game('TEST-63');
   g.money = 1000; g.world.reveal(6, 6, 20);
@@ -723,18 +775,24 @@ test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais d
 });
 
 
-test('une cargaison dont personne ne veut va au coffre, jamais dans un Four', () => {
+test('une cargaison dont personne ne veut retourne à son coffre, sinon elle est détruite', () => {
   const g = new Game('TEST-66');
   g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
   const four = g.placeMachine('four', -9, -1)!;
-  const chest = g.placeMachine('coffre', -6, 3)!;
+  const home = g.placeMachine('coffre', -6, 3)!;
+  const other = g.placeMachine('coffre', -8, 2)!;
   run(g, 40);
   g.sendRobot(-7, 1.5);
   run(g, 6);
-  g.drones[0].cargo = { t: 'cuivre', n: 8 };
+  const d = g.drones[0];
+  d.cargo = { t: 'cuivre', n: 8 }; d.from = home.id;
   run(g, 40);
-  assert(!(four.inBuf.cuivre > 0), `le Four a reçu du cuivre : ${four.inBuf.cuivre}`);
-  assert(chest.inBuf.cuivre === 8, `coffre : ${chest.inBuf.cuivre}`);
+  assert(!(four.inBuf.cuivre > 0) && !(other.inBuf.cuivre > 0), 'ni le Four ni un autre coffre');
+  assert(home.inBuf.cuivre === 8 && !d.cargo, `coffre d’origine : ${home.inBuf.cuivre}`);
+  // Sans coffre d'origine (supprimé) : la cargaison est détruite.
+  d.cargo = { t: 'cuivre', n: 5 }; d.from = 9999;
+  run(g, 5);
+  assert(!d.cargo && !(four.inBuf.cuivre > 0) && !(other.inBuf.cuivre > 0) && home.inBuf.cuivre === 8, 'cargaison détruite');
 });
 test('les drones ne se servent jamais dans l’inventaire du robot', () => {
   const g = new Game('TEST-65');

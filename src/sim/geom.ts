@@ -20,6 +20,14 @@ export function dirBetween(ax: number, ay: number, bx: number, by: number): Dir 
   return null;
 }
 
+/** Direction d'une case vers une autre sur la même ligne ou colonne (même éloignée), sinon null. */
+export function dirToward(ax: number, ay: number, bx: number, by: number): Dir | null {
+  const dx = bx - ax, dy = by - ay;
+  if (dy === 0 && dx !== 0) return dx > 0 ? 0 : 2;
+  if (dx === 0 && dy !== 0) return dy > 0 ? 1 : 3;
+  return null;
+}
+
 /** Clé numérique unique d'une case (coordonnées entre -32768 et 32767). */
 export function key(x: number, y: number): number {
   return (x + 32768) * 65536 + (y + 32768);

@@ -85,6 +85,8 @@ export interface Drone {
   burn: number;
   /** Une case d'inventaire. */
   cargo: Slot | null;
+  /** Le coffre d'où vient la cargaison : si plus personne n'en veut, elle y retourne. */
+  from?: number;
 
   /** Ses tâches, de la plus importante à la moins importante. */
   priorities: DronePriority[];
@@ -180,8 +182,8 @@ export interface GameSave {
   /** Charbon et inventaires du robot et des drones (depuis la version 2). */
   crew?: {
     robot: { fuel: number; burn: number; inv: (Slot | null)[]; craft?: CraftJob[] };
-    drones: { fuel: number; burn: number; cargo: Slot | null; priority?: DronePriority; priorities?: DronePriority[] }[];
-    stations?: { id: number; fuel: number; burn: number; cargo: Slot | null; priorities?: DronePriority[] }[];
+    drones: { fuel: number; burn: number; cargo: Slot | null; from?: number; priority?: DronePriority; priorities?: DronePriority[] }[];
+    stations?: { id: number; fuel: number; burn: number; cargo: Slot | null; from?: number; priorities?: DronePriority[] }[];
   };
 }
 
@@ -605,10 +607,15 @@ export class Game {
 
   placeBelts(cells: TraceCell[], split?: { from: Belt; dir: Dir }): boolean {
     const fresh = cells.filter((c) => !c.existing);
-    const cost = fresh.length * RULES.beltCost;
+    const bridges = fresh.filter((c) => c.jump).length;
+    const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost;
     if (fresh.length === 0) return false;
     if (split && !this.isUnlocked('separateur')) {
       this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
+      return false;
+    }
+    if (bridges && !this.isUnlocked('pont')) {
+      this.emit({ type: 'toast', text: 'Ponts : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
     }
     if (!this.spend(cost)) return false;
@@ -618,7 +625,8 @@ export class Game {
         const b = this.factory.beltAt(c.x, c.y);
         if (b) this.factory.setBeltDir(b, c.dir);
       } else {
-        this.factory.addBelt(c.x, c.y, c.dir, c.inDir, false);
+        const nb = this.factory.addBelt(c.x, c.y, c.dir, c.inDir, false);
+        if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
         this.pending.push({ kind: 'belt', k: key(c.x, c.y) });
       }
     }
@@ -1046,6 +1054,13 @@ export class Game {
   }
 
   /** Sépare une pile du robot en deux. */
+  /** Détruit n objets d'une case du robot (pour faire de la place). Renvoie la quantité détruite. */
+  destroyRobotItems(slot: number, n: number): number {
+    const k = this.robot.inv.takeAt(slot, Math.max(0, Math.floor(n)));
+    if (k > 0) this.emit({ type: 'inventory' });
+    return k;
+  }
+
   splitRobotSlot(slot: number, n: number): boolean {
     const ok = this.robot.inv.split(slot, n) >= 0;
     if (ok) this.emit({ type: 'inventory' });
@@ -1190,20 +1205,12 @@ export class Game {
     return best;
   }
 
-  /**
-   * Le coffre à portée le plus proche où ranger une cargaison dont personne ne veut.
-   * Jamais une machine : un drone ne glisse pas des objets au hasard dans un Four ou une Tour.
-   */
-  private destinationFor(item: string): Machine | null {
-    let chest: Machine | null = null, cd = Infinity;
-    for (const m of this.factory.machines.values()) {
-      if (!m.built || machineDef(m.type).kind !== 'storage') continue;
-      const c = this.center(m);
-      const d = Math.hypot(c.x - this.anchor.x, c.y - this.anchor.y);
-      if (d > this.anchor.supply || d >= cd || this.factory.storageRoom(m, item) <= 0) continue;
-      cd = d; chest = m;
-    }
-    return chest;
+  /** Le coffre où rendre la cargaison du drone : celui d'où elle vient, s'il existe encore et a de la place. */
+  private returnChest(d: Drone): Machine | null {
+    if (!d.cargo || d.from === undefined) return null;
+    const m = this.factory.machines.get(d.from);
+    if (!m || !m.built || machineDef(m.type).kind !== 'storage') return null;
+    return this.factory.storageRoom(m, d.cargo.t) > 0 ? m : null;
   }
 
   /** Ce qui manque à un bâtiment, et le bâtiment lui-même. */
@@ -1248,10 +1255,13 @@ export class Game {
           if (nb && nb.needs[cargo.t]) return { kind: 'deliver', id: nb.m.id };
         }
       }
-      // Personne n'en veut : on la range dans un coffre (sauf le charbon d'un drone ravitailleur).
+      // Personne n'en veut (sauf le charbon d'un drone ravitailleur, qu'il garde pour la prochaine machine) :
+      // retour au coffre d'où elle vient ; s'il n'existe plus ou qu'il est plein, la cargaison est détruite.
       if (!(cargo.t === 'charbon' && refueler)) {
-        const dest = this.destinationFor(cargo.t);
-        if (dest) return { kind: 'deliver', id: dest.id };
+        const home = this.returnChest(d);
+        if (home) return { kind: 'deliver', id: home.id };
+        d.cargo = null;
+        d.from = undefined;
       }
       return null;
     }
@@ -1310,6 +1320,7 @@ export class Game {
         const got = take(t.max !== undefined ? Math.min(room, t.max) : room);
         if (got > 0) {
           d.cargo = { t: t.item, n: (d.cargo?.n ?? 0) + got };
+          d.from = t.from.id;
         }
       }
 
@@ -1326,6 +1337,7 @@ export class Game {
       }
     }
     if (d.cargo && d.cargo.n <= 0) d.cargo = null;
+    if (!d.cargo) d.from = undefined;
   }
 
   /** Range les tâches d'un drone, de la plus importante à la moins importante. */
@@ -1443,8 +1455,8 @@ export class Game {
       gifts: this.gifts, ordersDone: this.ordersDone,
       crew: {
         robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
-        drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priorities: [...d.priorities] })),
-        stations: [...this.stationDrones.entries()].map(([id, d]) => ({ id, fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priorities: [...d.priorities] })),
+        drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
+        stations: [...this.stationDrones.entries()].map(([id, d]) => ({ id, fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
       },
     };
   }
@@ -1494,11 +1506,11 @@ export class Game {
       this.syncStations();
       for (const sd of s.crew.stations ?? []) {
         const d = this.stationDrones.get(sd.id);
-        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priorities = cleanOrder(sd.priorities ?? []); }
+        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? []); }
       }
       s.crew.drones.forEach((sd, i) => {
         const d = this.drones[i];
-        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
+        if (d) { d.fuel = sd.fuel; d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
       });
     } else if (this.drones[0]) {
       // Sauvegarde d'avant le charbon : le cadeau de départ.

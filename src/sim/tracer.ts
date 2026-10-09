@@ -1,6 +1,7 @@
 // Tracé des tapis au doigt : le chemin du doigt devient des lignes droites
 // sur la grille, avec des virages à angle droit.
-import { DX, DY, dirBetween, opposite, type Dir } from './geom.ts';
+import { DX, DY, dirBetween, dirToward, opposite, type Dir } from './geom.ts';
+import { RULES } from '../config.ts';
 import type { Belt, Factory, Machine } from './factory.ts';
 
 export interface TraceCell {
@@ -10,13 +11,17 @@ export interface TraceCell {
   inDir: Dir;
   /** Case de tapis déjà construite qu'on prolonge. */
   existing?: boolean;
+  /** Pont : nombre de cases enjambées après celle-ci. */
+  jump?: number;
 }
 
 /** Marge (en cases) avant qu'un léger écart du doigt ne crée un virage. */
 const HYSTERESIS = 0.85;
 
 export class BeltTracer {
-  cells: { x: number; y: number }[] = [];
+  cells: { x: number; y: number; jump?: number }[] = [];
+  /** Ponts débloqués : en continuant tout droit par-delà un tapis, on passe par-dessus. */
+  bridges = false;
   /** Machine ou tapis vers lequel pointe la dernière case. */
   endTarget: { x: number; y: number } | null = null;
   /** Le tracé a buté sur un obstacle. */
@@ -47,7 +52,7 @@ export class BeltTracer {
       if (!n || n.kind !== 'belt') {
         this.extend = b;
         this.cells = [{ x: sx, y: sy }];
-      } else if (b.built && b.split === undefined) {
+      } else if (b.built && b.split === undefined && !b.jump) {
         this.splitFrom = b;
       } else {
         this.blocked = true;
@@ -70,6 +75,31 @@ export class BeltTracer {
   /** Nombre de cases nouvelles (à construire). */
   get newCount(): number {
     return this.cells.length - (this.extend ? 1 : 0);
+  }
+
+  /** Nombre de ponts dans le tracé. */
+  get bridgeCount(): number {
+    return this.cells.filter((c) => c.jump).length;
+  }
+
+  /**
+   * Peut-on passer par-dessus ce qui bloque, depuis la case c, dans le sens step, vers le doigt (tx, ty) ?
+   * Renvoie le nombre de cases enjambées (0 : non).
+   */
+  private bridgeOver(c: { x: number; y: number }, step: Dir, tx: number, ty: number): number {
+    if (!this.bridges) return 0;
+    // La case de départ doit être neuve et filer tout droit.
+    if (this.extend && this.cells.length === 1) return 0;
+    const cur = this.currentDir();
+    if (cur !== null && cur !== step) return 0;
+    const ahead = (tx - c.x) * DX[step] + (ty - c.y) * DY[step];
+    for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
+      const x = c.x + DX[step] * k, y = c.y + DY[step] * k;
+      if (this.usable(x, y)) return k >= 2 && ahead >= k ? k - 1 : 0;
+      // On n'enjambe que des tapis (pas une machine, ni le tracé lui-même, ni le brouillard).
+      if (!this.factory.beltAt(x, y) || this.cells.some((p) => p.x === x && p.y === y)) return 0;
+    }
+    return 0;
   }
 
   get valid(): boolean {
@@ -118,6 +148,7 @@ export class BeltTracer {
       if (lm && lm !== m) { this.linkMachine = lm; this.blocked = true; return; }
       // Un tapis longe la machine à cet endroit : on propose de les relier par le côté.
       const lb = this.factory.beltAt(x, y);
+      if (lb && lb.jump) { this.blocked = true; return; }
       if (lb) {
         const toMachine = opposite(this.startDir as Dir);
         const intoMachine = lb.dir === toMachine;
@@ -136,6 +167,7 @@ export class BeltTracer {
     const back = this.cells.findIndex((c) => c.x === fx0 && c.y === fy0);
     if (back >= 0 && back < this.cells.length - 1) {
       this.cells.length = back + 1;
+      delete this.cells[back].jump;
       this.blocked = false;
       this.endTarget = null;
       return;
@@ -163,14 +195,22 @@ export class BeltTracer {
       else step = dy > 0 ? 1 : 3;
       const nx = c.x + DX[step], ny = c.y + DY[step];
       const prev = this.cells[this.cells.length - 2];
-      if (prev && prev.x === nx && prev.y === ny) {
-        // Retour en arrière : on efface la dernière case (sauf la case prolongée).
+      if (prev && ((prev.x === nx && prev.y === ny) || (prev.jump && d !== null && step === opposite(d)))) {
+        // Retour en arrière : on efface la dernière case (sauf la case prolongée), et le pont qui y menait.
         if (this.extend && this.cells.length === 1) break;
         this.cells.pop();
+        delete this.cells[this.cells.length - 1].jump;
         continue;
       }
       if (this.cells.some((p) => p.x === nx && p.y === ny)) { this.blocked = true; break; }
       if (!this.usable(nx, ny)) {
+        // Un tapis en travers, et le doigt continue au-delà : un pont passe par-dessus.
+        const j = this.bridgeOver(c, step, tx, ty);
+        if (j > 0) {
+          c.jump = j;
+          this.cells.push({ x: c.x + DX[step] * (j + 1), y: c.y + DY[step] * (j + 1) });
+          continue;
+        }
         if (this.occupied(nx, ny)) this.endTarget = { x: nx, y: ny };
         else this.blocked = true;
         break;
@@ -185,7 +225,7 @@ export class BeltTracer {
 
   private currentDir(): Dir | null {
     const n = this.cells.length;
-    if (n >= 2) return dirBetween(this.cells[n - 2].x, this.cells[n - 2].y, this.cells[n - 1].x, this.cells[n - 1].y);
+    if (n >= 2) return dirToward(this.cells[n - 2].x, this.cells[n - 2].y, this.cells[n - 1].x, this.cells[n - 1].y);
     if (n === 1) {
       if (this.extend) return this.extend.inDir;
       return this.startDir;
@@ -201,15 +241,15 @@ export class BeltTracer {
     for (let i = 0; i < n; i++) {
       const c = this.cells[i];
       let dir: Dir;
-      if (i < n - 1) dir = dirBetween(c.x, c.y, this.cells[i + 1].x, this.cells[i + 1].y)!;
+      if (i < n - 1) dir = dirToward(c.x, c.y, this.cells[i + 1].x, this.cells[i + 1].y)!;
       else if (this.endTarget) dir = dirBetween(c.x, c.y, this.endTarget.x, this.endTarget.y)!;
       else dir = this.currentDir() ?? 0;
       let inDir: Dir;
-      if (i > 0) inDir = dirBetween(this.cells[i - 1].x, this.cells[i - 1].y, c.x, c.y)!;
+      if (i > 0) inDir = dirToward(this.cells[i - 1].x, this.cells[i - 1].y, c.x, c.y)!;
       else if (this.extend) inDir = this.extend.inDir;
       else if (this.startDir !== null) inDir = this.startDir;
       else inDir = dir;
-      out.push({ x: c.x, y: c.y, dir, inDir, existing: i === 0 && !!this.extend });
+      out.push({ x: c.x, y: c.y, dir, inDir, existing: i === 0 && !!this.extend, ...(c.jump ? { jump: c.jump } : {}) });
     }
     return out;
   }

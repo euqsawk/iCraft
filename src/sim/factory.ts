@@ -30,6 +30,13 @@ export interface Belt {
   toggle?: number;
   /** Liaisons de côté : les machines voisines dans ces sens y déposent leur production (sans case de tapis). */
   feeds?: Dir[];
+  /** Pont : nombre de cases enjambées tout droit (la case suivante est jump + 1 plus loin). */
+  jump?: number;
+}
+
+/** Longueur parcourue sur une case de tapis, en cases (plus longue sur un pont). */
+export function span(b: { jump?: number }): number {
+  return 1 + (b.jump ?? 0);
 }
 
 export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore';
@@ -142,11 +149,18 @@ export class Factory {
     return this.nextOf.get(b) ?? null;
   }
 
+  /** La case de tapis qui nourrit celle-ci par l'arrière (voisine, ou un pont qui atterrit ici). */
+  feederOf(b: Belt): Belt | null {
+    for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
+      const f = this.beltAt(b.x - DX[b.inDir] * k, b.y - DY[b.inDir] * k);
+      if (f && f.x + DX[f.dir] * span(f) === b.x && f.y + DY[f.dir] * span(f) === b.y) return f;
+    }
+    return null;
+  }
+
   /** Vrai si rien ne nourrit ce tapis (premier maillon d'une chaîne). */
   isChainStart(b: Belt): boolean {
-    const fx = b.x - DX[b.inDir], fy = b.y - DY[b.inDir];
-    const f = this.beltAt(fx, fy);
-    return !f || f.x + DX[f.dir] !== b.x || f.y + DY[f.dir] !== b.y;
+    return !this.feederOf(b);
   }
 
   /** Toutes les cases d'une chaîne de tapis reliée à cette case (amont et aval, sans les branches). */
@@ -156,18 +170,17 @@ export class Factory {
     // Amont
     let cur: Belt | undefined = b;
     while (cur) {
-      const fx: number = cur.x - DX[cur.inDir], fy: number = cur.y - DY[cur.inDir];
-      const f = this.beltAt(fx, fy);
-      if (!f || seen.has(f) || f.x + DX[f.dir] !== cur.x || f.y + DY[f.dir] !== cur.y) break;
+      const f = this.feederOf(cur);
+      if (!f || seen.has(f)) break;
       out.unshift(f); seen.add(f); cur = f;
     }
     // Aval
     cur = b;
     while (cur) {
-      const n = this.beltAt(cur.x + DX[cur.dir], cur.y + DY[cur.dir]);
+      const L = span(cur);
+      const n = this.beltAt(cur.x + DX[cur.dir] * L, cur.y + DY[cur.dir] * L);
       if (!n || seen.has(n)) break;
-      const fx = n.x - DX[n.inDir], fy = n.y - DY[n.inDir];
-      if (fx !== cur.x || fy !== cur.y) break; // chargement par le côté : autre chaîne
+      if (n.inDir !== cur.dir) break; // chargement par le côté : autre chaîne
       out.push(n); seen.add(n); cur = n;
     }
     return out;
@@ -350,11 +363,15 @@ export class Factory {
 
   /** Ce qui suit une case de tapis dans une direction donnée. */
   private linkFor(b: Belt, dir: Dir): Next {
-    const nx = b.x + DX[dir], ny = b.y + DY[dir];
+    // Un pont atterrit plus loin, tout droit.
+    const L = dir === b.dir ? span(b) : 1;
+    const nx = b.x + DX[dir] * L, ny = b.y + DY[dir] * L;
     const nb = this.beltAt(nx, ny);
     if (nb) {
       // Deux tapis face à face ne se relient pas.
-      if (nb.x + DX[nb.dir] === b.x && nb.y + DY[nb.dir] === b.y) return null;
+      if (nb.x + DX[nb.dir] * span(nb) === b.x && nb.y + DY[nb.dir] * span(nb) === b.y) return null;
+      // On ne monte pas sur un pont par le côté.
+      if (nb.jump && nb.inDir !== dir) return null;
       return { kind: 'belt', belt: nb, side: nb.inDir !== dir };
     }
     const m = this.machineAt(nx, ny);
@@ -500,12 +517,12 @@ export class Factory {
     if (!n.belt.built) return false;
     if (n.side) return this.roomAt(n.belt, 0.5);
     const items = n.belt.items;
-    return items.length === 0 || items[items.length - 1].p >= RULES.beltGap;
+    return items.length === 0 || items[items.length - 1].p >= RULES.beltGap / span(n.belt);
   }
 
   /** Une case peut-elle recevoir un objet à la position p ? */
   private roomAt(b: Belt, p: number): boolean {
-    const gap = RULES.beltGap;
+    const gap = RULES.beltGap / span(b);
     for (const it of b.items) if (Math.abs(it.p - p) < gap - 1e-6) return false;
     return true;
   }
@@ -542,6 +559,8 @@ export class Factory {
 
     for (const b of this.order) {
       if (!b.built || b.items.length === 0) continue;
+      // Sur un pont, p couvre plusieurs cases : on avance moins vite en p, avec un écart plus petit en p.
+      const Lb = span(b), sp = speed / Lb, gp = gap / Lb;
       const main = this.nextOf.get(b) ?? null;
       const branch = b.split !== undefined ? this.splitOf.get(b) ?? null : null;
       const items = b.items; // triés : le plus avancé en premier
@@ -562,25 +581,26 @@ export class Factory {
         const nxt = it.o ? branch : main;
         let limit: number;
         if (i > 0) {
-          limit = items[i - 1].p - gap;
+          limit = items[i - 1].p - gp;
         } else if (nxt?.kind === 'belt' && nxt.belt.built) {
           if (nxt.side) {
             limit = 1;
           } else {
+            const Lt = span(nxt.belt);
             const rear = nxt.belt.items.length ? nxt.belt.items[nxt.belt.items.length - 1].p : Infinity;
-            limit = Math.min(1 + rear - gap, 1.5);
+            limit = Math.min(1 + (rear * Lt - gap) / Lb, 1 + 0.5 / Lb);
           }
         } else if (nxt?.kind === 'machine' && nxt.machine.built) {
           limit = 1;
         } else {
           limit = 0.75; // bout de tapis : l'objet attend au milieu de la case
         }
-        if (it.p < limit) it.p = Math.min(it.p + speed, limit);
+        if (it.p < limit) it.p = Math.min(it.p + sp, limit);
 
         if (i === 0 && it.p >= 1 && nxt) {
           if (nxt.kind === 'belt' && nxt.belt.built) {
             const target = nxt.belt;
-            const entry = nxt.side ? 0.5 : it.p - 1;
+            const entry = nxt.side ? 0.5 : (it.p - 1) * Lb / span(target);
             if (this.roomAt(target, entry)) {
               items.shift(); i--;
               const moved: BeltItem = { t: it.t, p: entry };
@@ -726,7 +746,7 @@ export class Factory {
         if (!this.roomAt(b, 0.5)) continue;
       } else {
         const rear = b.items.length ? b.items[b.items.length - 1].p : Infinity;
-        if (rear < RULES.beltGap) continue;
+        if (rear < RULES.beltGap / span(b)) continue;
       }
       const t = kinds[(m.rrOut + s) % kinds.length];
       buf[t]--;
@@ -750,7 +770,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -760,10 +780,11 @@ export class Factory {
 
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear();
-    for (const [x, y, dir, inDir, built, items, split, feed] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
+      if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
       if (feed !== undefined && feed >= 0) {
         b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
@@ -785,7 +806,7 @@ export class Factory {
 
 export interface FactorySave {
   nextId: number;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; burn?: number;
