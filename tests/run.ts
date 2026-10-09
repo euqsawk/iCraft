@@ -6,11 +6,16 @@ import { producibleItems, generateChoices } from '../src/sim/orders.ts';
 import { item, ITEM_LIST } from '../src/data/items.ts';
 import { PALIERS } from '../src/data/paliers.ts';
 import { NODE } from '../src/data/unlocks.ts';
+import { decodeSave, encodeSave } from '../src/save/code.ts';
 import { MACHINES } from '../src/data/machines.ts';
 
 let failed = 0, passed = 0;
 function test(name: string, fn: () => void): void {
   try { fn(); passed++; console.log(`  ok  ${name}`); }
+  catch (e) { failed++; console.log(`  ÉCHEC  ${name}\n        ${(e as Error).message}`); }
+}
+async function testAsync(name: string, fn: () => Promise<void>): Promise<void> {
+  try { await fn(); passed++; console.log(`  ok  ${name}`); }
   catch (e) { failed++; console.log(`  ÉCHEC  ${name}\n        ${(e as Error).message}`); }
 }
 function assert(cond: unknown, msg: string): void {
@@ -454,6 +459,39 @@ test('une sauvegarde d’avant les paliers garde ses déblocages et repart au pa
   delete s.unlocks;
   const g3 = new Game(s.seed, s);
   assert(g3.hasMachine('presse') && g3.hasMachine('tour') && g3.hasMachine('trefileuse'), 'machines de l’ancien niveau 4');
+});
+
+console.log('Sauvegardes');
+test('apparence, conseils et temps de jeu sont sauvegardés ; une ancienne partie n’a pas de conseils', () => {
+  const g = new Game('TEST-50');
+  g.look = { color: 'ciel', accessory: 'helice', name: 'Zébulon' };
+  g.tips.done.push('charbon');
+  run(g, 2);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.look.name === 'Zébulon' && g2.look.accessory === 'helice' && g2.tips.done[0] === 'charbon' && !g2.tips.off, 'apparence ou conseils perdus');
+  assert(g2.played >= 1, `temps de jeu ${g2.played}`);
+  delete s.look; delete s.tips; s.v = 4;
+  const g3 = new Game(s.seed, s);
+  assert(g3.look.name === 'Boulon' && g3.tips.off, 'ancienne partie');
+  s.look = { color: 'violet-fluo', accessory: 'canon', name: '' };
+  const g4 = new Game(s.seed, s);
+  assert(g4.look.color === 'jaune' && g4.look.accessory === 'aucun' && g4.look.name === 'Boulon', 'apparence invalide nettoyée');
+});
+await testAsync('code de partie : export puis import, et codes invalides refusés', async () => {
+  const g = new Game('TEST-51');
+  g.money = 1234;
+  g.look.name = 'Rivet';
+  const code = await encodeSave(g.serialize());
+  assert(code.startsWith('UF1.') && code.length < 20000, `code ${code.slice(0, 8)} (${code.length})`);
+  const back = await decodeSave(`  ${code.slice(0, 40)}\n${code.slice(40)} `);
+  const g2 = new Game(back.seed, back);
+  assert(g2.money === 1234 && g2.look.name === 'Rivet' && g2.world.seed === g.world.seed, 'partie importée différente');
+  for (const bad of ['bonjour', 'UF1.', 'UF1.abcdef', code.slice(0, code.length - 30)]) {
+    let failed = false;
+    try { await decodeSave(bad); } catch { failed = true; }
+    assert(failed, `code accepté : ${bad.slice(0, 20)}`);
+  }
 });
 
 console.log(`\n${passed} réussis, ${failed} en échec`);

@@ -11,6 +11,9 @@ import { BeltTracer } from '../sim/tracer.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
 import { ICONS } from './icons.ts';
 import { TreeScreen } from './tree.ts';
+import { Tips } from './tips.ts';
+import { checkForUpdate, copyText } from './update.ts';
+import { exportPanel, playTime } from './title.ts';
 import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
@@ -37,8 +40,10 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls = '', html = ''): 
 }
 
 export interface HudCallbacks {
-  newGame(seed: string): void;
-  save(): void;
+  /** Retour au menu principal (sauvegarde puis recharge). */
+  toTitle(): void;
+  /** Avant une mise à jour : sauvegarde, et reprendre cette partie au rechargement. */
+  beforeReload(): Promise<void>;
 }
 
 export class Hud implements GestureHandlers {
@@ -78,6 +83,7 @@ export class Hud implements GestureHandlers {
   private treeDirty = false;
   private refreshTimer = 0;
   private pressing = false;
+  readonly tips: Tips;
 
   constructor(root: HTMLElement, game: Game, renderer: GameRenderer, cb: HudCallbacks) {
     this.root = root;
@@ -87,6 +93,7 @@ export class Hud implements GestureHandlers {
     for (const d of ITEM_LIST) this.itemIcons.set(d.id, renderer.itemIconDataUrl(d.id));
     for (const m of BUILDABLE) this.machineIcons.set(m.id, renderer.machineIconDataUrl(m.id));
     this.build();
+    this.tips = new Tips(this.root, game);
     game.on((e) => this.onEvent(e));
     this.refreshAll();
   }
@@ -321,7 +328,12 @@ export class Hud implements GestureHandlers {
   }
 
   toolActive(): boolean {
-    return this.tool !== 'none';
+    return this.tool !== 'none' && !this.r.introRunning;
+  }
+
+  /** Pendant l'animation d'arrivée, l'interface reste cachée. */
+  setIntro(on: boolean): void {
+    this.root.classList.toggle('intro-hide', on);
   }
 
   private worldAt(sx: number, sy: number): { x: number; y: number } {
@@ -331,6 +343,7 @@ export class Hud implements GestureHandlers {
 
   tap(sx: number, sy: number): void {
     if (!Number.isFinite(sx) || !Number.isFinite(sy)) return;
+    if (this.r.introRunning) { this.r.skipIntro(); return; }
     const w = this.worldAt(sx, sy);
     const cx = Math.floor(w.x), cy = Math.floor(w.y);
     const f = this.game.factory;
@@ -539,6 +552,7 @@ export class Hud implements GestureHandlers {
         b.onclick = () => { f.setChoice(m, b.dataset.choice!); this.renderPopover(); };
       });
     } else if (sel?.kind === 'robot') {
+      this.tips.note('robotOpened');
       this.renderRobotPopover();
     } else if (sel?.kind === 'belt') {
       const b = f.beltAt(sel.x, sel.y);
@@ -597,7 +611,7 @@ export class Hud implements GestureHandlers {
       : r.moving ? 'Il roule.'
       : 'Arrête-le sur un filon : il mine tout seul. Ses drones distribuent ce qu’il trouve.';
     const drones = g.drones.map((d, i) => `<div class="drone-row"><span>Drone ${i + 1}</span>${this.gauge('', d.fuel, 10, d.fuel <= 2)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : '<span class="chip muted">vide</span>'}${d.state === 'parked' ? '<small>posé</small>' : ''}</div>`).join('');
-    const info = `<h3>Robot</h3><p>${esc(status)}</p>${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}
+    const info = `<h3>${esc(g.look.name)}</h3><p>${esc(status)}</p>${this.gauge('Charbon', r.fuel, 10, g.robotOutOfCoal)}
       <p>Inventaire</p>${this.slotsHtml(r.inv.slots)}
       ${g.drones.length ? `<p>Drones</p>${drones}` : '<p>Pas encore de drone.</p>'}`;
     // Priorité de chaque drone : il fait d'abord cette tâche, puis le reste.
@@ -854,76 +868,57 @@ export class Hud implements GestureHandlers {
     const g = this.game;
     this.openSheet((sheet, close) => {
       const head = h('div', 'sheet-head');
-      head.innerHTML = `<div><h2>Usine fractale</h2><p>Version __VER__</p></div>`.replace('__VER__', __VERSION__);
+      head.innerHTML = `<div><h2>Usine fractale</h2><p>${esc(g.look.name)} · version ${esc(__VERSION__)}</p></div>`;
       const x = h('button', 'round', ICONS.close);
       x.setAttribute('aria-label', 'Fermer');
       x.onclick = close;
       head.append(x);
 
-      const seedCard = h('div', 'card');
-      seedCard.innerHTML = `<p class="muted">Graine de cette carte</p><div class="line">${esc(g.world.seed)}</div>`;
-      const copy = h('button', 'btn', 'Copier la graine');
-      copy.onclick = async () => {
-        try { await navigator.clipboard.writeText(g.world.seed); this.toast('Graine copiée', 'good'); } catch { this.toast(g.world.seed, 'info'); }
-      };
-      seedCard.append(copy);
-
       const upd = h('button', 'btn primary', 'Chercher une mise à jour');
-      upd.onclick = () => this.checkUpdate(upd);
-      const center = h('button', 'btn', 'Recentrer sur le robot');
+      upd.onclick = () => checkForUpdate(upd, () => this.cb.beforeReload(), (t, tone) => this.toast(t, tone));
+      const treeBtn = h('button', 'btn', `Arbre de déblocages · palier ${g.palier}`);
+      treeBtn.onclick = () => { close(); this.openTree(); };
+      const center = h('button', 'btn', `Recentrer sur ${esc(g.look.name)}`);
       center.onclick = () => { this.r.centerOnRobot(); close(); };
 
-      const newCard = h('div', 'card');
-      newCard.innerHTML = `<p class="muted">Nouvelle partie : laisse vide pour une carte au hasard, ou colle une graine partagée.</p>`;
-      const input = h('input', 'field') as HTMLInputElement;
-      input.placeholder = 'GRAINE (facultatif)';
-      input.autocapitalize = 'characters';
-      const start = h('button', 'btn danger', 'Recommencer');
-      let armed = false;
-      start.onclick = () => {
-        if (!armed) { armed = true; start.textContent = 'Toucher encore pour effacer la partie'; return; }
+      const saveCard = h('div', 'card');
+      saveCard.innerHTML = `<p class="muted">Cette partie · ${playTime(g.played)} de jeu · graine ${esc(g.world.seed)}</p>`;
+      const row = h('div', 'row');
+      const exp = h('button', 'btn', 'Exporter la partie');
+      exp.onclick = () => this.openExport();
+      const copy = h('button', 'btn', 'Copier la graine');
+      copy.onclick = async () => this.toast((await copyText(g.world.seed)) ? 'Graine copiée' : g.world.seed, 'good');
+      row.append(exp, copy);
+      const tipsBtn = h('button', 'btn', g.tips.off ? 'Réactiver les conseils' : 'Couper les conseils');
+      tipsBtn.onclick = () => {
+        if (g.tips.off) { this.tips.restart(); this.toast('Conseils réactivés', 'good'); } else { g.tips.off = true; this.toast('Plus de conseils sur cette partie', 'info'); }
         close();
-        this.cb.newGame(input.value.trim().toUpperCase());
       };
-      newCard.append(input, start);
+      saveCard.append(row, tipsBtn);
 
-      const tips = h('div', 'card');
+      const title = h('button', 'btn', 'Menu principal');
+      title.onclick = () => { close(); this.cb.toTitle(); };
+
+      const help = h('div', 'card');
       const standalone = (navigator as unknown as { standalone?: boolean }).standalone || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
-      tips.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer le robot. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
+      help.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer ${esc(g.look.name)}. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
         ${standalone ? '' : '<p class="muted"><b>Installer</b> · Dans Safari : Partager, puis « Sur l’écran d’accueil ». Le jeu s’ouvre alors en plein écran et ta sauvegarde est mieux protégée.</p>'}`;
-
-      const treeBtn = h('button', 'btn', `Arbre de déblocages · palier ${this.game.palier}`);
-      treeBtn.onclick = () => { close(); this.openTree(); };
-      sheet.append(head, upd, treeBtn, seedCard, center, newCard, tips);
+      sheet.append(head, upd, treeBtn, center, saveCard, title, help);
     });
   }
 
-  private async checkUpdate(btn: HTMLButtonElement): Promise<void> {
-    btn.disabled = true;
-    btn.textContent = 'Recherche…';
-    try {
-      const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(String(res.status));
-      const { v } = (await res.json()) as { v: string };
-      if (v === __VERSION__) {
-        btn.textContent = 'Tu as la dernière version';
-        this.toast('Tu as déjà la dernière version', 'good');
-        return;
-      }
-      btn.textContent = 'Mise à jour…';
-      await this.cb.save();
-      // On vide le cache hors ligne puis on recharge : la nouvelle version se télécharge.
-      try {
-        const reg = await navigator.serviceWorker?.getRegistration();
-        await reg?.update();
-        if ('caches' in window) for (const k of await caches.keys()) await caches.delete(k);
-      } catch { /* on recharge quand même */ }
-      location.reload();
-    } catch {
-      btn.disabled = false;
-      btn.textContent = 'Chercher une mise à jour';
-      this.toast('Impossible de joindre le serveur : vérifie ta connexion', 'warn');
-    }
+  /** Le code de la partie en cours, à copier ou partager. */
+  private openExport(): void {
+    this.closeSheet();
+    const back = h('div', 'backdrop');
+    this.root.append(back);
+    this.overlay = back;
+    const close = () => this.closeSheet();
+    back.onclick = (e) => { if (e.target === back) close(); };
+    exportPanel(this.game.serialize(), close).then((panel) => {
+      panel.classList.add('sheet');
+      back.append(panel);
+    }).catch(() => { close(); this.toast('Export impossible sur ce navigateur', 'warn'); });
   }
 
   /** Écran de retour : ce que l'usine a produit pendant l'absence. */
@@ -997,6 +992,8 @@ export class Hud implements GestureHandlers {
 
   /** Appelé à chaque image. */
   update(dt: number): void {
+    this.tips.setHidden(!!this.r.loupe || !!this.overlay || this.tree.isOpen);
+    this.tips.update(dt);
     this.popTimer += dt;
     this.miniTimer += dt;
     if (this.popTimer > 0.3) {

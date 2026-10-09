@@ -14,6 +14,8 @@ import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
 import { Camera } from './camera.ts';
 import { dashedPolyline, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
+import { PROPELLER, robotShapes, type Shape } from './robotShapes.ts';
+import { robotColor } from '../data/look.ts';
 
 /** Contour d'un rectangle arrondi qui part du milieu du bord haut, dans le sens des aiguilles d'une montre. */
 function trackPoints(x: number, y: number, w: number, h: number, r: number): { x: number; y: number }[] {
@@ -94,7 +96,7 @@ export class GameRenderer {
   private noyauView: { root: Container; ring: Graphics; badge: Graphics; progress: number; pulse: number } | null = null;
   private itemTextures = new Map<string, Texture>();
   private itemPool: Sprite[] = [];
-  private robotView!: { root: Container; body: Container; beam: Graphics; glow: Graphics; flip: Container };
+  private robotView!: { root: Container; body: Container; beam: Graphics; glow: Graphics; flip: Container; shape: Graphics; spin: Graphics; look: string };
   private droneViews: Container[] = [];
   private beltsDirty = true;
   private time = 0;
@@ -512,16 +514,33 @@ export class GameRenderer {
     const body = new Container();
     const beam = new Graphics().poly([10, -20, 34, -40, 46, -26]).fill(PALETTE.beam);
     const g = new Graphics();
-    g.roundRect(-13, -32, 26, 26, 6).fill(PALETTE.yellow);
-    g.roundRect(-13, -32, 26, 8, 4).fill(PALETTE.yellowLight);
-    g.circle(-8, -3, 4).fill(PALETTE.ink).circle(8, -3, 4).fill(PALETTE.ink);
+    const spin = new Graphics();
+    spin.position.set(PROPELLER.x, PROPELLER.y);
     const glow = new Graphics().circle(10, -20, 9).fill({ color: PALETTE.yellow, alpha: 0.5 });
     const lamp = new Graphics().circle(10, -20, 5).fill(PALETTE.lamp).stroke({ width: 2.5, color: PALETTE.ink });
-    body.addChild(g, glow, lamp);
+    body.addChild(g, glow, lamp, spin);
     flip.addChild(beam, body);
     root.addChild(shadow, flip);
     this.actorLayer.addChild(root);
-    this.robotView = { root, body, beam, glow, flip };
+    this.robotView = { root, body, beam, glow, flip, shape: g, spin, look: '' };
+    this.refreshLook();
+  }
+
+  /** Redessine le robot et les drones avec l'apparence choisie. */
+  refreshLook(): void {
+    const v = this.robotView;
+    const look = this.game.look;
+    const id = `${look.color}/${look.accessory}`;
+    if (v.look === id) return;
+    v.look = id;
+    const { body, spin } = robotShapes(look);
+    v.shape.clear();
+    for (const sh of body) drawShape(v.shape, sh, 0, 0);
+    v.spin.clear();
+    for (const sh of spin) drawShape(v.spin, sh, PROPELLER.x, PROPELLER.y);
+    // Les drones prennent la couleur du robot.
+    for (const d of this.droneViews) d.destroy({ children: true });
+    this.droneViews = [];
   }
 
   private makeDroneView(): Container {
@@ -530,7 +549,7 @@ export class GameRenderer {
     dg.circle(0, 0, 7).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
     dg.moveTo(-10, -9).lineTo(10, -9).stroke({ width: 2, color: PALETTE.ink, cap: 'round' });
     dg.moveTo(0, -7).lineTo(0, -9).stroke({ width: 2, color: PALETTE.ink });
-    dg.circle(0, 0, 2.5).fill(PALETTE.yellow);
+    dg.circle(0, 0, 2.5).fill(robotColor(this.game.look).main);
     const cargo = new Sprite();
     cargo.anchor.set(0.5);
     cargo.position.set(0, 12);
@@ -545,6 +564,7 @@ export class GameRenderer {
     while (this.droneViews.length > this.game.drones.length) this.droneViews.pop()!.destroy({ children: true });
     const r = this.game.robot, v = this.robotView;
     v.root.position.set(r.x * CELL, r.y * CELL);
+    v.spin.scale.x = Math.cos(this.time * 18);
     v.flip.scale.x = Math.cos(r.heading) < -0.1 ? -1 : 1;
     v.body.y = r.moving ? Math.abs(Math.sin(this.time * 14)) * -1.5 : 0;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * (Math.PI * 2 / 1.8));
@@ -707,8 +727,126 @@ export class GameRenderer {
 
   // ---------- Image par image ----------
 
+  // ---------- Arrivée : vue de loin, plongée, puis le brouillard se referme ----------
+
+  private intro: {
+    t: number; done: () => void; layer: Container; mask: Graphics; puffTex: Texture;
+    puffs: { s: Sprite; a: number; j: number; base: number; spin: number }[];
+    from: { x: number; y: number; zoom: number }; to: { x: number; y: number; zoom: number };
+    cx: number; cy: number; r0: number; r1: number;
+  } | null = null;
+
+  static readonly INTRO = 6.2;
+
+  get introRunning(): boolean {
+    return !!this.intro;
+  }
+
+  /** Lance l'animation d'arrivée d'une nouvelle partie. */
+  playIntro(done: () => void, revealRadius: number, center: { x: number; y: number }): void {
+    const cam = this.camera;
+    const to = { x: cam.x, y: cam.y, zoom: cam.zoom };
+    const from = { x: to.x - CELL * 6, y: to.y + CELL * 10, zoom: 0.15 };
+    // Nuage doux : un dégradé radial, teinté couleur brouillard.
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d')!;
+    const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 62);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.85)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    const puffTex = Texture.from(c);
+    const layer = new Container();
+    const mask = new Graphics();
+    this.worldLayer.addChildAt(layer, this.worldLayer.getChildIndex(this.fogLayer) + 1);
+    this.worldLayer.addChild(mask);
+    const rand = rng(hashString('brouillard'));
+    const puffs: { s: Sprite; a: number; j: number; base: number; spin: number }[] = [];
+    const N = 72;
+    for (let i = 0; i < N; i++) {
+      const sp = new Sprite(puffTex);
+      sp.anchor.set(0.5);
+      sp.tint = PALETTE.fog;
+      sp.alpha = 0;
+      layer.addChild(sp);
+      puffs.push({ s: sp, a: (i / N) * Math.PI * 2 + rand() * 0.08, j: rand(), base: 1.6 + rand() * 2.4, spin: (rand() - 0.5) * 0.6 });
+    }
+    this.fogLayer.setMask({ mask, inverse: true });
+    const cx = (center.x + 0.5) * CELL, cy = (center.y + 0.5) * CELL;
+    const r1 = revealRadius * CELL;
+    const r0 = Math.hypot(cam.width, cam.height) / 2 / 0.42 + CELL * 4;
+    this.intro = { t: 0, done, layer, mask, puffTex, puffs, from, to, cx, cy, r0, r1 };
+    this.fogLayer.alpha = 0.3;
+    this.stepIntro(0);
+  }
+
+  /** Passe directement à la fin de l'animation. */
+  skipIntro(): void {
+    if (this.intro) this.intro.t = Math.max(this.intro.t, GameRenderer.INTRO - 0.35);
+  }
+
+  private stepIntro(dt: number): void {
+    const it = this.intro!;
+    it.t += dt;
+    const t = it.t, cam = this.camera;
+    const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    const ease = (v: number) => (v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2);
+    const easeOut = (v: number) => 1 - Math.pow(1 - v, 3);
+    // Caméra : un instant de loin, une première plongée (on voit la zone de départ en entier),
+    // le brouillard se referme, puis on descend jusqu'au robot.
+    const mid = 0.42;
+    const z1 = ease(clamp((t - 1.0) / 2.0)), z2 = ease(clamp((t - 4.5) / 1.6));
+    const lz = Math.log(it.from.zoom) + (Math.log(mid) - Math.log(it.from.zoom)) * z1 + (Math.log(it.to.zoom) - Math.log(mid)) * z2;
+    cam.zoom = Math.exp(lz);
+    const drift = (1 - z1) * t * CELL * 0.8;
+    cam.x = it.from.x + (it.to.x - it.from.x) * z1 + drift;
+    cam.y = it.from.y + (it.to.y - it.from.y) * z1;
+    // La brume du début se dissipe pendant la plongée…
+    const haze = 1 - clamp((t - 1.0) / 1.0);
+    // … puis le brouillard revient des bords et se referme autour de la zone de départ.
+    const k = easeOut(clamp((t - 2.1) / 2.5));
+    const R = it.r0 + (it.r1 - it.r0) * k;
+    const m = it.mask;
+    m.clear();
+    const pts: number[] = [];
+    for (let i = 0; i < 72; i++) {
+      const a = (i / 72) * Math.PI * 2;
+      const w = 1 + 0.05 * Math.sin(a * 5 + t * 1.3) + 0.035 * Math.sin(a * 9 - t * 2.1);
+      pts.push(it.cx + Math.cos(a) * R * w, it.cy + Math.sin(a) * R * w);
+    }
+    m.poly(pts).fill(0xffffff);
+    this.fogLayer.alpha = t < 2.1 ? 0.3 * haze : 1;
+    // Les nuages suivent le bord du brouillard, puis s'effacent une fois en place.
+    const show = clamp((t - 2.1) / 0.4) * (1 - clamp((t - 4.6) / 1.0));
+    for (const p of it.puffs) {
+      const w = 1 + 0.05 * Math.sin(p.a * 5 + t * 1.3) + 0.035 * Math.sin(p.a * 9 - t * 2.1);
+      const rr = R * w * (0.97 + p.j * 0.1);
+      p.s.position.set(it.cx + Math.cos(p.a + p.spin * t * 0.1) * rr, it.cy + Math.sin(p.a + p.spin * t * 0.1) * rr);
+      const size = (p.base * CELL * 3) * (0.55 + 0.45 * (R / it.r0)) / 64;
+      p.s.scale.set(Math.max(size, 1.2));
+      p.s.alpha = show * (0.75 + 0.25 * p.j);
+    }
+    if (t >= GameRenderer.INTRO) this.endIntro();
+  }
+
+  private endIntro(): void {
+    const it = this.intro!;
+    this.intro = null;
+    this.fogLayer.setMask({ inverse: false });
+    this.fogLayer.mask = null;
+    this.fogLayer.alpha = 1;
+    it.mask.destroy();
+    it.layer.destroy({ children: true });
+    it.puffTex.destroy(true);
+    this.camera.x = it.to.x; this.camera.y = it.to.y; this.camera.zoom = it.to.zoom;
+    it.done();
+  }
+
   render(dt: number): void {
     this.time += dt;
+    if (this.intro) this.stepIntro(dt);
     const cam = this.camera;
     cam.setSize(this.app.screen.width, this.app.screen.height);
     this.worldLayer.scale.set(cam.zoom);
@@ -726,5 +864,22 @@ export class GameRenderer {
     this.updateActors();
     this.drawOverlay();
     this.renderLoupe();
+  }
+}
+
+/** Dessine une forme du robot (repère décalé de ox, oy). */
+function drawShape(g: Graphics, s: Shape, ox: number, oy: number): void {
+  const st = (stroke?: number, sw?: number) => { if (stroke !== undefined) g.stroke({ width: sw ?? 2, color: stroke, cap: 'round', join: 'round' }); };
+  switch (s.k) {
+    case 'rect': g.roundRect(s.x - ox, s.y - oy, s.w, s.h, s.r).fill(s.fill); break;
+    case 'circle': g.circle(s.x - ox, s.y - oy, s.r); if (s.fill !== undefined) g.fill(s.fill); st(s.stroke, s.sw); break;
+    case 'ellipse': g.ellipse(s.x - ox, s.y - oy, s.rx, s.ry); if (s.fill !== undefined) g.fill(s.fill); st(s.stroke, s.sw); break;
+    case 'poly': g.poly(s.pts.map((v, i) => v - (i % 2 ? oy : ox))); if (s.fill !== undefined) g.fill(s.fill); st(s.stroke, s.sw); break;
+    case 'line': {
+      g.moveTo(s.pts[0] - ox, s.pts[1] - oy);
+      for (let i = 2; i < s.pts.length; i += 2) g.lineTo(s.pts[i] - ox, s.pts[i + 1] - oy);
+      st(s.stroke, s.sw);
+      break;
+    }
   }
 }

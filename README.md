@@ -9,6 +9,14 @@ Ce dépôt contient le **premier prototype jouable** : la carte, le robot et ses
 1. Ouvre le lien GitHub Pages du dépôt dans Safari.
 2. Touche **Partager**, puis **Sur l'écran d'accueil**. Le jeu s'ouvre alors en plein écran, fonctionne hors connexion et sa sauvegarde est mieux protégée.
 
+### Menu principal et nouvelle partie
+
+À chaque lancement (quand le jeu n'était plus en mémoire), le menu principal s'ouvre : **Continuer** la dernière partie, **Nouvelle partie**, **Parties** (3 emplacements : jouer, exporter, supprimer) et **Importer un code**. Dans le menu du jeu, **Exporter la partie** donne un code (« UF1.… », la sauvegarde compressée) à copier ou partager ; l'importer recrée la partie sur n'importe quel téléphone. « Menu principal » ramène à cet écran.
+
+Une nouvelle partie commence par une courte présentation : « Ça, c'est toi », la personnalisation du robot (couleur, accessoire, nom), puis les drones et leurs priorités. Ensuite la caméra montre la carte de loin, plonge vers le robot, et le brouillard se referme autour de la zone de départ (toucher l'écran passe l'animation).
+
+Pendant la partie, des **conseils** expliquent les débuts (charbon, foreuse, coffre, fer, Comptoir, Laboratoire, drones…). Chacun se valide tout seul quand on l'a fait, ou avec « Compris ». « Plus de conseils sur cette partie » les coupe pour cette partie ; le menu du jeu permet de les réactiver.
+
 ### Les gestes
 
 | Geste | Sans outil | Avec un outil |
@@ -50,7 +58,7 @@ Pour poser une machine, elle apparaît un peu au-dessus du doigt pour rester vis
 - **Arbre de déblocages** : cinq branches, Production (machines), Logistique (séparateur, tapis rapide et express, grand coffre…), Robot (deuxième et troisième drones…), Énergie et Modules. Chaque nœud s'ouvre à un palier et se paie en objets déposés au Laboratoire. Touche ton palier en haut à gauche pour l'ouvrir ; un point rouge signale qu'un nœud est prêt. Ceux marqués « Bientôt » arriveront avec les prochaines étapes.
 - **Bulle d'une machine** : elle montre ce que la machine attend en entrée et ce qu'elle renvoie en sortie, recette par recette.
 - **Carte infinie** générée par une graine (visible et copiable dans le menu), avec brouillard, biomes et filons pauvres, normaux ou riches.
-- **Sauvegarde** automatique dans le navigateur (IndexedDB), toutes les 10 secondes et à la fermeture. Les mises à jour gardent la partie.
+- **Sauvegarde** automatique dans le navigateur (IndexedDB), toutes les 10 secondes et à la fermeture, dans l'emplacement de la partie. Les mises à jour gardent la partie (et la relancent directement). L'ancienne partie unique est reprise dans le premier emplacement.
 - **Absence** : quand le jeu est fermé, l'usine tourne à 10 % de sa vitesse, sur 8 h au plus. Ce que les tapis livrent au Noyau, au Laboratoire et au Comptoir compte ; un écran au retour montre ce qui a été livré.
 - **Mise à jour** : le menu propose « Chercher une mise à jour ».
 
@@ -81,8 +89,8 @@ Chaque poussée sur `main` lance les tests puis publie `dist/` sur GitHub Pages 
 | `src/sim` | Simulation pure, sans rendu : usine, tapis, tracé au doigt, robot, drones, paliers, commandes |
 | `src/render` | Rendu PixiJS dans le style Pastel |
 | `src/input` | Gestes tactiles |
-| `src/ui` | Interface HTML (barre du haut, commande, outils, bulles, feuilles) |
-| `src/save` | Sauvegarde IndexedDB |
+| `src/ui` | Interface HTML (menu principal, présentation, conseils, barre du haut, outils, bulles, feuilles) |
+| `src/save` | Sauvegarde IndexedDB (3 emplacements) et codes d'export |
 | `tests` | Tests de la simulation |
 
 La simulation n'importe jamais PixiJS : elle se teste seule et pourra calculer la production hors ligne.

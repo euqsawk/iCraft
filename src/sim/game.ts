@@ -11,6 +11,7 @@ import { Inventory, type Slot } from './inventory.ts';
 import { RICHNESS_RATE } from '../world/world.ts';
 import { ALL_NODES, BASE_UNLOCKS, LAB_ITEMS, NODE, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 import { MAX_PALIER, palierMission } from '../data/paliers.ts';
+import { cleanLook, DEFAULT_LOOK, type RobotLook } from '../data/look.ts';
 
 /** Ce qu'un drone fait en premier ; ensuite il fait le reste dans l'ordre habituel. */
 export type DronePriority = 'carburant' | 'chantiers' | 'noyau' | 'laboratoire' | 'comptoir' | 'robot';
@@ -101,8 +102,11 @@ export interface OfflineReport {
   gained: Record<string, number>;
 }
 
+/** Conseils de début de partie : ceux déjà vus, et s'ils sont coupés pour cette partie. */
+export interface TipState { done: string[]; off: boolean }
+
 export interface GameSave {
-  v: 1 | 2 | 3 | 4;
+  v: 1 | 2 | 3 | 4 | 5;
   seed: string;
   time: number;
   money: number;
@@ -129,6 +133,10 @@ export interface GameSave {
   lab?: Record<string, number>;
   extraDrones?: number;
   priorities?: DronePriority[];
+  /** Apparence du robot, conseils et temps de jeu (depuis la version 5). */
+  look?: RobotLook;
+  tips?: TipState;
+  played?: number;
   /** Charbon et inventaires du robot et des drones (depuis la version 2). */
   crew?: {
     robot: { fuel: number; burn: number; inv: (Slot | null)[] };
@@ -160,6 +168,10 @@ export class Game {
   time = 0;
   /** Déblocages acquis. */
   unlocks = new Set<string>(BASE_UNLOCKS);
+  look: RobotLook = { ...DEFAULT_LOOK };
+  tips: TipState = { done: [], off: false };
+  /** Temps de jeu, en secondes. */
+  played = 0;
   /** Drones gagnés avec l'ancien système de commandes (anciennes parties). */
   extraDrones = 0;
   /** Chantier en cours du robot lui-même. */
@@ -937,6 +949,7 @@ export class Game {
 
   tick(dt: number): void {
     this.time += dt;
+    this.played += dt;
     this.tickRobot(dt);
     this.tickDrones(dt);
     this.factory.tick(dt);
@@ -947,7 +960,7 @@ export class Game {
   serialize(): GameSave {
     const r = this.robot;
     return {
-      v: 4, seed: this.world.seed, time: Date.now(), money: this.money, xp: 0, level: this.palier,
+      v: 5, seed: this.world.seed, time: Date.now(), money: this.money, xp: 0, level: this.palier,
       robot: { x: r.x, y: r.y },
       factory: this.factory.serialize(),
       pending: this.pending, fog: this.world.saveFog(),
@@ -956,6 +969,7 @@ export class Game {
       drones: this.droneCount,
       unlocks: [...this.unlocks],
       palier: this.palier, palierDone: this.palierDone, lab: this.lab, extraDrones: this.extraDrones,
+      look: this.look, tips: this.tips, played: Math.floor(this.played),
       crew: {
         robot: { fuel: r.fuel, burn: r.burn, inv: r.inv.save() },
         drones: this.drones.map((d) => ({ fuel: d.fuel, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, priority: d.priority })),
@@ -972,6 +986,10 @@ export class Game {
     this.order = s.order; this.choices = s.choices;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;
     if (this.order) { this.order.xp = 0; delete this.order.equip; }
+    this.look = cleanLook(s.look);
+    // Les parties d'avant les conseils n'en reçoivent pas.
+    this.tips = s.tips ? { done: [...(s.tips.done ?? [])], off: !!s.tips.off } : { done: [], off: true };
+    this.played = s.played ?? 0;
     if (s.v >= 4) {
       this.palier = s.palier ?? 1;
       this.palierDone = s.palierDone ?? {};

@@ -5,10 +5,12 @@ import 'pixi.js/unsafe-eval';
 import { PALETTE, RULES } from './config.ts';
 import { Gestures } from './input/gestures.ts';
 import { GameRenderer } from './render/renderer.ts';
-import { clearGame, loadGame, requestPersistence, saveGame } from './save/storage.ts';
+import { loadSlot, requestPersistence, saveSlot, setLastSlot, SLOTS } from './save/storage.ts';
 import { Game, type GameSave } from './sim/game.ts';
 import { Hud } from './ui/hud.ts';
 import { randomSeedCode } from './world/rng.ts';
+import { showTitle, type TitleChoice } from './ui/title.ts';
+import { showIntro } from './ui/intro.ts';
 
 const STEP = 1 / 60;
 
@@ -23,6 +25,40 @@ async function waitForFont(): Promise<void> {
 
 const bootStep = (t: string) => (window as unknown as { __bootStep?: (t: string) => void }).__bootStep?.(t);
 
+const RESUME = 'uf-reprendre';
+
+/** Le menu principal (ou la reprise directe après une mise à jour), puis la partie choisie. */
+async function chooseGame(loading: HTMLElement): Promise<{ game: Game; slot: number; fresh: boolean; savedAt: number }> {
+  let resume: number | null = null;
+  try {
+    const r = sessionStorage.getItem(RESUME);
+    sessionStorage.removeItem(RESUME);
+    if (r !== null) resume = Number(r);
+  } catch { /* rien */ }
+  for (;;) {
+    let choice: TitleChoice;
+    if (resume !== null && resume >= 0 && resume < SLOTS) {
+      choice = { kind: 'load', slot: resume };
+      resume = null;
+    } else {
+      loading.classList.add('hidden');
+      choice = await showTitle();
+      loading.classList.remove('hidden');
+    }
+    if (choice.kind === 'load') {
+      const saved = await Promise.race([loadSlot(choice.slot), new Promise<null>((r) => setTimeout(() => r(null), 4000))]);
+      if (!saved) continue;
+      return { game: new Game(saved.seed, saved as GameSave), slot: choice.slot, fresh: false, savedAt: saved.time };
+    }
+    loading.classList.add('hidden');
+    const look = await showIntro();
+    loading.classList.remove('hidden');
+    const game = new Game(choice.seed || randomSeedCode());
+    game.look = look;
+    return { game, slot: choice.slot, fresh: true, savedAt: Date.now() };
+  }
+}
+
 async function boot(): Promise<void> {
   bootStep('Jeu chargé, démarrage… (étape 3)');
   document.getElementById('boot-static')?.remove();
@@ -32,10 +68,10 @@ async function boot(): Promise<void> {
   document.body.append(loading);
 
   await waitForFont();
-  loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Lecture de la sauvegarde… (étape 4)</small>';
-  const saved = await Promise.race([loadGame(), new Promise<null>((r) => setTimeout(() => r(null), 4000))]);
-  loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Démarrage du rendu… (étape 5)</small>';
-  const game = saved ? new Game(saved.seed, saved as GameSave) : new Game(randomSeedCode());
+  (window as unknown as { __gameStarted?: boolean }).__gameStarted = true;
+  const { game, slot, fresh, savedAt } = await chooseGame(loading);
+  loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Démarrage du rendu…</small>';
+  await setLastSlot(slot);
 
   const app = new Application();
   await app.init({
@@ -50,17 +86,18 @@ async function boot(): Promise<void> {
   host.append(app.canvas);
 
   const renderer = new GameRenderer(app, game);
-  let resetting = false;
-  const save = () => (resetting ? Promise.resolve() : saveGame(game.serialize()));
+  let leaving = false;
+  const save = () => (leaving ? Promise.resolve() : saveSlot(slot, game.serialize()));
   const hud = new Hud(document.getElementById('hud')!, game, renderer, {
-    async newGame(seed: string) {
-      resetting = true;
-      await clearGame();
-      const fresh = new Game(seed || randomSeedCode());
-      await saveGame(fresh.serialize());
+    async toTitle() {
+      await save();
+      leaving = true;
       location.reload();
     },
-    save,
+    async beforeReload() {
+      await save();
+      try { sessionStorage.setItem(RESUME, String(slot)); } catch { /* rien */ }
+    },
   });
   new Gestures(app.canvas, renderer.camera, hud);
 
@@ -87,9 +124,8 @@ async function boot(): Promise<void> {
     if (document.hidden) { hiddenAt = Date.now(); save(); }
     else if (hiddenAt) { comeBack(Date.now() - hiddenAt); hiddenAt = 0; }
   });
-  window.addEventListener('pagehide', save);
+  window.addEventListener('pagehide', () => { save(); });
   loading.remove();
-  (window as unknown as { __gameStarted?: boolean }).__gameStarted = true;
   requestPersistence();
 
   if (__DEV__ || new URLSearchParams(location.search).has('debug')) {
@@ -97,11 +133,14 @@ async function boot(): Promise<void> {
     (window as unknown as Record<string, unknown>).__renderer = renderer;
     (window as unknown as Record<string, unknown>).__hud = hud;
   }
-  if (!saved) {
-    hud.toast('Envoie le robot sur le charbon : à l’arrêt, il mine tout seul', 'info');
+  if (fresh) {
+    // Arrivée : vue de loin, plongée vers le robot, puis le brouillard se referme.
+    hud.setIntro(true);
+    renderer.playIntro(() => { hud.setIntro(false); hud.tips.start(); }, RULES.revealStart, { x: 2, y: 2 });
     await save();
   } else {
-    comeBack(Date.now() - saved.time);
+    hud.tips.start();
+    comeBack(Date.now() - savedAt);
   }
 }
 
