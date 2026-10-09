@@ -10,8 +10,8 @@ export interface BeltItem {
   t: string;
   /** Avancée dans la case, de 0 (entrée) à 1 (sortie). */
   p: number;
-  /** Sur un séparateur : 1 si l'objet part par la dérivation. */
-  o?: 1;
+  /** Sur un séparateur : 1 si l'objet part par la dérivation, 2 par la seconde (vers une machine de l'autre côté). */
+  o?: 1 | 2;
   /** Arrivé par le côté : décalage (en cases) qui se résorbe en avançant, pour ne pas sauter au milieu. */
   sx?: number;
   sy?: number;
@@ -28,6 +28,8 @@ export interface Belt {
   items: BeltItem[];
   /** Séparateur : sens de la dérivation (les objets alternent entre `dir` et `split`). */
   split?: Dir;
+  /** Seconde dérivation, de l'autre côté, vers une machine collée : le tapis nourrit deux machines et continue tout droit. */
+  split2?: Dir;
   /** Alternance du séparateur. */
   toggle?: number;
   /** Liaisons de côté : les machines voisines dans ces sens y déposent leur production (sans case de tapis). */
@@ -176,6 +178,7 @@ export class Factory {
   private order: Belt[] = [];
   private nextOf = new Map<Belt, Next>();
   private splitOf = new Map<Belt, Next>();
+  private split2Of = new Map<Belt, Next>();
   private outputs = new Map<Machine, Belt[]>();
   private accepts = new Map<string, Set<string>>();
 
@@ -198,9 +201,9 @@ export class Factory {
     return this.electric.has(type);
   }
 
-  /** Courant demandé par la machine quand elle travaille (0 : elle ne se branche pas). */
+  /** Puissance demandée par la machine quand elle travaille, en kW (0 : elle ne se branche pas). */
   powerUse(m: Machine): number {
-    return this.electric.has(m.type) ? 1 : 0;
+    return this.electric.has(m.type) ? machineDef(m.type).kw ?? 100 : 0;
   }
 
   /** Branchée par câble sur un réseau dont un générateur tourne : elle se passe de charbon. */
@@ -286,9 +289,15 @@ export class Factory {
     return null;
   }
 
+  /** Seconde dérivation : vers une machine collée de l'autre côté. */
+  setSplit2(b: Belt, dir: Dir): void {
+    b.split2 = dir;
+    this.dirty = true;
+  }
+
   /** Retire la dérivation d'un séparateur. */
   clearSplit(b: Belt): void {
-    delete b.split; delete b.splitJump;
+    delete b.split; delete b.splitJump; delete b.split2;
     this.dirty = true;
   }
 
@@ -522,9 +531,29 @@ export class Factory {
    * à un arrêt de déchargement, ils y vident leur cargaison ; puis ils roulent jusqu'à l'arrêt suivant (en boucle).
    */
   private tickLines(dt: number): void {
+    // Un seul véhicule à quai par dépôt (ou gare) : les autres attendent leur tour sur la route, devant l'entrée.
+    const docked = new Set<number>();
+    for (const l of this.lines.values()) {
+      const n = l.stops.length;
+      const gap = l.kind === 'train' ? RULES.trainGap : RULES.truckGap;
+      for (const v of l.vehicles) {
+        if (v.moving) continue;
+        const id = l.stops[v.at % n].id;
+        if (!docked.has(id)) { docked.add(id); continue; }
+        // Déjà quelqu'un à quai : il recule dans la file, sur la route qui arrive.
+        const prevAt = (v.at - 1 + n) % n;
+        const prev = this.machines.get(l.stops[prevAt].id), here = this.machines.get(id);
+        if (!prev || !here) continue;
+        let pos = this.legLength(prev, here) - gap;
+        for (const o of l.vehicles) if (o !== v && o.moving && o.at === prevAt) pos = Math.min(pos, o.pos - gap);
+        v.at = prevAt; v.moving = true; v.t = 0;
+        v.pos = Math.max(0, pos);
+      }
+    }
     for (const l of this.lines.values()) {
       const cap = l.kind === 'train' ? RULES.trainLoad : RULES.truckLoad;
       const speed = (l.kind === 'train' ? RULES.trainSpeed : RULES.truckSpeed);
+      const gap = l.kind === 'train' ? RULES.trainGap : RULES.truckGap;
       const n = l.stops.length;
       for (const v of l.vehicles) {
         const stop = l.stops[v.at % n];
@@ -532,8 +561,18 @@ export class Factory {
         const next = this.machines.get(l.stops[(v.at + 1) % n].id);
         if (!here || !next) continue;
         if (v.moving) {
-          v.pos += speed * dt;
-          if (v.pos >= this.legLength(here, next)) { v.at = (v.at + 1) % n; v.pos = 0; v.moving = false; v.t = 0; }
+          const len = this.legLength(here, next);
+          // Il s'arrête derrière le véhicule qui le précède, et devant l'entrée si le quai est pris.
+          let limit = docked.has(next.id) ? len - gap : len;
+          for (const o of l.vehicles) {
+            if (o === v || !o.moving || o.at !== v.at) continue;
+            if (o.pos > v.pos || (o.pos === v.pos && l.vehicles.indexOf(o) < l.vehicles.indexOf(v))) limit = Math.min(limit, o.pos - gap);
+          }
+          v.pos = Math.max(v.pos, Math.min(v.pos + speed * dt, limit));
+          if (v.pos >= len - 1e-6 && !docked.has(next.id)) {
+            v.at = (v.at + 1) % n; v.pos = 0; v.moving = false; v.t = 0;
+            docked.add(next.id);
+          }
           continue;
         }
         if (!here.built) continue;
@@ -549,7 +588,7 @@ export class Factory {
           }
           const c = this.cargoCount(v);
           // Il part plein, ou après un moment s'il a quelque chose ; vide, il attend.
-          if (c >= cap || (c > 0 && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; }
+          if (c >= cap || (c > 0 && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; docked.delete(here.id); }
           if (c === 0) v.t = Math.min(v.t, 0.1);
         } else {
           let k = Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && this.storageRoom(here, x) > 0);
@@ -561,7 +600,7 @@ export class Factory {
             k = Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && this.storageRoom(here, x) > 0);
           }
           // Vide (ou le dépôt est plein depuis un moment) : il repart.
-          if (this.cargoCount(v) === 0 || (!k && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; }
+          if (this.cargoCount(v) === 0 || (!k && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; docked.delete(here.id); }
         }
       }
     }
@@ -797,10 +836,12 @@ export class Factory {
     for (const m of this.machines.values()) this.outputs.set(m, []);
 
     this.splitOf.clear();
+    this.split2Of.clear();
     for (const b of this.belts.values()) {
       const nxt = this.linkFor(b, b.dir);
       this.nextOf.set(b, nxt);
       if (b.split !== undefined) this.splitOf.set(b, this.linkFor(b, b.split));
+      if (b.split2 !== undefined) this.split2Of.set(b, this.linkFor(b, b.split2));
       // Sortie de machine : la case d'où vient le tapis est dans une machine.
       const fm = this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
       if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
@@ -861,8 +902,10 @@ export class Factory {
   /** Un objet entre dans une case : sur un séparateur, il prend une sortie sur deux. */
   private enter(b: Belt, it: BeltItem): void {
     if (b.split === undefined) { delete it.o; return; }
-    b.toggle = (b.toggle ?? 0) ^ 1;
-    if (b.toggle) it.o = 1; else delete it.o;
+    // Deux sorties : un sur deux ; trois sorties (deux machines de part et d'autre) : un sur trois.
+    const n = b.split2 !== undefined ? 3 : 2;
+    b.toggle = ((b.toggle ?? 0) + 1) % n;
+    if (b.toggle) it.o = b.toggle as 1 | 2; else delete it.o;
   }
 
   /** Sorties d'une machine (pour le rendu et les tests). */
@@ -1048,6 +1091,8 @@ export class Factory {
       const Lb = span(b), sp = speed / Lb, gp = gap / Lb;
       const main = this.nextOf.get(b) ?? null;
       const branch = b.split !== undefined ? this.splitOf.get(b) ?? null : null;
+      const branch2 = b.split2 !== undefined ? this.split2Of.get(b) ?? null : null;
+      const outs: Next[] = [main, branch, branch2];
       const items = b.items; // triés : le plus avancé en premier
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
@@ -1055,15 +1100,20 @@ export class Factory {
           const k = Math.hypot(it.sx ?? 0, it.sy ?? 0), nk = Math.max(0, k - speed);
           if (nk === 0) { delete it.sx; delete it.sy; } else { it.sx = (it.sx ?? 0) * nk / k; it.sy = (it.sy ?? 0) * nk / k; }
         }
-        // Sur un séparateur, si une sortie n'existe plus, l'objet prend l'autre.
-        if (it.o && !branch) delete it.o;
-        else if (!it.o && !main && branch) it.o = 1;
-        // Le premier objet d'un séparateur prend l'autre sortie si la sienne est bouchée.
-        if (i === 0 && main && branch) {
-          const want = it.o ? branch : main, other = it.o ? main : branch;
-          if (!this.canTake(want, it.t) && this.canTake(other, it.t)) { if (it.o) delete it.o; else it.o = 1; }
+        // Sur un séparateur, si une sortie n'existe plus, l'objet en prend une autre.
+        if (!outs[it.o ?? 0]) {
+          const k = outs.findIndex((o) => !!o);
+          if (k > 0) it.o = k as 1 | 2; else delete it.o;
         }
-        const nxt = it.o ? branch : main;
+        // Le premier objet d'un séparateur prend une autre sortie si la sienne est bouchée.
+        if (i === 0 && branch) {
+          const want = outs[it.o ?? 0];
+          if (!this.canTake(want, it.t)) {
+            const k = outs.findIndex((o) => !!o && o !== want && this.canTake(o, it.t));
+            if (k >= 0) { if (k > 0) it.o = k as 1 | 2; else delete it.o; }
+          }
+        }
+        const nxt = outs[it.o ?? 0];
         let limit: number;
         if (i > 0) {
           limit = items[i - 1].p - gp;
@@ -1092,7 +1142,7 @@ export class Factory {
               const moved: BeltItem = { t: it.t, p: entry };
               if (nxt.side) {
                 // Il arrive par le côté : il part du bord commun et glisse jusqu'au milieu.
-                const d = it.o && b.split !== undefined ? b.split : b.dir;
+                const d = it.o === 2 && b.split2 !== undefined ? b.split2 : it.o && b.split !== undefined ? b.split : b.dir;
                 moved.sx = -DX[d] * 0.5; moved.sy = -DY[d] * 0.5;
               }
               this.enter(target, moved);
@@ -1285,7 +1335,7 @@ export class Factory {
       cables: [...this.cables],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1296,10 +1346,11 @@ export class Factory {
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
     for (const k of s.cables ?? []) this.cables.add(k);
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
-      b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
+      b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
+      if (split2 !== undefined && split2 >= 0 && b.split !== undefined) b.split2 = split2 as Dir;
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       if (meter) this.addMeter(b);
@@ -1344,7 +1395,7 @@ export interface FactorySave {
   cables?: number[];
   lines?: Line[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;

@@ -33,8 +33,10 @@ export interface MachineDef {
   buildable: boolean;
   /** Phrase courte pour la palette. */
   hint: string;
-  /** Générateur : nombre de machines électriques qu'il alimente à plein. */
+  /** Générateur : puissance fournie, en kW. */
   supply?: number;
+  /** Puissance consommée quand elle travaille au courant, en kW (les grosses machines consomment plus). */
+  kw?: number;
 }
 
 const r = (inp: Record<string, number>, out: Record<string, number>, time: number): Recipe => ({ in: inp, out, time });
@@ -160,7 +162,7 @@ export const MACHINES: Record<string, MachineDef> = {
     hint: 'Garde 300 objets ; relie-la à une autre gare, un train fait les allers-retours',
   },
   generateur: {
-    id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 5,
+    id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 600,
     hint: 'Brûle du charbon et alimente les machines reliées par câble',
   },
   station: {
@@ -187,6 +189,13 @@ export const MACHINES: Record<string, MachineDef> = {
 
 /** Les machines qui peuvent marcher à l'électricité, une fois débloqué leur nœud « électrique » (branche Énergie). */
 export const ELECTRIC_BASES = ['foreuse', 'four', 'presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'broyeur', 'melangeur', 'raffinerie', 'fabricant', 'centrifugeuse'];
+
+/** Consommation au courant, en kW : de 60 kW pour une presse à 400 kW pour une centrifugeuse. */
+const KW: Record<string, number> = {
+  presse: 60, tour: 60, trefileuse: 60, foreuse: 90, four: 90, broyeur: 120, melangeur: 120,
+  assembleur: 150, haut_fourneau: 180, raffinerie: 250, fabricant: 300, centrifugeuse: 400,
+};
+for (const [id, kw] of Object.entries(KW)) if (MACHINES[id]) MACHINES[id].kw = kw;
 
 /** Anciennes sauvegardes : les « machines électriques » séparées redeviennent la machine d'origine. */
 export function baseType(id: string): string {

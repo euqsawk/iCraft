@@ -400,6 +400,10 @@ export class GameRenderer {
           const es = CELL / 2 + under(b, b.split);
           g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * es, p[1].y + DY[b.split] * es + dy);
         }
+        if (b.split2 !== undefined) {
+          const es = CELL / 2 + under(b, b.split2);
+          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split2] * es, p[1].y + DY[b.split2] * es + dy);
+        }
         // Liaison de côté avec une machine : un bout de tapis qui file sous elle.
         for (const fd of b.feeds ?? []) {
           if (!f.machineAt(b.x + DX[fd], b.y + DY[fd])) continue;
@@ -986,6 +990,7 @@ export class GameRenderer {
       const L = span(b);
       if (f.machineAt(b.x + DX[b.dir] * L, b.y + DY[b.dir] * L)) port(b, b.dir, true, L);
       if (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split])) port(b, b.split, true);
+      if (b.split2 !== undefined && f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2])) port(b, b.split2, true);
       // Sortie : le tapis part d'une machine.
       const back = (b.inDir + 2) % 4;
       if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
@@ -1029,9 +1034,9 @@ export class GameRenderer {
           x = bx + DX[belt.inDir] * t * CELL / 2; y = by + DY[belt.inDir] * t * CELL / 2;
         } else {
           const t = (p - 0.5) * 2;
-          const d = it.o && belt.split !== undefined ? belt.split : belt.dir;
+          const d = it.o === 2 && belt.split2 !== undefined ? belt.split2 : it.o && belt.split !== undefined ? belt.split : belt.dir;
           // Dérivation en pont : la seconde moitié file sur le tablier, par-dessus le tapis collé.
-          const reach = it.o && belt.splitJump ? 0.5 + belt.splitJump : 0.5;
+          const reach = it.o === 1 && belt.splitJump ? 0.5 + belt.splitJump : 0.5;
           x = bx + DX[d] * t * CELL * reach; y = by + DY[d] * t * CELL * reach;
           if (reach > 0.5) {
             const s = sprite(this.bridgePool, this.bridgeItemLayer, usedB++);

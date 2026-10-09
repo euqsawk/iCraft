@@ -78,6 +78,12 @@ export interface HudCallbacks {
   beforeReload(): Promise<void>;
 }
 
+
+/** Une puissance électrique : « 90 kW », « 1,2 MW ». */
+function kW(n: number): string {
+  return n >= 1000 ? `${(Math.round(n / 100) / 10).toString().replace('.', ',')}\u00a0MW` : `${Math.round(n)}\u00a0kW`;
+}
+
 export class Hud implements GestureHandlers {
   private root: HTMLElement;
   private game: Game;
@@ -970,8 +976,12 @@ export class Hud implements GestureHandlers {
         <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.length} ${ICONS.coinSm}</p>`;
       const feeders = (b.feeds ?? []).map((d) => f.machineAt(b.x + DX[d], b.y + DY[d])).filter((m): m is Machine => !!m);
       const fed = b.split !== undefined ? f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) : null;
+      const fed2 = b.split2 !== undefined ? f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2]) : null;
       const linked = feeders.length > 0 || !!fed;
-      const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre.</p>` : ''}`;
+      const fedText = fed && fed2
+        ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} et ${esc(machineDef(fed2.type).name.toLowerCase())} de part et d’autre, et continue tout droit : un objet sur trois pour chacun.</p>`
+        : fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre. Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.</p>` : '';
+      const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
       const actions = `${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
       if (!this.setPopover(`b${sel.x},${sel.y}`, info + linkInfo, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
@@ -1036,7 +1046,7 @@ export class Hud implements GestureHandlers {
           const rows = m.recipes.filter((r) => match([...Object.keys(r.in), ...Object.keys(r.out)]));
           if (!rows.length) continue;
           shown += rows.length;
-          const elec = g.factory.canPower(m.id) ? '<small class="rc-elec">aussi en électrique</small>' : '';
+          const elec = g.factory.canPower(m.id) ? `<small class="rc-elec">aussi au courant · ${kW(m.kw ?? 100)}</small>` : '';
           html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get(m.id)}" alt=""><b>${esc(m.name)}</b>${elec}</div><div class="recipes">${rows.map((r) => {
             const ins = Object.entries(r.in).map(([k, v]) => it(k, v)).join('<span class="arrow">+</span>');
             const outs = Object.entries(r.out).map(([k, v]) => it(k, v)).join('');
@@ -1065,16 +1075,18 @@ export class Hud implements GestureHandlers {
     const f = this.game.factory, def = machineDef(m.type), net = f.netOf(m);
     const bar = (pct: number, low: boolean, label: string, right: string) =>
       `<div class="gauge power${low ? ' low' : ''}"><span class="g-label">${ICONS.cable}${label}</span><span class="g-bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></span><b>${right}</b></div>`;
-    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.supply ? 'Aucun câble à 5 cases' : 'Elle marche au charbon tant qu’aucun câble n’est à 5 cases'} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
+    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.supply ? `Fournit ${kW(def.supply)}, mais aucun câble à 5 cases` : `Consomme ${kW(f.powerUse(m))} au courant ; elle marche au charbon tant qu’aucun câble n’est à 5 cases`} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
     if (def.supply) {
       const used = Math.min(net.demand, net.supply);
       const gens = net.gens.length;
-      return `${bar(net.supply ? (used / net.supply) * 100 : 0, false, 'Charge du réseau', `${fmtN(used)}/${fmtN(net.supply)}`)}
-        <p class="muted small">${net.users.length} machine${net.users.length > 1 ? 's' : ''} électrique${net.users.length > 1 ? 's' : ''} sur ce réseau${gens > 1 ? `, ${gens} générateurs` : ''}. Chaque générateur alimente ${def.supply} machines à plein ; il ne brûle du charbon que pour celles qui travaillent.</p>`;
+      const max = net.users.reduce((a, u) => a + f.powerUse(u), 0);
+      return `${bar(net.supply ? (used / net.supply) * 100 : 0, net.demand > net.supply, 'Charge du réseau', `${kW(net.demand)} / ${kW(net.supply)}`)}
+        <p class="muted small">${net.users.length} machine${net.users.length > 1 ? 's' : ''} branchée${net.users.length > 1 ? 's' : ''} (jusqu’à ${kW(max)} quand toutes travaillent)${gens > 1 ? `, ${gens} générateurs` : ''}. Chaque générateur fournit ${kW(def.supply)} ; il ne brûle du charbon que pour ce qui est consommé.</p>`;
     }
-    if (net.supply <= 0) return `${bar(0, true, 'Courant', '0 %')}<p class="muted small">Le réseau n’a pas de courant : ${net.gens.length ? 'son générateur n’a plus de charbon' : 'aucun générateur n’y est relié'}. En attendant, elle brûle son charbon.</p>`;
+    const use = `Consomme ${kW(f.powerUse(m))} quand elle travaille.`;
+    if (net.supply <= 0) return `${bar(0, true, 'Courant', '0 %')}<p class="muted small">${use} Le réseau n’a pas de courant : ${net.gens.length ? 'son générateur n’a plus de charbon' : 'aucun générateur n’y est relié'}. En attendant, elle brûle son charbon.</p>`;
     const pct = Math.round((m.power ?? 1) * 100);
-    return `${bar(pct, pct < 100, 'Courant', `${pct} %`)}${pct < 100 ? `<p class="muted small">Trop de machines pour ce réseau (${fmtN(net.demand)} pour ${fmtN(net.supply)}) : elles tournent moins vite. Ajoute un générateur.</p>` : ''}`;
+    return `${bar(pct, pct < 100, 'Courant', `${pct} %`)}<p class="muted small">${use}${pct < 100 ? ` Le réseau est trop chargé (${kW(net.demand)} demandés pour ${kW(net.supply)}) : les machines tournent moins vite. Ajoute un générateur.` : ''}</p>`;
   }
 
   /** Jauge de la case carburant ; s'il y a du carburant dedans (il brûle en premier), une petite pastille le dit. */

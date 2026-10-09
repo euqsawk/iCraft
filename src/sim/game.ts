@@ -980,8 +980,14 @@ export class Game {
   /** Le tapis nourrit la machine qu'il longe : un objet sur deux y entre (tout, si le tapis s'arrête là). */
   linkBeltToMachine(b: Belt, dir: Dir): boolean {
     const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);
-    if (!m || b.split !== undefined) return false;
-    this.factory.setSplit(b, dir);
+    if (!m || dir === b.dir || dir === b.split || dir === b.split2) return false;
+    // Le tapis nourrit déjà une machine d'un côté : il peut aussi nourrir celle de l'autre côté (un objet sur trois chacune).
+    if (b.split !== undefined) {
+      if (b.split2 !== undefined || b.splitJump || !this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) return false;
+      this.factory.setSplit2(b, dir);
+    } else {
+      this.factory.setSplit(b, dir);
+    }
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `Le tapis nourrit ${machineDef(m.type).name.toLowerCase()}`, tone: 'good' });
     return true;
@@ -990,6 +996,7 @@ export class Game {
   /** Coupe les liaisons d'un tapis avec les machines qu'il longe. */
   unlinkBelt(b: Belt): void {
     this.factory.clearFeeds(b);
+    if (b.split2 !== undefined) delete b.split2;
     if (b.split !== undefined && !b.splitJump && this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
       delete b.split;
       this.factory.markBuilt();

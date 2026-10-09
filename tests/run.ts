@@ -776,7 +776,18 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
   // Deux camions de plus : la ligne va plus vite.
   assert(g.addVehicle(l.id) && g.addVehicle(l.id) && l.vehicles.length === 3, 'trois camions');
   const before = b.inBuf.fer;
-  run(g, 30);
+  // Un seul camion à quai par dépôt : les autres attendent leur tour sur la route, sans se chevaucher.
+  let queued = 0;
+  for (let i = 0; i < 30 * 30; i++) {
+    g.tick(1 / 30);
+    const docks = l.vehicles.filter((v) => !v.moving).map((v) => l.stops[v.at].id);
+    assert(new Set(docks).size === docks.length, 'deux camions à quai au même dépôt');
+    for (const v of l.vehicles) for (const o of l.vehicles) {
+      if (v !== o && v.moving && o.moving && v.at === o.at) assert(Math.abs(v.pos - o.pos) >= RULES.truckGap - 0.01, `camions trop proches : ${v.pos} ${o.pos}`);
+    }
+    if (l.vehicles.some((v) => v.moving && v.pos > 0 && v.pos < g.factory.legLength(g.factory.machines.get(l.stops[v.at].id)!, g.factory.machines.get(l.stops[(v.at + 1) % 2].id)!) - 0.5 && g.factory.legLength(g.factory.machines.get(l.stops[v.at].id)!, g.factory.machines.get(l.stops[(v.at + 1) % 2].id)!) - v.pos <= RULES.truckGap + 0.01)) queued++;
+  }
+  assert(queued > 0, 'personne n’a attendu devant un dépôt');
   assert(b.inBuf.fer - before >= 3 * RULES.truckLoad, `plus vite : ${b.inBuf.fer - before} en 30 s`);
   // Troisième arrêt : A et B chargent, C décharge tout ; les camions passent par les trois.
   assert(g.addStop(l.id, c) && l.stops.length === 3 && !g.addStop(l.id, c), 'troisième arrêt');
@@ -841,6 +852,33 @@ test('gomme en zone : tout ce qui est dans le rectangle part, remboursé ; le No
   assert(g.factory.beltAt(12, 6) && !g.factory.beltAt(11, 6), 'le tapis hors zone reste');
   assert(g.money > m0, 'remboursé');
   assert(g.areaContents(-2, -2, 6, 6).machines.length === 0 && g.removeArea(-2, -2, 6, 6) === 0 && g.factory.machines.has(g.noyau.id), 'le Noyau reste');
+});
+test('un tapis nourrit deux machines de part et d’autre et continue tout droit', () => {
+  const g = new Game('TEST-S3');
+  g.money = 100000; g.world.reveal(6, 5, 20);
+  const src = g.placeMachine('coffre', 1, 5)!;
+  const end = g.placeMachine('coffre', 11, 5)!;
+  const up = g.placeMachine('coffre', 5, 4)!;
+  const down = g.placeMachine('coffre', 5, 6)!;
+  assert(g.placeBelts(trace(g, [[1.5, 5.5], [10.5, 5.5], [11.5, 5.5]]).result()), 'tapis');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const b = g.factory.beltAt(5, 5)!;
+  // Au doigt : depuis la case, vers la machine du haut, puis vers celle du bas.
+  const t1 = new BeltTracer(g.factory, 5.5, 5.5); t1.move(5.5, 4.4);
+  assert(t1.intoMachine === 3 && g.linkBeltToMachine(t1.splitFrom!, 3), 'nourrit le coffre du haut');
+  const t2 = new BeltTracer(g.factory, 5.5, 5.5); t2.move(5.5, 6.6);
+  assert(t2.splitFrom === b && t2.intoMachine === 1 && g.linkBeltToMachine(b, 1), 'et celui du bas');
+  assert(b.split === 3 && b.split2 === 1, 'deux dérivations');
+  g.factory.putInStorage(src, 'fer', 30);
+  run(g, 60);
+  const n = (m: typeof src) => m.inBuf.fer ?? 0;
+  assert(n(up) >= 9 && n(down) >= 9 && n(end) >= 9 && n(up) + n(down) + n(end) === 30, `répartition : haut ${n(up)}, bas ${n(down)}, tout droit ${n(end)}`);
+  const g2 = new Game('TEST-S3', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.beltAt(5, 5)!.split2 === 1, 'sauvegardé');
+  g.unlinkBelt(b);
+  assert(b.split === undefined && b.split2 === undefined, 'liaisons coupées');
 });
 console.log('Électricité');
 test('générateur, câbles et machines qui passent au courant', () => {
@@ -913,7 +951,16 @@ test('générateur, câbles et machines qui passent au courant', () => {
   four.inBuf = { fer: 10 };
   run(g, 2);
   const net = g.factory.netOf(four)!;
-  assert(net.users.length === 7 && net.demand === 7 && Math.abs(net.ratio - 5 / 7) < 1e-9, `réseau : ${net.users.length} machines, demande ${net.demand}, part ${net.ratio}`);
+  // En kW : 5 presses (60) et 2 fours (90) = 480 kW pour un générateur de 600 kW.
+  assert(net.users.length === 7 && net.demand === 5 * 60 + 2 * 90 && net.ratio === 1, `réseau : ${net.users.length} machines, demande ${net.demand} kW, part ${net.ratio}`);
+  // Un fabricant (300 kW) de plus : 780 kW demandés, chacun reçoit 600/780.
+  g.unlocks.add('fabricant'); g.unlocks.add('fabricant_elec'); apply();
+  const fab = g.placeMachine('fabricant', 16, 7)!;
+  fab.built = true; g.pending = []; g.factory.markBuilt();
+  fab.inBuf = { rotor: 5, stator: 5, vis: 5 };
+  run(g, 3);
+  const net2 = g.factory.netOf(four)!;
+  assert(net2.demand === 780 && Math.abs(net2.ratio - 600 / 780) < 1e-9, `grosse machine : ${net2.demand} kW, part ${net2.ratio}`);
   // Sauvegarde et gomme.
   const g2 = new Game('TEST-E1', JSON.parse(JSON.stringify(g.serialize())));
   assert(g2.factory.cables.size === g.factory.cables.size && g2.factory.hasCable(7, 4), 'câbles rechargés');
