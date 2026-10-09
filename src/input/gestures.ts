@@ -32,6 +32,9 @@ export class Gestures {
     el.addEventListener('pointerup', (e) => this.up(e, false));
     el.addEventListener('pointercancel', (e) => this.up(e, true));
     el.addEventListener('lostpointercapture', (e) => this.up(e, true));
+    // Un toucher sur la carte ne doit pas produire de « clic » après coup : sinon il tomberait
+    // sur le bouton d'une fenêtre qui vient de s'ouvrir sous le doigt (clic fantôme).
+    el.addEventListener('touchend', (e) => { if (e.cancelable) e.preventDefault(); }, { passive: false });
     // En quittant l'appli, iOS peut avaler la fin d'un toucher : on oublie tous les doigts.
     document.addEventListener('visibilitychange', () => this.reset());
     window.addEventListener('pagehide', () => this.reset());

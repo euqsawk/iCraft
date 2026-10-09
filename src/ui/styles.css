@@ -659,3 +659,13 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .scan-opt img { width: 26px; height: 26px; }
 .scan-opt small { font-size: 10.5px; font-weight: 800; }
 .scan-opt:active { background: var(--yellow); }
+.move-banner {
+  position: absolute; left: 12px; right: 12px; top: calc(var(--top) + 128px); max-width: 480px; margin: 0 auto; z-index: 3;
+  display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border-radius: 20px;
+  background: #fff; box-shadow: 0 5px 0 var(--shadow); border-left: 6px solid var(--coral); animation: tipIn .35s cubic-bezier(.2, 1.3, .4, 1);
+}
+.move-banner .mb-ico { width: 34px; height: 34px; border-radius: 12px; background: #FDE3DC; color: #C4553F; display: flex; align-items: center; justify-content: center; flex: none; }
+.move-banner div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.move-banner b { font-size: 14px; font-weight: 900; }
+.move-banner small { font-size: 11.5px; font-weight: 700; color: var(--ink2); line-height: 1.3; }
+.move-banner .btn { flex: none; padding: 0 14px; }

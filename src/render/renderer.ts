@@ -500,6 +500,8 @@ export class GameRenderer {
       if (!v) { v = this.buildMachineView(m); this.machineViews.set(m.id, v); }
       const def = machineDef(m.type);
       v.root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
+      // Pendant qu'on la déplace, la machine pâlit sous son fantôme.
+      v.root.alpha = m.id === this.movingId && this.preview?.kind === 'place' ? 0.4 : 1;
       if (m.made !== v.made) { v.made = m.made; v.pop = 1; }
       v.pop = Math.max(0, v.pop - dt * 4);
       const s = 1 + Math.sin(v.pop * Math.PI) * 0.16;
@@ -746,6 +748,8 @@ export class GameRenderer {
 
   /** Station dont on montre le rayon d'action (fenêtre ouverte). */
   rangeOf: number | null = null;
+  /** Machine qu'on est en train de déplacer. */
+  movingId: number | null = null;
 
   private drawRange(g: Graphics, cx: number, cy: number): void {
     const R = RULES.stationRange * CELL;
@@ -840,6 +844,28 @@ export class GameRenderer {
       g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.6 });
     } else if (pv?.kind === 'erase') {
       g.circle((pv.x + 0.5) * CELL, (pv.y + 0.5) * CELL, CELL * 0.8).fill({ color: PALETTE.coral, alpha: 0.25 }).stroke({ width: 2, color: PALETTE.coral });
+    }
+    // Machine qu'on déplace : un cadre corail qui pulse, et une croix de déplacement au-dessus.
+    if (this.movingId !== null) {
+      const m = this.game.factory.machines.get(this.movingId);
+      if (m) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.time * 6);
+        const pad = 6 + pulse * 4;
+        const x0 = m.x * CELL - pad, y0 = m.y * CELL - pad, w = m.w * CELL + pad * 2, hh = m.h * CELL + pad * 2;
+        g.roundRect(x0, y0, w, hh, 18).fill({ color: PALETTE.coral, alpha: 0.12 });
+        dashedPolyline(g, roundRectPoints(x0, y0, w, hh, 18), 7, 5, true);
+        g.stroke({ width: 3, color: PALETTE.coral, alpha: 0.6 + 0.4 * pulse });
+        const cx = (m.x + m.w / 2) * CELL, cy = m.y * CELL - pad - 28;
+        g.circle(cx, cy, 13).fill(PALETTE.coral).stroke({ width: 2.5, color: 0xffffff });
+        const a = 7, t = 2.6;
+        g.moveTo(cx - a, cy).lineTo(cx + a, cy).moveTo(cx, cy - a).lineTo(cx, cy + a)
+          .moveTo(cx - a + t, cy - t).lineTo(cx - a, cy).lineTo(cx - a + t, cy + t)
+          .moveTo(cx + a - t, cy - t).lineTo(cx + a, cy).lineTo(cx + a - t, cy + t)
+          .moveTo(cx - t, cy - a + t).lineTo(cx, cy - a).lineTo(cx + t, cy - a + t)
+          .moveTo(cx - t, cy + a - t).lineTo(cx, cy + a).lineTo(cx + t, cy + a - t)
+          .stroke({ width: 2, color: 0xffffff, cap: 'round', join: 'round' });
+        if (m.type === 'station' && !(this.preview?.kind === 'place')) this.drawRange(g, (m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
+      }
     }
     // Fenêtre d'une station ouverte : son rayon d'action.
     if (this.rangeOf !== null) {

@@ -400,7 +400,30 @@ export class Hud implements GestureHandlers {
     this.setTool(this.tool === t ? 'none' : t);
   }
 
+  /**
+   * Mode déplacement : la machine est entourée d'un cadre qui pulse, un bandeau dit quoi faire
+   * (avec Annuler), et son fantôme suit le doigt.
+   */
+  private startMove(m: Machine): void {
+    this.closeSheet();
+    this.setTool('move');
+    this.moving = m;
+    this.r.movingId = m.id;
+    this.root.querySelector('.move-banner')?.remove();
+    const def = machineDef(m.type);
+    const banner = h('div', 'move-banner');
+    banner.innerHTML = `<span class="mb-ico">${ICONS.move}</span><div><b>Déplacer : ${esc(def.name)}</b><small>Pose le doigt sur la carte et glisse-la à sa nouvelle place${def.kind === 'station' ? ' (son rayon d’action suit)' : ''}</small></div>`;
+    const cancel = h('button', 'btn', 'Annuler');
+    cancel.onclick = () => this.setTool('none');
+    banner.append(cancel);
+    this.root.append(banner);
+  }
+
   private setTool(t: Tool): void {
+    if (t !== 'move') {
+      this.r.movingId = null;
+      this.root.querySelector('.move-banner')?.remove();
+    }
     this.tool = t;
     for (const [id, b] of this.toolButtons) b.classList.toggle('active', id === t);
     this.palette.classList.toggle('hidden', t !== 'machine');
@@ -658,12 +681,7 @@ export class Hud implements GestureHandlers {
       if (!this.setPopover(`m${m.id}`, info, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeMachine(m); this.closePopover(); };
       const mv = p.querySelector<HTMLButtonElement>('[data-act="move"]');
-      if (mv) mv.onclick = () => {
-        this.closePopover();
-        this.setTool('move');
-        this.moving = m;
-        this.toast('Glisse la machine à sa nouvelle place', 'info');
-      };
+      if (mv) mv.onclick = () => { this.closePopover(); this.startMove(m); };
       p.querySelectorAll<HTMLButtonElement>('[data-choice]').forEach((b) => {
         b.onclick = () => { f.setChoice(m, b.dataset.choice!); this.renderPopover(); };
       });
@@ -1077,7 +1095,7 @@ export class Hud implements GestureHandlers {
         sheet.append(dep);
         const acts = h('div', 'row');
         const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-        mv.onclick = () => { close(); this.setTool('move'); this.moving = mm; this.toast('Glisse la station : son rayon d’action s’affiche', 'info'); };
+        mv.onclick = () => { close(); this.startMove(mm); };
         acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close));
         sheet.append(acts);
         return;
@@ -1119,7 +1137,7 @@ export class Hud implements GestureHandlers {
       sheet.append(dep);
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-      mv.onclick = () => { close(); this.setTool('move'); this.moving = mm; this.toast('Glisse la machine à sa nouvelle place', 'info'); };
+      mv.onclick = () => { close(); this.startMove(mm); };
       const del = this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
@@ -1186,7 +1204,7 @@ export class Hud implements GestureHandlers {
       sheet.append(info, this.depositCard(bin));
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-      mv.onclick = () => { close(); this.setTool('move'); this.moving = bin; this.toast('Glisse la Revente à sa nouvelle place', 'info'); };
+      mv.onclick = () => { close(); this.startMove(bin); };
       const del = this.deleteButton(bin, 'Supprimer', n ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
@@ -1219,7 +1237,7 @@ export class Hud implements GestureHandlers {
       if (bar) { bar.classList.add('floating'); sheet.append(bar); }
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-      mv.onclick = () => { close(); this.setTool('move'); this.moving = chest; this.toast('Glisse le coffre à sa nouvelle place', 'info'); };
+      mv.onclick = () => { close(); this.startMove(chest); };
       const del = this.deleteButton(chest, 'Supprimer', total ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
@@ -1340,6 +1358,10 @@ export class Hud implements GestureHandlers {
     // Le « clic » qui suit le toucher d'ouverture tombe sur le fond : on l'ignore.
     const opened = performance.now();
     back.onclick = (e) => { if (e.target === back && performance.now() - opened > 450) close(); };
+    // Et par sécurité : aucun clic dans la fenêtre pendant son ouverture (clic fantôme du toucher qui l'a ouverte).
+    back.addEventListener('click', (e) => {
+      if (performance.now() - opened < 450) { e.stopPropagation(); e.preventDefault(); }
+    }, true);
     build(sheet, close);
     this.root.append(back);
     this.overlay = back;
@@ -1390,7 +1412,7 @@ export class Hud implements GestureHandlers {
     if (!m) return null;
     const def = machineDef(type);
     const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-    mv.onclick = () => { close(); this.setTool('move'); this.moving = m; this.toast('Glisse le bâtiment à sa nouvelle place', 'info'); };
+    mv.onclick = () => { close(); this.startMove(m); };
     const wrap = h('div', 'card');
     wrap.innerHTML = `<p class="muted">${def.name} · un cadeau du Noyau : on peut le déplacer, pas le supprimer.</p>`;
     wrap.append(mv);
@@ -1676,7 +1698,7 @@ export class Hud implements GestureHandlers {
 
   /** Appelé à chaque image. */
   update(dt: number): void {
-    this.tips.setHidden(!!this.r.loupe || !!this.overlay || this.tree.isOpen || !!this.root.querySelector('.gift-card'));
+    this.tips.setHidden(!!this.r.loupe || !!this.overlay || this.tree.isOpen || !!this.root.querySelector('.gift-card, .move-banner'));
     this.tips.update(dt);
     this.popTimer += dt;
     this.miniTimer += dt;
