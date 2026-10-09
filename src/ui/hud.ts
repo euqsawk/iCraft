@@ -4,7 +4,7 @@ import { item, itemLabel, ITEM_LIST } from '../data/items.ts';
 import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import type { Machine } from '../sim/factory.ts';
+import { FLOW_WINDOW, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
@@ -1016,6 +1016,7 @@ export class Hud implements GestureHandlers {
         status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(mm.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
       }
       sheet.append(this.sheetHead(title, esc(status), close));
+      sheet.append(this.flowCard(mm));
       // Charbon et recettes
       const top = h('div', 'card mrec');
       top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, 10, g.factory.lowFuel(mm)) : ''}${this.recipesHtml(def, mm)}`;
@@ -1063,6 +1064,48 @@ export class Hud implements GestureHandlers {
       sheet.append(acts);
     }, true);
     this.sheetKind = 'machine';
+  }
+
+  /** Débit réel d'une machine : ce qui entre et ce qui sort, par seconde, avec le maximum possible. */
+  private flowCard(m: Machine): HTMLElement {
+    const g = this.game, def = machineDef(m.type);
+    const real = g.factory.flowOf(m);
+    // Le maximum : la recette en cours (ou la dernière), et le charbon brûlé en travaillant.
+    const maxIn: Record<string, number> = {}, maxOut: Record<string, number> = {};
+    if (def.kind === 'drill' && m.ore) maxOut[m.ore] = m.rate ?? 0;
+    if (def.kind === 'crafter' && def.recipes.length) {
+      const ri = m.craft ? m.craft.ri : ((m.rrRecipe - 1) % def.recipes.length + def.recipes.length) % def.recipes.length;
+      const rec = def.recipes[ri];
+      if (m.craft || m.made > 0 || Object.keys(real.in).length) {
+        for (const [k, v] of Object.entries(rec.in)) maxIn[k] = v / rec.time;
+        for (const [k, v] of Object.entries(rec.out)) maxOut[k] = v / rec.time;
+      }
+    }
+    if (def.coal) maxIn.charbon = (maxIn.charbon ?? 0) + 1 / RULES.coalMachineSeconds;
+    const rate = (x: number) => (x < 0.005 ? '0' : x >= 10 ? x.toFixed(1).replace('.', ',') : x.toFixed(2).replace('.', ','));
+    const chevron = (color: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>`;
+    const rows = (side: 'in' | 'out') => {
+      const r = side === 'in' ? real.in : real.out, mx = side === 'in' ? maxIn : maxOut;
+      const keys = [...new Set([...Object.keys(mx), ...Object.keys(r)])]
+        .sort((a, b) => Number(a === 'charbon') - Number(b === 'charbon'));
+      return keys.map((k) => {
+        const max = mx[k] ?? 0;
+        // La mesure peut dépasser d'un cheveu le maximum (bord de la fenêtre) : on la borne.
+        const v = max > 0 ? Math.min(r[k] ?? 0, max) : r[k] ?? 0;
+        const pct = max > 0 ? Math.min(100, (v / max) * 100) : v > 0 ? 100 : 0;
+        const fuel = side === 'in' && k === 'charbon' && !def.recipes.some((x) => x.in.charbon);
+        return `<div class="flow-row ${side}">
+          <span class="flow-badge">${chevron(side === 'in' ? '#F47C64' : '#2E6B51')}</span>
+          <div class="flow-main"><small>${side === 'in' ? 'Entrée' : 'Sortie'}${fuel ? ' · carburant' : ''}</small><span class="flow-item"><img src="${this.itemIcons.get(k)}" alt="">${esc(item(k).name)}</span></div>
+          <div class="flow-rate"><b>${rate(v)}</b><span>/ s</span>${max > 0 ? `<small>max ${rate(max)}</small>` : ''}</div>
+          <span class="flow-bar"><span style="width:${pct}%"></span></span>
+        </div>`;
+      }).join('');
+    };
+    const card = h('div', 'card flow');
+    const body = rows('in') + rows('out');
+    card.innerHTML = `<p class="muted">Débit réel · mesuré sur les ${FLOW_WINDOW} dernières secondes</p>${body || '<p class="muted small">Rien ne passe pour l’instant.</p>'}`;
+    return card;
   }
 
   /** La Revente en grand : contenu, passage du gros drone, et dépôt depuis l'inventaire. */

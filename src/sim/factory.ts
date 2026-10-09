@@ -58,7 +58,13 @@ export interface Machine {
   rrRecipe: number;
   /** Total fabriqué (statistiques, animation). */
   made: number;
+  /** Débit réel : ce qui est entré et sorti ces dernières secondes (non sauvegardé). */
+  flowEv?: { t: number; k: string; n: number; out: boolean }[];
+  flowSince?: number;
 }
+
+/** Fenêtre de mesure du débit réel, en secondes. */
+export const FLOW_WINDOW = 20;
 
 type Next =
   | { kind: 'belt'; belt: Belt; side: boolean }
@@ -416,6 +422,7 @@ export class Factory {
     if (m.burn <= 0) {
       if (m.fuel <= 0) return false;
       m.fuel--;
+      this.flow(m, 'charbon', 1, false);
       m.burn += RULES.coalMachineSeconds;
     }
     m.burn -= dt;
@@ -491,7 +498,32 @@ export class Factory {
     return true;
   }
 
+  /** Horloge de l'usine (pour mesurer les débits). */
+  clock = 0;
+
+  /** Note un objet qui entre dans une machine (consommé) ou qui en sort (fabriqué). */
+  private flow(m: Machine, k: string, n: number, out: boolean): void {
+    const ev = (m.flowEv ??= []);
+    if (m.flowSince === undefined) m.flowSince = this.clock;
+    ev.push({ t: this.clock, k, n, out });
+    while (ev.length && ev[0].t < this.clock - FLOW_WINDOW) ev.shift();
+  }
+
+  /** Débit réel d'une machine, en objets par seconde, sur les dernières secondes. */
+  flowOf(m: Machine): { in: Record<string, number>; out: Record<string, number> } {
+    const res = { in: {} as Record<string, number>, out: {} as Record<string, number> };
+    if (m.flowSince === undefined) return res;
+    const span = Math.max(4, Math.min(FLOW_WINDOW, this.clock - m.flowSince));
+    for (const e of m.flowEv ?? []) {
+      if (e.t < this.clock - FLOW_WINDOW) continue;
+      const r = e.out ? res.out : res.in;
+      r[e.k] = (r[e.k] ?? 0) + e.n / span;
+    }
+    return res;
+  }
+
   tick(dt: number): void {
+    this.clock += dt;
     this.refresh();
     const speed = RULES.beltSpeed * this.speedMult * dt;
     const gap = RULES.beltGap;
@@ -576,6 +608,7 @@ export class Factory {
     if (m.drillT >= 1) {
       m.drillT -= 1;
       m.outBuf[m.ore] = (m.outBuf[m.ore] ?? 0) + 1;
+      this.flow(m, m.ore, 1, true);
       m.made++;
     }
   }
@@ -600,7 +633,7 @@ export class Factory {
       for (const [k, v] of Object.entries(rec.out)) {
         if ((m.outBuf[k] ?? 0) + v > RULES.machineBuffer) { m.status = 'blocked'; m.craft.t = rec.time; return; }
       }
-      for (const [k, v] of Object.entries(rec.out)) m.outBuf[k] = (m.outBuf[k] ?? 0) + v;
+      for (const [k, v] of Object.entries(rec.out)) { m.outBuf[k] = (m.outBuf[k] ?? 0) + v; this.flow(m, k, v, true); }
       m.made++;
       m.craft = null;
     }
@@ -613,7 +646,7 @@ export class Factory {
       let ok = true;
       for (const [k, v] of Object.entries(rec.in)) if ((m.inBuf[k] ?? 0) < v) { ok = false; break; }
       if (!ok) continue;
-      for (const [k, v] of Object.entries(rec.in)) m.inBuf[k] -= v;
+      for (const [k, v] of Object.entries(rec.in)) { m.inBuf[k] -= v; this.flow(m, k, v, false); }
       m.craft = { ri, t: 0 };
       m.rrRecipe = ri + 1;
       m.status = 'working';
