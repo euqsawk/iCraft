@@ -407,7 +407,10 @@ test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => 
   g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
   const m = g.placeMachine('foreuse', -13, -5)!;
   run(g, 40);
-  assert(m.built && m.made === 0 && m.status === 'nofuel', `état ${m.status}`);
+  assert(m.built && m.made > 0, 'une foreuse neuve a 10 charbons : elle démarre seule');
+  m.fuel = 0; m.burn = 0; m.made = 0; m.outBuf = {};
+  run(g, 5);
+  assert(m.made === 0 && m.status === 'nofuel', `état ${m.status}`);
   g.factory.addFuel(m, 1);
   run(g, 12);
   assert(m.fuel === 0 && m.made >= 4 && m.made <= 6, `fabriqués avec 1 charbon : ${m.made}`);
@@ -419,6 +422,13 @@ test('le drone de départ dépose ses 10 charbons dans la foreuse qui clignote',
   const m = g.placeMachine('foreuse', -12, 9)!;
   run(g, 60);
   assert(m.built && m.made > 0 && m.fuel + (m.burn > 0 ? 1 : 0) >= 8, `charbon de la foreuse : ${m.fuel}, extraits ${m.made}`);
+});
+test('une foreuse neuve sort du chantier avec 10 charbons', () => {
+  const g = new Game('TEST-29');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const m = g.placeMachine('foreuse', -13, -5)!;
+  for (let i = 0; i < 3000 && !m.built; i++) g.tick(1 / 30);
+  assert(m.built && m.fuel + (m.burn > 0 ? 1 : 0) >= 9, `charbon à la sortie du chantier : ${m.fuel}`);
 });
 test('le robot mine à l’arrêt sur un filon et se ravitaille avec son charbon', () => {
   const g = new Game('TEST-22');
@@ -713,6 +723,19 @@ test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais d
 });
 
 
+test('une cargaison dont personne ne veut va au coffre, jamais dans un Four', () => {
+  const g = new Game('TEST-66');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const four = g.placeMachine('four', -9, -1)!;
+  const chest = g.placeMachine('coffre', -6, 3)!;
+  run(g, 40);
+  g.sendRobot(-7, 1.5);
+  run(g, 6);
+  g.drones[0].cargo = { t: 'cuivre', n: 8 };
+  run(g, 40);
+  assert(!(four.inBuf.cuivre > 0), `le Four a reçu du cuivre : ${four.inBuf.cuivre}`);
+  assert(chest.inBuf.cuivre === 8, `coffre : ${chest.inBuf.cuivre}`);
+});
 test('les drones ne se servent jamais dans l’inventaire du robot', () => {
   const g = new Game('TEST-65');
   g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;

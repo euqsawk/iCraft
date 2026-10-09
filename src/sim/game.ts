@@ -778,6 +778,8 @@ export class Game {
       const m = this.factory.machines.get(j.id);
       if (!m) return;
       m.built = true;
+      // Une foreuse neuve sort du chantier avec un plein de charbon : elle démarre tout de suite.
+      if (m.type === 'foreuse') m.fuel = Math.max(m.fuel, RULES.fuelStack);
       if (this.world.reveal(m.x + 1, m.y + 1, RULES.revealBuilding)) this.emit({ type: 'reveal' });
     }
     this.factory.markBuilt();
@@ -1188,23 +1190,20 @@ export class Game {
     return best;
   }
 
-  /** La machine à portée la plus proche du robot qui accepte cet objet ; sinon le coffre le plus proche. */
-  private destinationFor(item: string, chestOk = true): Machine | null {
-    let best: Machine | null = null, bd = Infinity;
+  /**
+   * Le coffre à portée le plus proche où ranger une cargaison dont personne ne veut.
+   * Jamais une machine : un drone ne glisse pas des objets au hasard dans un Four ou une Tour.
+   */
+  private destinationFor(item: string): Machine | null {
     let chest: Machine | null = null, cd = Infinity;
     for (const m of this.factory.machines.values()) {
-      if (!m.built) continue;
+      if (!m.built || machineDef(m.type).kind !== 'storage') continue;
       const c = this.center(m);
       const d = Math.hypot(c.x - this.anchor.x, c.y - this.anchor.y);
-      if (d > this.anchor.supply) continue;
-      const def = machineDef(m.type);
-      if (def.kind === 'crafter' && item !== 'charbon' && this.factory.canAccept(m, item)) {
-        if (d < bd) { bd = d; best = m; }
-      } else if (chestOk && def.kind === 'storage' && this.factory.storageRoom(m, item) > 0 && d < cd) {
-        cd = d; chest = m;
-      }
+      if (d > this.anchor.supply || d >= cd || this.factory.storageRoom(m, item) <= 0) continue;
+      cd = d; chest = m;
     }
-    return best ?? chest;
+    return chest;
   }
 
   /** Ce qui manque à un bâtiment, et le bâtiment lui-même. */

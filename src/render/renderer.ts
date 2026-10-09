@@ -86,10 +86,15 @@ export class GameRenderer {
   private groundLayer = new Container();
   private dots!: TilingSprite;
   private filonLayer = new Container();
-  private beltG = new Graphics();
+  /** Tapis découpés par morceaux de carte (ombres en dessous, bandes blanches au-dessus) : hors écran, on les cache. */
+  private beltShadow = new Container();
+  private beltTop = new Container();
+  private beltChunks = new Map<string, { s: Graphics; t: Graphics; x: number; y: number }>();
   private ghostBeltG = new Graphics();
   /** Raccords entre les tapis et les machines (au-dessus des machines). */
   private portG = new Graphics();
+  /** Bouts de tapis entre machines collées : par-dessus les machines, toujours visibles. */
+  private linkG = new Graphics();
   private machineLayer = new Container();
   private itemLayer = new Container();
   private actorLayer = new Container();
@@ -123,7 +128,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.beltG, this.ghostBeltG, this.itemLayer, this.machineLayer, this.portG, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.beltShadow, this.beltTop, this.ghostBeltG, this.itemLayer, this.machineLayer, this.linkG, this.portG, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -311,15 +316,29 @@ export class GameRenderer {
 
   private redrawBelts(): void {
     this.beltsDirty = false;
-    const g = this.beltG, gg = this.ghostBeltG;
-    g.clear(); gg.clear();
+    const gg = this.ghostBeltG;
+    gg.clear();
     const built: Belt[] = [], ghosts: Belt[] = [];
-    for (const b of this.game.factory.belts.values()) (b.built ? built : ghosts).push(b);
+    // Les tapis construits, rangés par morceau de carte.
+    const groups = new Map<string, Belt[]>();
+    for (const b of this.game.factory.belts.values()) {
+      if (!b.built) { ghosts.push(b); continue; }
+      built.push(b);
+      const k = chunkKey(Math.floor(b.x / CHUNK), Math.floor(b.y / CHUNK));
+      let l = groups.get(k);
+      if (!l) groups.set(k, l = []);
+      l.push(b);
+    }
+    for (const [k, c] of this.beltChunks) {
+      if (groups.has(k)) continue;
+      c.s.destroy(); c.t.destroy();
+      this.beltChunks.delete(k);
+    }
     // Là où le tapis touche une machine, il file sous elle (la machine est dessinée par-dessus) :
     // pas de bout arrondi qui laisserait un vide contre ses coins arrondis.
     const f = this.game.factory;
     const under = (b: Belt, d: number) => (f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
-    const line = (list: Belt[], dy: number) => {
+    const line = (g: Graphics, list: Belt[], dy: number) => {
       for (const b of list) {
         const p = this.beltPath(b);
         const back = (b.inDir + 2) % 4;
@@ -336,25 +355,36 @@ export class GameRenderer {
         }
       }
     };
-    line(built, 3);
-    g.stroke({ width: 14, color: PALETTE.shadow, cap: 'round', join: 'round' });
-    line(built, 0);
-    g.stroke({ width: 14, color: PALETTE.white, cap: 'round', join: 'round' });
-    // Rouleaux discrets : un chevron par case, dans le sens du tapis.
-    for (const b of built) {
-      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
-      const fx = DX[b.dir], fy = DY[b.dir];
-      const px = -fy, py = fx;
-      g.moveTo(cx - fx * 2 + px * 3.2, cy - fy * 2 + py * 3.2).lineTo(cx + fx * 1.2, cy + fy * 1.2).lineTo(cx - fx * 2 - px * 3.2, cy - fy * 2 - py * 3.2);
-    }
-    g.stroke({ width: 2, color: PALETTE.roller, cap: 'round', join: 'round' });
-    // Séparateurs : un losange blanc cerclé (comme sur la maquette).
-    for (const b of built) {
-      if (b.split === undefined) continue;
-      // Un tapis qui nourrit une machine par le côté n'est pas un vrai séparateur : pas de losange.
-      if (this.game.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) continue;
-      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
-      g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
+    for (const [k, list] of groups) {
+      let c = this.beltChunks.get(k);
+      if (!c) {
+        const [x, y] = k.split(',').map(Number);
+        c = { s: new Graphics(), t: new Graphics(), x, y };
+        this.beltShadow.addChild(c.s); this.beltTop.addChild(c.t);
+        this.beltChunks.set(k, c);
+      }
+      const gs = c.s, g = c.t;
+      gs.clear(); g.clear();
+      line(gs, list, 3);
+      gs.stroke({ width: 14, color: PALETTE.shadow, cap: 'round', join: 'round' });
+      line(g, list, 0);
+      g.stroke({ width: 14, color: PALETTE.white, cap: 'round', join: 'round' });
+      // Rouleaux discrets : un chevron par case, dans le sens du tapis.
+      for (const b of list) {
+        const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+        const fx = DX[b.dir], fy = DY[b.dir];
+        const px = -fy, py = fx;
+        g.moveTo(cx - fx * 2 + px * 3.2, cy - fy * 2 + py * 3.2).lineTo(cx + fx * 1.2, cy + fy * 1.2).lineTo(cx - fx * 2 - px * 3.2, cy - fy * 2 - py * 3.2);
+      }
+      g.stroke({ width: 2, color: PALETTE.roller, cap: 'round', join: 'round' });
+      // Séparateurs : un losange blanc cerclé (comme sur la maquette).
+      for (const b of list) {
+        if (b.split === undefined) continue;
+        // Un tapis qui nourrit une machine par le côté n'est pas un vrai séparateur : pas de losange.
+        if (f.machineAt(b.x + DX[b.split], b.y + DY[b.split])) continue;
+        const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+        g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
+      }
     }
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
     gg.stroke({ width: 11, color: PALETTE.white, alpha: 0.9, cap: 'round' });
@@ -367,9 +397,19 @@ export class GameRenderer {
    * Raccord propre entre un tapis et une machine : une petite bouche posée sur le bord de la machine,
    * avec un chevron dans le sens du flux (vers la machine pour une entrée, vers le tapis pour une sortie).
    */
+  /** Le milieu du bord commun entre deux machines collées, et le sens de a vers b. */
+  private linkEdge(a: Machine, b: Machine): { x: number; y: number; d: number } {
+    if (a.x + a.w === b.x || b.x + b.w === a.x) {
+      const d = a.x + a.w === b.x ? 0 : 2;
+      return { x: (d === 0 ? b.x : a.x) * CELL, y: (Math.max(a.y, b.y) + Math.min(a.y + a.h, b.y + b.h)) / 2 * CELL, d };
+    }
+    const d = a.y + a.h === b.y ? 1 : 3;
+    return { x: (Math.max(a.x, b.x) + Math.min(a.x + a.w, b.x + b.w)) / 2 * CELL, y: (d === 1 ? b.y : a.y) * CELL, d };
+  }
+
   private drawPorts(): void {
-    const g = this.portG;
-    g.clear();
+    const g = this.portG, lg = this.linkG;
+    g.clear(); lg.clear();
     const f = this.game.factory;
     // Raccord : un simple chevron là où le tapis touche la machine.
     const port = (b: Belt, d: number, into: boolean) => {
@@ -382,26 +422,25 @@ export class GameRenderer {
       g.moveTo(cx - ax * 2.5 * s + px * 4.5, cy - ay * 2.5 * s + py * 4.5).lineTo(cx + ax * 2 * s, cy + ay * 2 * s).lineTo(cx - ax * 2.5 * s - px * 4.5, cy - ay * 2.5 * s - py * 4.5)
         .stroke({ width: 2.6, color: into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
     };
-    // Liaisons directes entre machines collées : un petit pont blanc sur le bord commun, chevron vert.
+    // Liaisons directes entre machines collées : un bout de tapis sur le bord commun, chevron vert.
     for (const a of f.machines.values()) {
       for (const id of a.links ?? []) {
         const b = f.machines.get(id);
         if (!b || !f.touching(a, b)) continue;
-        let ex: number, ey: number, d: number;
-        if (a.x + a.w === b.x || b.x + b.w === a.x) {
-          d = a.x + a.w === b.x ? 0 : 2;
-          ex = (d === 0 ? b.x : a.x) * CELL;
-          ey = (Math.max(a.y, b.y) + Math.min(a.y + a.h, b.y + b.h)) / 2 * CELL;
-        } else {
-          d = a.y + a.h === b.y ? 1 : 3;
-          ey = (d === 1 ? b.y : a.y) * CELL;
-          ex = (Math.max(a.x, b.x) + Math.min(a.x + a.w, b.x + b.w)) / 2 * CELL;
-        }
+        const { x: ex, y: ey, d } = this.linkEdge(a, b);
         const ax = DX[d], ay = DY[d], px = -ay, py = ax;
         const ghost = !a.built || !b.built;
-        const w = ax === 0 ? 20 : 16, hh = ax === 0 ? 16 : 20;
-        g.roundRect(ex - w / 2, ey - hh / 2, w, hh, 6).fill({ color: PALETTE.white, alpha: ghost ? 0.6 : 1 }).stroke({ width: 1.5, color: PALETTE.shadow });
-        g.moveTo(ex - ax * 2.5 + px * 4.5, ey - ay * 2.5 + py * 4.5).lineTo(ex + ax * 2 , ey + ay * 2).lineTo(ex - ax * 2.5 - px * 4.5, ey - ay * 2.5 - py * 4.5)
+        // Un vrai bout de tapis (ombre + bande blanche) à cheval sur le bord commun, par-dessus les machines,
+        // court pour ne pas cacher leur dessin, puis le chevron vert par-dessus.
+        const L = 11, al = ghost ? 0.5 : 1;
+        lg.moveTo(ex - ax * L, ey - ay * L + 3).lineTo(ex + ax * L, ey + ay * L + 3)
+          .stroke({ width: 14, color: PALETTE.shadow, alpha: al, cap: 'butt' });
+        // Liseré de la couleur de l'ombre : le tapis se détache même sur le blanc des machines.
+        lg.moveTo(ex - ax * L, ey - ay * L).lineTo(ex + ax * L, ey + ay * L)
+          .stroke({ width: 17, color: PALETTE.shadow, alpha: al, cap: 'butt' });
+        lg.moveTo(ex - ax * (L + 1), ey - ay * (L + 1)).lineTo(ex + ax * (L + 1), ey + ay * (L + 1))
+          .stroke({ width: 13, color: PALETTE.white, alpha: al, cap: 'butt' });
+        g.moveTo(ex - ax * 2.5 + px * 4.5, ey - ay * 2.5 + py * 4.5).lineTo(ex + ax * 2, ey + ay * 2).lineTo(ex - ax * 2.5 - px * 4.5, ey - ay * 2.5 - py * 4.5)
           .stroke({ width: 2.6, color: PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
       }
     }
@@ -444,6 +483,15 @@ export class GameRenderer {
       }
     }
     for (let i = used; i < this.itemPool.length; i++) this.itemPool[i].visible = false;
+  }
+
+  /** Rectangle visible (en pixels du monde, avec marge), mis à jour à chaque image. */
+  private view = { x0: 0, y0: 0, x1: 0, y1: 0 };
+
+  /** Un objet centré en (x, y), de demi-taille r, est-il (au moins en partie) à l'écran ? */
+  private inView(x: number, y: number, r: number): boolean {
+    const v = this.view;
+    return x + r >= v.x0 && x - r <= v.x1 && y + r >= v.y0 && y - r <= v.y1;
   }
 
   // ---------- Machines ----------
@@ -523,6 +571,9 @@ export class GameRenderer {
       if (!v) { v = this.buildMachineView(m); this.machineViews.set(m.id, v); }
       const def = machineDef(m.type);
       v.root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
+      // Hors de l'écran : on ne la dessine pas, et on saute ses petites animations.
+      v.root.visible = this.inView(v.root.x, v.root.y, Math.max(def.w, def.h) * CELL);
+      if (!v.root.visible) { v.made = m.made; continue; }
       // Pendant qu'on la déplace, la machine pâlit sous son fantôme.
       v.root.alpha = m.id === this.movingId && this.preview?.kind === 'place' ? 0.4 : 1;
       if (m.made !== v.made) { v.made = m.made; v.pop = 1; }
@@ -564,6 +615,7 @@ export class GameRenderer {
           nv.ring.stroke({ width: 8, color: PALETTE.coral, cap: 'round', join: 'round' });
         }
       }
+      nv.root.visible = this.inView(nv.root.x, nv.root.y, 4 * CELL);
       nv.pulse = Math.max(0, nv.pulse - dt * 3);
       nv.root.scale.set(1 + nv.pulse * 0.04);
     }
@@ -572,7 +624,7 @@ export class GameRenderer {
     for (const m of this.game.factory.machines.values()) {
       if (m.type === 'revente') {
         const v = this.machineViews.get(m.id);
-        if (!v || !m.built) continue;
+        if (!v || !m.built || !v.root.visible) continue;
         const fill = Math.min(1, this.game.sellCount(m) / RULES.sellCap);
         if (Math.abs(fill - (v.fill ?? -1)) < 0.004) continue;
         v.fill = fill;
@@ -584,7 +636,7 @@ export class GameRenderer {
       }
       if (m.type !== 'comptoir') continue;
       const v = this.machineViews.get(m.id);
-      if (!v) continue;
+      if (!v || !v.root.visible) continue;
       v.badge.clear();
       if (m.built && !this.game.order) {
         const b = 1 + Math.sin(this.time * 5) * 0.12, x = CELL - 4, y = -CELL + 4;
@@ -676,6 +728,7 @@ export class GameRenderer {
         dv.position.set(d.x * CELL, d.y * CELL - 22 + Math.sin(this.time * 4 + i) * 2.5);
         dv.alpha = 1;
       }
+      dv.visible = this.inView(dv.x, dv.y, CELL);
       const cargo = dv.getChildByLabel('cargo') as Sprite;
       cargo.visible = !!d.cargo;
       if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
@@ -800,6 +853,7 @@ export class GameRenderer {
       if (!v) { v = this.makeDroneView(); this.stationViews.set(id, v); }
       v.position.set(d.x * CELL, d.y * CELL - (d.state === 'parked' ? 10 : 22) + (d.state === 'parked' ? 0 : Math.sin(this.time * 4 + id) * 2.5));
       v.alpha = d.state === 'parked' ? 0.75 : 1;
+      v.visible = this.inView(v.x, v.y, CELL);
       const cargo = v.getChildByLabel('cargo') as Sprite;
       cargo.visible = !!d.cargo;
       if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
@@ -1193,6 +1247,12 @@ export class GameRenderer {
     this.portG.visible = portA > 0;
     this.updateChunks();
     if (this.beltsDirty) this.redrawBelts();
+    this.view = cam.bounds(CELL * 3);
+    const span = CHUNK * CELL;
+    for (const c of this.beltChunks.values()) {
+      const vis = this.inView((c.x + 0.5) * span, (c.y + 0.5) * span, span / 2 + CELL);
+      c.s.visible = vis; c.t.visible = vis;
+    }
     this.updateMachines(dt);
     this.drawItems();
     this.updateActors();
