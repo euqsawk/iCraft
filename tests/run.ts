@@ -502,6 +502,18 @@ test('station : son drone travaille autour d’elle, loin du robot', () => {
   four.fuel = 0;
   run(g, 30);
   assert(four.fuel > 0, `le drone de la station aurait dû recharger le four (${four.fuel})`);
+  // Le Noyau est hors de son rayon : il n'y livre pas (les lingots restent dans le coffre).
+  const noyau = [...g.factory.machines.values()].find((m) => m.type === 'noyau')!;
+  assert(Math.hypot(noyau.x - st.x, noyau.y - st.y) > RULES.stationRange, 'Noyau loin de la station');
+  g.sendRobot(-10, 10);
+  run(g, 15);
+  const sd = g.stationDrones.get(st.id)!;
+  sd.cargo = null;
+  g.setStationPriorities(st.id, ['noyau', 'carburant', 'chantiers', 'laboratoire', 'comptoir']);
+  g.factory.putInStorage(chest, 'lingot_fer', 10);
+  let far = 0;
+  for (let i = 0; i < 30 * 20; i++) { g.tick(1 / 30); far = Math.max(far, Math.hypot(sd.x - (st.x + 1), sd.y - (st.y + 1))); }
+  assert(chest.inBuf.lingot_fer === 10 && far <= RULES.stationRange + 2, `lingots ${chest.inBuf.lingot_fer}, drone allé à ${far.toFixed(1)} cases`);
   // Sans coffre : il se sert dans la case carburant de la station (50 charbons), en lui en laissant 2.
   g.factory.takeFromStorage(chest, 'charbon', 1000);
   four.fuel = 0; four.burn = 0;

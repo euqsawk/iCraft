@@ -1443,9 +1443,11 @@ export class Game {
   }
 
   /** Ce qui manque à un bâtiment, et le bâtiment lui-même. */
-  private needsOf(cat: 'noyau' | 'laboratoire' | 'comptoir'): { m: Machine; needs: Record<string, number> } | null {
+  private needsOf(cat: 'noyau' | 'laboratoire' | 'comptoir', d: Drone): { m: Machine; needs: Record<string, number> } | null {
     const m = this.building(cat);
     if (!m) return null;
+    // Le drone d'une station ne quitte pas son rayon : le bâtiment doit y être.
+    if (d.station !== undefined && !this.near(this.center(m), this.anchor.supply)) return null;
     const needs = cat === 'noyau' ? this.noyauNeeds() : cat === 'laboratoire' ? this.labNeeds() : this.comptoirNeeds();
     return Object.keys(needs).length ? { m, needs } : null;
   }
@@ -1480,7 +1482,7 @@ export class Game {
           const job = this.freeJob();
           if (job) return { kind: 'build', job };
         } else {
-          const nb = this.needsOf(cat);
+          const nb = this.needsOf(cat, d);
           if (nb && nb.needs[cargo.t]) return { kind: 'deliver', id: nb.m.id };
         }
       }
@@ -1506,7 +1508,7 @@ export class Game {
         const job = this.freeJob();
         if (job) return { kind: 'build', job };
       } else {
-        const nb = this.needsOf(cat);
+        const nb = this.needsOf(cat, d);
         if (!nb) continue;
         for (const [item, need] of Object.entries(nb.needs)) {
           const src = this.sourceFor(d, item);
