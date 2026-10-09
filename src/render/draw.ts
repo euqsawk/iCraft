@@ -125,6 +125,19 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
   const ink = PALETTE.ink, coral = PALETTE.coral;
   const st = { width: 3, color: ink, cap: 'round' as const, join: 'round' as const };
   switch (type) {
+    case 'solaire': {
+      // Un panneau bleu quadrillé, et un petit soleil.
+      g.roundRect(-14, -9, 26, 20, 3).fill(0x3a6ea5).stroke({ width: 2.4, color: ink });
+      g.moveTo(-14, 1).lineTo(12, 1).moveTo(-5.3, -9).lineTo(-5.3, 11).moveTo(3.3, -9).lineTo(3.3, 11).stroke({ width: 1.4, color: 0xa9d0f5 });
+      g.circle(12, -11, 5).fill(PALETTE.yellow).stroke({ width: 1.6, color: ink });
+      break;
+    }
+    case 'batterie':
+      g.roundRect(-9, -12, 18, 25, 4).fill(0xffffff).stroke({ width: 2.6, color: ink });
+      g.rect(-4, -15, 8, 3).fill(ink);
+      g.roundRect(-6, 1, 12, 9, 2).fill(PALETTE.green);
+      drawBolt(g, 0, -4, 0.55);
+      break;
     case 'atelier': {
       // Un module : des carrés emboîtés (l'usine dans l'usine).
       g.roundRect(-16, -16, 32, 32, 7).stroke({ width: 3, color: ink });

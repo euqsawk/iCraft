@@ -899,6 +899,39 @@ test('le bout d’un tapis se tourne vers une machine collée, puis nourrit auss
   run(g, 30);
   assert((up.inBuf.fer ?? 0) === 5 && (down.inBuf.fer ?? 0) === 5, `répartition : ${up.inBuf.fer} / ${down.inBuf.fer}`);
 });
+test('jour et nuit ; panneaux solaires et batteries', () => {
+  const g = new Game('TEST-E3');
+  const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  g.money = 100000; g.world.reveal(8, 8, 25); g.drones[0].cargo = null;
+  assert(g.daylight === 1, 'le jeu commence de jour');
+  g.played = RULES.dayCycle * 0.8;
+  assert(g.daylight === 0, 'la nuit');
+  g.played = RULES.dayCycle * 0.64;
+  assert(g.daylight > 0 && g.daylight < 1, 'le crépuscule');
+  g.played = 0;
+  for (const id of ['generateur', 'batterie', 'solaire', 'presse', 'presse_elec']) g.unlocks.add(id);
+  apply();
+  const sol = g.placeMachine('solaire', 4, 4)!;
+  const bat = g.placeMachine('batterie', 7, 4)!;
+  const pr = g.placeMachine('presse', 10, 4)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  assert(g.placeCables([{ x: 8, y: 7 }]), 'câble');
+  pr.inBuf = { lingot_fer: 10 }; pr.fuel = 0;
+  run(g, 10);
+  const net = g.factory.netOf(pr)!;
+  assert(net && net.solar === 120 && (pr.power ?? 0) === 1 && (pr.outBuf.plaque_fer ?? 0) + pr.made > 0, `le soleil fait tourner la presse : ${net?.solar} kW`);
+  assert((bat.charge ?? 0) > 0, `le surplus charge la batterie : ${bat.charge}`);
+  // La nuit : le soleil s'arrête, la batterie prend le relais.
+  g.played = RULES.dayCycle * 0.75;
+  const c0 = bat.charge!;
+  pr.inBuf = { lingot_fer: 10 }; pr.outBuf = {};
+  run(g, 5);
+  assert(g.factory.netOf(pr)!.solar === 0 && (bat.charge ?? 0) < c0 && (pr.power ?? 0) > 0, `la batterie donne la nuit : ${c0} → ${bat.charge}`);
+  const g2 = new Game('TEST-E3', JSON.parse(JSON.stringify(g.serialize())));
+  assert(Math.abs((g2.factory.machines.get(bat.id)!.charge ?? 0) - bat.charge!) < 1, 'charge sauvegardée');
+  assert(!g.enterAtelier(sol), 'un panneau n’est pas un atelier');
+});
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {
   const g = new Game('TEST-M1');

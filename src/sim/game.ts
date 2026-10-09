@@ -194,7 +194,7 @@ export interface GameSave {
 }
 
 /** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte, avec le robot et les drones). */
-const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse']);
+const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie']);
 
 export class Game {
   readonly world: World;
@@ -1956,9 +1956,32 @@ export class Game {
     }
   }
 
+  /** Moment de la journée, de 0 à 1 (0 : le matin ; la nuit tombe vers 0,6). */
+  get dayTime(): number {
+    return (this.played % RULES.dayCycle) / RULES.dayCycle;
+  }
+
+  /** Lumière du jour : 1 en plein jour, 0 la nuit, entre les deux au crépuscule et à l'aube. */
+  get daylight(): number {
+    const t = this.dayTime;
+    if (t < 0.6) return 1;
+    if (t < 0.68) return 1 - (t - 0.6) / 0.08;
+    if (t < 0.92) return 0;
+    return (t - 0.92) / 0.08;
+  }
+
+  private wasNight: boolean | null = null;
+
   tick(dt: number): void {
     this.time += dt;
     this.played += dt;
+    const light = this.daylight;
+    this.factory.daylight = light;
+    const night = light < 0.5;
+    if (this.wasNight !== null && night !== this.wasNight && this.hasMachine('solaire') && [...this.factory.machines.values()].some((m) => m.type === 'solaire')) {
+      this.emit({ type: 'toast', text: night ? 'La nuit tombe : les panneaux solaires s’arrêtent, les batteries prennent le relais' : 'Le jour se lève : les panneaux solaires repartent', tone: 'info' });
+    }
+    this.wasNight = night;
     this.tickRobot(dt);
     this.tickDrones(dt);
     this.factory.tick(dt);

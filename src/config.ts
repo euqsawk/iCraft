@@ -54,6 +54,13 @@ export const RULES = {
   cableCost: 2,
   /** Un câble alimente les machines à cette distance (en cases, carré autour de chaque case de câble). */
   cableRange: 5,
+  /** Jour et nuit : durée d'un cycle complet (en secondes de jeu). */
+  dayCycle: 480,
+  /** Panneau solaire : puissance en plein jour (kW). */
+  solarKw: 120,
+  /** Batterie : ce qu'elle garde (kJ ; 36 000 kJ = 10 kWh) et ce qu'elle peut donner ou prendre à la fois (kW). */
+  batteryKj: 36000,
+  batteryKw: 200,
   /** Le carburant dure 5 fois plus longtemps qu'un charbon (et brûle en premier). */
   carburantMult: 5,
   /** Véhicules : prix d'une case de route ou de rail, prix du véhicule, charge, vitesse (cases par seconde). */

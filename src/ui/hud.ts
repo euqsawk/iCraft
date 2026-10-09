@@ -79,6 +79,11 @@ export interface HudCallbacks {
 }
 
 
+/** Une énergie gardée (kJ) en kWh : « 3,4 kWh ». */
+function kWh(kj: number): string {
+  return `${(Math.round(kj / 360) / 10).toString().replace('.', ',')}\u00a0kWh`;
+}
+
 /** Une puissance électrique : « 90 kW », « 1,2 MW ». */
 function kW(n: number): string {
   return n >= 1000 ? `${(Math.round(n / 100) / 10).toString().replace('.', ',')}\u00a0MW` : `${Math.round(n)}\u00a0kW`;
@@ -115,6 +120,8 @@ export class Hud implements GestureHandlers {
   private money!: HTMLElement;
   private orderCard!: HTMLButtonElement;
   private minimap!: HTMLCanvasElement;
+  private dayIcon!: HTMLElement;
+  private daySig = '';
   private palette!: HTMLElement;
   private toolButtons = new Map<string, HTMLButtonElement>();
   /** Options de l'outil en cours (Tapis / Sous-sol, Camion / Train). */
@@ -181,6 +188,9 @@ export class Hud implements GestureHandlers {
     this.minimap = h('canvas');
     this.minimap.width = 52 * 3; this.minimap.height = 52 * 3;
     mm.append(this.minimap);
+    // Jour et nuit : un petit soleil (ou une lune) dans le coin de la mini-carte.
+    this.dayIcon = h('span', 'daynight');
+    mm.append(this.dayIcon);
     // Toucher : la caméra se recentre sur le robot et le suit, jusqu'à ce qu'on la déplace.
     // Rester appuyé : la vraie carte.
     let pressT = 0, long = false;
@@ -364,7 +374,7 @@ export class Hud implements GestureHandlers {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator') return 'electricite';
+    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
     if (m.kind === 'storage' || m.kind === 'sell') return 'stockage';
     return 'outils';
@@ -378,7 +388,7 @@ export class Hud implements GestureHandlers {
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const inside = !!this.game.inAtelier;
-    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse'];
+    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie'];
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id))
       // Dans un atelier : ni foreuse, ni station, ni générateur, ni dépôt ; les entrées et sorties, seulement là.
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
@@ -621,7 +631,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && machineDef(m.type).kind === 'storage') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
-    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
+    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -1172,13 +1182,18 @@ export class Hud implements GestureHandlers {
     const f = this.game.view, def = machineDef(m.type), net = f.netOf(m);
     const bar = (pct: number, low: boolean, label: string, right: string) =>
       `<div class="gauge power${low ? ' low' : ''}"><span class="g-label">${ICONS.cable}${label}</span><span class="g-bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></span><b>${right}</b></div>`;
-    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.supply ? `Fournit ${kW(def.supply)}, mais aucun câble à 5 cases` : `Consomme ${kW(f.powerUse(m))} au courant ; elle marche au charbon tant qu’aucun câble n’est à 5 cases`} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
-    if (def.supply) {
+    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.kind === 'battery' ? 'Aucun câble à 5 cases' : def.supply ? `Fournit ${kW(def.supply)}, mais aucun câble à 5 cases` : `Consomme ${kW(f.powerUse(m))} au courant ; elle marche au charbon tant qu’aucun câble n’est à 5 cases`} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
+    if (def.supply || def.kind === 'battery') {
       const used = Math.min(net.demand, net.supply);
-      const gens = net.gens.length;
+      const gens = net.gens.filter((x) => machineDef(x.type).kind === 'generator').length;
       const max = net.users.reduce((a, u) => a + f.powerUse(u), 0);
+      const extra = `${net.gens.some((x) => machineDef(x.type).kind === 'solar') ? ` Soleil : ${kW(net.solar)}.` : ''}${net.capacity ? ` Batteries : ${kWh(net.stored)} sur ${kWh(net.capacity)}.` : ''}`;
+      if (def.kind !== 'generator') {
+        return `${bar(net.supply ? (used / net.supply) * 100 : 0, net.demand > net.supply, 'Charge du réseau', `${kW(net.demand)} / ${kW(net.supply)}`)}
+          <p class="muted small">${net.users.length} machine${net.users.length > 1 ? 's' : ''} branchée${net.users.length > 1 ? 's' : ''} (jusqu’à ${kW(max)}).${extra} Le soleil sert d’abord, puis les batteries, puis le charbon des générateurs.</p>`;
+      }
       return `${bar(net.supply ? (used / net.supply) * 100 : 0, net.demand > net.supply, 'Charge du réseau', `${kW(net.demand)} / ${kW(net.supply)}`)}
-        <p class="muted small">${net.users.length} machine${net.users.length > 1 ? 's' : ''} branchée${net.users.length > 1 ? 's' : ''} (jusqu’à ${kW(max)} quand toutes travaillent)${gens > 1 ? `, ${gens} générateurs` : ''}. Chaque générateur fournit ${kW(def.supply)} ; il ne brûle du charbon que pour ce qui est consommé.</p>`;
+        <p class="muted small">${net.users.length} machine${net.users.length > 1 ? 's' : ''} branchée${net.users.length > 1 ? 's' : ''} (jusqu’à ${kW(max)} quand toutes travaillent)${gens > 1 ? `, ${gens} générateurs` : ''}. Chaque générateur fournit ${kW(def.supply!)} ; il ne brûle du charbon que pour ce qui est consommé.${extra}</p>`;
     }
     const use = `Consomme ${kW(f.powerUse(m))} quand elle travaille.`;
     if (net.supply <= 0) return `${bar(0, true, 'Courant', '0 %')}<p class="muted small">${use} Le réseau n’a pas de courant : ${net.gens.length ? 'son générateur n’a plus de charbon' : 'aucun générateur n’y est relié'}. En attendant, elle brûle son charbon.</p>`;
@@ -1619,6 +1634,25 @@ export class Hud implements GestureHandlers {
         mv.onclick = () => { close(); this.startMove(mm); };
         const refund = def.cost + (inner ? g.contentValue(inner) : 0);
         acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${refund}`, 'Toucher encore : ce qu’il contient sera perdu', close));
+        sheet.append(acts);
+        return;
+      }
+      if (def.kind === 'solar' || def.kind === 'battery') {
+        const light = g.daylight;
+        const sub = def.kind === 'solar'
+          ? `${light > 0.95 ? 'Plein soleil' : light > 0.05 ? (g.dayTime > 0.5 ? 'Crépuscule' : 'Aube') : 'Nuit'} : ${kW((def.supply ?? 0) * light)} sur ${kW(def.supply ?? 0)}.`
+          : `${kWh(mm.charge ?? 0)} gardés sur ${kWh(RULES.batteryKj)} · ${kW(RULES.batteryKw)} au plus, en charge comme en décharge.`;
+        sheet.append(this.sheetHead(def.name, esc(`${status} ${sub}`), close));
+        const card = h('div', 'card');
+        const gaugeHtml = def.kind === 'battery'
+          ? `<div class="gauge power"><span class="g-label">${ICONS.cable}Charge</span><span class="g-bar"><span style="width:${((mm.charge ?? 0) / RULES.batteryKj) * 100}%"></span></span><b>${kWh(mm.charge ?? 0)}</b></div>`
+          : `<div class="gauge power"><span class="g-label">${ICONS.cable}Soleil</span><span class="g-bar"><span style="width:${light * 100}%"></span></span><b>${Math.round(light * 100)} %</b></div>`;
+        card.innerHTML = `${gaugeHtml}${this.powerCard(mm)}`;
+        sheet.append(card);
+        const acts = h('div', 'row');
+        const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+        mv.onclick = () => { close(); this.startMove(mm); };
+        acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close));
         sheet.append(acts);
         return;
       }
@@ -2535,6 +2569,17 @@ export class Hud implements GestureHandlers {
     if (this.miniTimer > 0.5) {
       this.miniTimer = 0;
       this.drawMinimap();
+      const light = this.game.daylight;
+      const sig = light > 0.5 ? 'sun' : 'moon';
+      if (sig !== this.daySig) {
+        this.daySig = sig;
+        this.dayIcon.innerHTML = sig === 'sun'
+          ? '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.4" fill="#FFC857" stroke="#2E3A4B" stroke-width="1.4"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1" stroke="#2E3A4B" stroke-width="1.4" stroke-linecap="round"/></svg>'
+          : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.8 2.2a6 6 0 1 0 3 9.6A5 5 0 0 1 10.8 2.2Z" fill="#F4E7B8" stroke="#2E3A4B" stroke-width="1.4" stroke-linejoin="round"/></svg>';
+        this.dayIcon.title = sig === 'sun' ? 'Jour' : 'Nuit';
+      }
+      // Le reste de la journée ou de la nuit, en couleur sur le bord de la pastille.
+      this.dayIcon.style.background = light > 0.5 ? '#FFF6D6' : '#1F2A3D';
     }
     // Inventaires en grand : la fabrication avance à chaque image, le reste chaque seconde.
     if (this.sheetKind && this.overlay) {

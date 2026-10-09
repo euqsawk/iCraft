@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery';
 
 export interface MachineDef {
   id: string;
@@ -180,6 +180,14 @@ export const MACHINES: Record<string, MachineDef> = {
   comptoir: {
     id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
     hint: 'Des commandes au choix, payées en pièces',
+  },
+  solaire: {
+    id: 'solaire', name: 'Panneau solaire', kind: 'solar', coal: false, w: 2, h: 2, cost: 180, unlock: 1, recipes: [], buildable: true, supply: 120,
+    hint: 'Du courant gratuit le jour (120 kW en plein soleil), rien la nuit',
+  },
+  batterie: {
+    id: 'batterie', name: 'Batterie', kind: 'battery', coal: false, w: 2, h: 2, cost: 150, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde le surplus du solaire (10 kWh) et le rend la nuit',
   },
   atelier: {
     id: 'atelier', name: 'Atelier', kind: 'atelier', coal: true, w: 3, h: 3, cost: 200, unlock: 1, recipes: [], buildable: true,

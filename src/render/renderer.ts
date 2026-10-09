@@ -166,6 +166,12 @@ export class GameRenderer {
   guides: { x0: number; y0: number; x1: number; y1: number }[] = [];
   /** L'usine affichée (la carte ou l'intérieur d'un atelier) et la pièce de l'atelier. */
   private shownFactory: unknown = null;
+  /** La nuit : un voile bleu nuit sur la carte, et la lumière des bâtiments et du robot (en mode additif). */
+  private nightLayer = new Container();
+  private nightDark = new Graphics();
+  private glowLayer = new Container();
+  private glowPool: Sprite[] = [];
+  private glowTex: Texture | null = null;
   private roomG = new Graphics();
   private roomSize = 0;
   /** Caméra de la carte, gardée pendant qu'on est dans un atelier. */
@@ -179,7 +185,9 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.nightLayer, this.fogLayer, this.overlay);
+    this.nightLayer.addChild(this.nightDark, this.glowLayer);
+    this.glowLayer.blendMode = 'add';
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -833,11 +841,11 @@ export class GameRenderer {
     }
     for (const m of f.machines.values()) {
       const def = machineDef(m.type);
-      const gen = def.kind === 'generator';
+      const gen = def.kind === 'generator' || def.kind === 'solar' || def.kind === 'battery';
       if (!gen && !f.powerUse(m)) continue;
       const net = f.netOf(m);
       const x = m.x * CELL + 2, y = m.y * CELL + 2, w = m.w * CELL - 4, hh = m.h * CELL - 4, r = 12;
-      const lit = !!net && net.supply > 0 && (gen ? m.status === 'working' || m.fuel > 0 || m.burn > 0 : (m.power ?? 0) > 0);
+      const lit = !!net && net.supply > 0 && (def.kind === 'solar' ? this.game.daylight > 0.05 : def.kind === 'battery' ? (m.charge ?? 0) > 0 : gen ? m.status === 'working' || m.fuel > 0 || m.burn > 0 : (m.power ?? 0) > 0);
       if (lit) {
         g.roundRect(x - 3, y - 3, w + 6, hh + 6, r + 3).fill({ color: PALETTE.yellow, alpha: 0.25 });
         g.roundRect(x, y, w, hh, r).fill({ color: PALETTE.yellow, alpha: 0.85 }).stroke({ width: 2.5, color: 0xffffff });
@@ -2003,6 +2011,63 @@ export class GameRenderer {
     g.rect(0, 0, S, S).fill(0xf4f7f2);
   }
 
+  /** Une tache de lumière douce (dégradé radial), pour les lampes de nuit. */
+  private glowTexture(): Texture {
+    if (this.glowTex) return this.glowTex;
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const ctx = c.getContext('2d')!;
+    const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 128);
+    this.glowTex = new Texture({ source: new CanvasSource({ resource: asCanvas(c) }) });
+    return this.glowTex;
+  }
+
+  /**
+   * Jour et nuit : la nuit, un voile bleu nuit couvre la carte ; chaque bâtiment construit éclaire autour de lui,
+   * et le robot porte sa lumière (un halo et le faisceau de sa lampe).
+   */
+  private drawNight(): void {
+    const night = this.game.inAtelier ? 0 : 1 - this.game.daylight;
+    this.nightLayer.visible = night > 0.01;
+    if (!this.nightLayer.visible) return;
+    const b = this.camera.bounds(CELL * 2);
+    this.nightDark.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill({ color: 0x0a1430, alpha: 0.7 * night });
+    const tex = this.glowTexture();
+    let used = 0;
+    const glow = (x: number, y: number, r: number, tint: number, a: number) => {
+      let sp = this.glowPool[used];
+      if (!sp) { sp = new Sprite(tex); sp.anchor.set(0.5); this.glowPool.push(sp); this.glowLayer.addChild(sp); }
+      used++;
+      sp.visible = true;
+      sp.position.set(x, y);
+      sp.width = sp.height = r * 2;
+      sp.tint = tint;
+      sp.alpha = a;
+    };
+    for (const m of this.game.view.machines.values()) {
+      if (!m.built) continue;
+      const cx = (m.x + m.w / 2) * CELL, cy = (m.y + m.h / 2) * CELL;
+      const r = Math.max(m.w, m.h) * CELL * 1.05 + CELL * 0.6;
+      if (!this.inView(cx, cy, r)) continue;
+      // Une machine qui travaille éclaire un peu plus, et sa lumière vacille à peine.
+      const busy = m.status === 'working' ? 1 : 0.7;
+      const flick = 0.94 + 0.06 * Math.sin(this.time * 3 + m.id);
+      glow(cx, cy, r, m.type === 'noyau' ? 0xff7a55 : 0xffa94a, 0.38 * night * busy * flick);
+    }
+    const rb = this.game.robot;
+    const rx = rb.x * CELL, ry = (rb.y - 0.6) * CELL;
+    glow(rx, ry, CELL * 2.6, 0xffe2a0, 0.45 * night);
+    // Le faisceau de sa lampe, devant lui.
+    const dir = Math.cos(rb.heading) < -0.1 ? -1 : 1;
+    for (let i = 1; i <= 3; i++) glow(rx + dir * CELL * (0.9 + i * 0.75), ry - CELL * 0.35 * i, CELL * (0.7 + i * 0.35), 0xfff6d8, (0.36 - i * 0.07) * night);
+    for (let i = used; i < this.glowPool.length; i++) this.glowPool[i].visible = false;
+  }
+
   render(dt: number): void {
     if (this.game.view !== this.shownFactory) this.switchView();
     this.drawRoom();
@@ -2047,6 +2112,7 @@ export class GameRenderer {
     this.updateActors();
     this.updateStationDrones();
     this.updatePickups();
+    this.drawNight();
     this.drawOverlay();
     this.renderLoupe();
   }

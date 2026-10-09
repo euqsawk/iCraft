@@ -87,6 +87,8 @@ export interface Machine {
   /** Électricité (non sauvegardé) : la machine a voulu travailler, et la part de courant qu'elle reçoit (0 à 1). */
   want?: boolean;
   power?: number;
+  /** Batterie : énergie gardée, en kJ. */
+  charge?: number;
   /** Atelier (module) : l'usine rangée dedans, et le côté de son intérieur en cases. */
   inner?: Factory;
   size?: number;
@@ -140,8 +142,13 @@ export interface PowerNet {
   id: number;
   gens: Machine[];
   users: Machine[];
-  /** Courant disponible et demandé (en machines), et la part servie (0 à 1). */
+  batteries: Machine[];
+  /** Courant disponible (charbon, soleil, batteries) et demandé, en kW, et la part servie (0 à 1). */
   supply: number;
+  /** Dont le soleil (kW), et l'énergie gardée dans les batteries (kJ) sur ce qu'elles peuvent garder. */
+  solar: number;
+  stored: number;
+  capacity: number;
   demand: number;
   ratio: number;
 }
@@ -748,7 +755,7 @@ export class Factory {
       for (let y = c.y - R; y <= c.y + R; y++) {
         for (let x = c.x - R; x <= c.x + R; x++) {
           const m = this.cellMachine.get(key(x, y));
-          if (m && !out.has(m) && (this.powerUse(m) || machineDef(m.type).supply)) out.add(m);
+          if (m && !out.has(m) && (this.powerUse(m) || machineDef(m.type).supply || machineDef(m.type).kind === 'battery')) out.add(m);
         }
       }
     }
@@ -786,7 +793,7 @@ export class Factory {
     const touch = new Map<Machine, number[]>();
     for (const m of this.machines.values()) {
       const def = machineDef(m.type);
-      if (!this.powerUse(m) && !def.supply) continue;
+      if (!this.powerUse(m) && !def.supply && def.kind !== 'battery') continue;
       let best = -1, bestD = Infinity;
       for (let y = m.y - R; y < m.y + m.h + R; y++) {
         for (let x = m.x - R; x < m.x + m.w + R; x++) {
@@ -804,7 +811,7 @@ export class Factory {
     const netFor = (k: number) => {
       const r = find(k);
       let n = byRoot.get(r);
-      if (!n) { n = { id: byRoot.size + 1, gens: [], users: [], supply: 0, demand: 0, ratio: 0 }; byRoot.set(r, n); }
+      if (!n) { n = { id: byRoot.size + 1, gens: [], users: [], batteries: [], supply: 0, demand: 0, ratio: 0, solar: 0, stored: 0, capacity: 0 }; byRoot.set(r, n); }
       return n;
     };
     this.netOfCable.clear();
@@ -813,24 +820,67 @@ export class Factory {
     for (const [m, found] of touch) {
       const n = netFor(found[0]);
       this.netOfMachine.set(m, n);
-      if (machineDef(m.type).supply) n.gens.push(m); else n.users.push(m);
+      const d = machineDef(m.type);
+      if (d.kind === 'battery') n.batteries.push(m); else if (d.supply) n.gens.push(m); else n.users.push(m);
     }
     this.nets = [...byRoot.values()];
   }
 
   /** Le courant de chaque réseau : les générateurs qui ont du charbon servent les machines qui veulent travailler. */
+  /** Lumière du jour (0 la nuit, 1 en plein jour) : les panneaux solaires en dépendent. */
+  daylight = 1;
+
+  /**
+   * Le courant de chaque réseau. Le soleil sert d'abord, puis les batteries, puis les générateurs au charbon
+   * (qui ne brûlent que pour ce qui reste). Le surplus du soleil recharge les batteries.
+   */
   private stepPower(dt: number): void {
     for (const m of this.machines.values()) m.power = 0;
     for (const n of this.nets) {
-      let supply = 0, demand = 0;
-      for (const g of n.gens) if (g.built && (g.fuel > 0 || g.burn > 0)) supply += machineDef(g.type).supply!;
+      let coal = 0, solar = 0, demand = 0, batt = 0, capacity = 0;
+      for (const g of n.gens) {
+        if (!g.built) continue;
+        const d = machineDef(g.type);
+        if (d.kind === 'solar') solar += d.supply! * this.daylight;
+        else if (g.fuel > 0 || g.burn > 0) coal += d.supply!;
+      }
+      for (const b of n.batteries) {
+        if (!b.built) continue;
+        capacity += RULES.batteryKj;
+        if (dt > 0) batt += Math.min(RULES.batteryKw, (b.charge ?? 0) / dt);
+      }
       for (const u of n.users) if (u.built && u.want) demand += this.powerUse(u);
+      const supply = solar + batt + coal;
       const ratio = supply <= 0 ? 0 : demand <= 0 ? 1 : Math.min(1, supply / demand);
       for (const u of n.users) u.power = ratio;
+      const used = Math.min(demand, supply);
+      const fromSolar = Math.min(used, solar);
+      const fromBatt = Math.min(used - fromSolar, batt);
+      const fromCoal = used - fromSolar - fromBatt;
+      // Batteries : elles se vident pour combler, ou se remplissent avec le surplus du soleil.
+      const spare = solar - fromSolar;
+      const live = n.batteries.filter((b) => b.built);
+      for (const b of live) {
+        let c = b.charge ?? 0;
+        if (fromBatt > 0 && batt > 0) { const k = Math.min(RULES.batteryKw, c / Math.max(dt, 1e-9)) / batt; c -= fromBatt * k * dt; b.status = 'working'; }
+        else if (spare > 0 && c < RULES.batteryKj) { c += Math.min(RULES.batteryKw, spare / live.length) * dt; b.status = 'working'; }
+        else b.status = 'idle';
+        b.charge = Math.max(0, Math.min(RULES.batteryKj, c));
+      }
       n.supply = supply; n.demand = demand; n.ratio = ratio;
-      // Chaque générateur brûle selon la charge du réseau.
-      const load = supply > 0 ? Math.min(1, demand / supply) : 0;
-      for (const g of n.gens) this.tickGenerator(g, load, dt);
+      n.solar = solar; n.stored = live.reduce((a, b) => a + (b.charge ?? 0), 0); n.capacity = capacity;
+      // Chaque générateur brûle selon ce qui lui reste à fournir.
+      const load = coal > 0 ? Math.min(1, fromCoal / coal) : 0;
+      for (const g of n.gens) {
+        if (machineDef(g.type).kind === 'solar') g.status = this.daylight > 0.05 ? 'working' : 'idle';
+        else this.tickGenerator(g, load, dt);
+      }
+    }
+    for (const m of this.machines.values()) {
+      const k = machineDef(m.type).kind;
+      if (!m.built || this.netOfMachine.has(m)) continue;
+      if (k === 'solar') m.status = 'idle';
+      if (k === 'battery') m.status = 'idle';
     }
     // Un générateur sans câble ne sert à rien.
     for (const m of this.machines.values()) {
@@ -1478,6 +1528,7 @@ export class Factory {
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
+        ...(m.charge ? { charge: Math.round(m.charge) } : {}),
         ...(m.inner ? { inner: m.inner.serialize(), size: m.size, ore: m.ore, rate: m.rate } : m.ore && this.freeEnergy ? { ore: m.ore, rate: m.rate } : {}),
       })),
     };
@@ -1511,6 +1562,7 @@ export class Factory {
       if (sm.links?.length) m.links = [...sm.links];
       // Dans un atelier, une foreuse garde le filon d'où elle vient.
       if (sm.ore && !m.ore) { m.ore = sm.ore; m.rate = sm.rate; }
+      if (sm.charge) m.charge = sm.charge;
       if (sm.inner) this.makeInner(m, sm.size ?? 20).load(sm.inner);
     }
     this.nextId = Math.max(this.nextId, s.nextId);
@@ -1543,7 +1595,7 @@ export interface FactorySave {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
-    inner?: FactorySave; size?: number; ore?: string; rate?: number;
+    inner?: FactorySave; size?: number; ore?: string; rate?: number; charge?: number;
   }[];
 }
 
