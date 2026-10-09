@@ -25,8 +25,8 @@ export interface Belt {
   split?: Dir;
   /** Alternance du séparateur. */
   toggle?: number;
-  /** Liaison de côté : la machine voisine dans ce sens y dépose sa production (sans case de tapis). */
-  feed?: Dir;
+  /** Liaisons de côté : les machines voisines dans ces sens y déposent leur production (sans case de tapis). */
+  feeds?: Dir[];
 }
 
 export type MachineStatus = 'idle' | 'working' | 'blocked' | 'nofuel' | 'noinput' | 'noore';
@@ -254,8 +254,15 @@ export class Factory {
   }
 
   /** Relie une machine voisine au côté d'un tapis : elle y dépose sa production. */
-  setFeed(b: Belt, dir: Dir | undefined): void {
-    if (dir === undefined) delete b.feed; else b.feed = dir;
+  addFeed(b: Belt, dir: Dir): void {
+    if (!b.feeds?.includes(dir)) b.feeds = [...(b.feeds ?? []), dir];
+    this.dirty = true;
+  }
+
+  /** Coupe les liaisons de côté d'un tapis (toutes, ou une seule). */
+  clearFeeds(b: Belt, dir?: Dir): void {
+    if (dir === undefined) delete b.feeds;
+    else { b.feeds = (b.feeds ?? []).filter((d) => d !== dir); if (!b.feeds.length) delete b.feeds; }
     this.dirty = true;
   }
 
@@ -301,9 +308,9 @@ export class Factory {
       const fm = this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
       if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
       // Liaison de côté : la machine voisine dépose au milieu de la case.
-      if (b.feed !== undefined) {
-        const lm = this.machineAt(b.x + DX[b.feed], b.y + DY[b.feed]);
-        if (lm && lm !== fm && !(nxt?.kind === 'machine' && nxt.machine === lm)) this.outputs.get(lm)!.push(b);
+      for (const fd of b.feeds ?? []) {
+        const lm = this.machineAt(b.x + DX[fd], b.y + DY[fd]);
+        if (lm && lm !== fm && !(nxt?.kind === 'machine' && nxt.machine === lm) && !this.outputs.get(lm)!.includes(b)) this.outputs.get(lm)!.push(b);
       }
     }
 
@@ -628,7 +635,7 @@ export class Factory {
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
-      const side = b.feed !== undefined && this.machineAt(b.x + DX[b.feed], b.y + DY[b.feed]) === m && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
+      const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
       if (side) {
         if (!this.roomAt(b, 0.5)) continue;
       } else {
@@ -652,7 +659,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feed ?? -1]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made,
@@ -666,7 +673,10 @@ export class Factory {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: 1 as const } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
-      if (feed !== undefined && feed >= 0) b.feed = feed as Dir;
+      // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
+      if (feed !== undefined && feed >= 0) {
+        b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
+      }
     }
     this.nextId = 1;
     for (const sm of s.machines) {

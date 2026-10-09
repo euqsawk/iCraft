@@ -292,7 +292,36 @@ test('relier une machine au tapis qui la longe, sans nouvelle case', () => {
   assert((chest.inBuf.verre ?? 0) === 5, `coffre ${JSON.stringify(chest.inBuf)}`);
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
-  assert(g2.factory.beltAt(6, 8)!.feed === 3, 'liaison sauvegardée');
+  assert(JSON.stringify(g2.factory.beltAt(6, 8)!.feeds) === '[3]', 'liaison sauvegardée');
+});
+
+test('un tapis entre deux machines : relié des deux côtés, et il peut nourrir une machine', () => {
+  const g = new Game('TEST-17');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  const haut = g.placeMachine('four', 6, 6)!; // au-dessus du tapis
+  const bas = g.placeMachine('four', 6, 9)!; // en dessous
+  const chest = g.placeMachine('coffre', 14, 8)!;
+  assert(g.placeBelts(trace(g, [[4.5, 8.5], [12.5, 8.5], [13.5, 8.5]]).result()), 'tapis');
+  run(g, 50);
+  const belt = g.factory.beltAt(6, 8)!;
+  const t1 = new BeltTracer(g.factory, 6.5, 7.5); t1.move(6.6, 8.6);
+  const t2 = new BeltTracer(g.factory, 6.5, 9.5); t2.move(6.6, 8.4);
+  assert(t1.linkBelt === belt && t2.linkBelt === belt, 'deux liaisons proposées');
+  g.linkMachineToBelt(belt, t1.linkDir!); g.linkMachineToBelt(belt, t2.linkDir!);
+  assert(JSON.stringify([...belt.feeds!].sort()) === '[1,3]', `liaisons ${belt.feeds}`);
+  haut.outBuf.verre = 3; bas.outBuf.verre = 3;
+  run(g, 25);
+  assert((chest.inBuf.verre ?? 0) === 6, `coffre ${JSON.stringify(chest.inBuf)}`);
+  // Dans l'autre sens : depuis le tapis vers la machine du bas, le tapis la nourrit.
+  g.unlinkBelt(belt);
+  const belt2 = g.factory.beltAt(7, 8)!;
+  const t3 = new BeltTracer(g.factory, 7.5, 8.5); t3.move(7.5, 9.6);
+  assert(t3.splitFrom === belt2 && t3.intoMachine === 1, `vers la machine : ${t3.intoMachine}`);
+  assert(g.linkBeltToMachine(belt2, 1), 'liaison tapis → machine');
+  for (let i = 0; i < 4; i++) belt.items.push({ t: 'fer', p: 0.1 * (3 - i) });
+  belt.items.sort((a, c) => c.p - a.p);
+  run(g, 10);
+  assert((bas.inBuf.fer ?? 0) + bas.made > 0, `la machine du bas n'a rien reçu : ${JSON.stringify(bas.inBuf)}`);
 });
 
 console.log('Charbon');

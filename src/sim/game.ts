@@ -671,14 +671,29 @@ export class Game {
   linkMachineToBelt(b: Belt, dir: Dir): boolean {
     const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m) return false;
-    this.factory.setFeed(b, dir);
+    this.factory.addFeed(b, dir);
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${machineDef(m.type).name} reliée au tapis`, tone: 'good' });
     return true;
   }
 
+  /** Le tapis nourrit la machine qu'il longe : un objet sur deux y entre (tout, si le tapis s'arrête là). */
+  linkBeltToMachine(b: Belt, dir: Dir): boolean {
+    const m = this.factory.machineAt(b.x + DX[dir], b.y + DY[dir]);
+    if (!m || b.split !== undefined) return false;
+    this.factory.setSplit(b, dir);
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `Le tapis nourrit ${machineDef(m.type).name.toLowerCase()}`, tone: 'good' });
+    return true;
+  }
+
+  /** Coupe les liaisons d'un tapis avec les machines qu'il longe. */
   unlinkBelt(b: Belt): void {
-    this.factory.setFeed(b, undefined);
+    this.factory.clearFeeds(b);
+    if (b.split !== undefined && this.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
+      delete b.split;
+      this.factory.markBuilt();
+    }
     this.emit({ type: 'factory' });
   }
 

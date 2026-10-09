@@ -25,6 +25,8 @@ export class BeltTracer {
   /** Depuis une machine vers un tapis qui la longe : une liaison de côté, sans nouvelle case. */
   linkBelt: Belt | null = null;
   linkDir: Dir | null = null;
+  /** Depuis un tapis vers une machine qu'il longe : le tapis la nourrit par le côté. */
+  intoMachine: Dir | null = null;
   readonly extend: Belt | null = null;
   /** Tapis existant d'où part une dérivation (il devient un séparateur). */
   readonly splitFrom: Belt | null = null;
@@ -85,8 +87,10 @@ export class BeltTracer {
       const dx = fx - (sb.x + 0.5), dy = fy - (sb.y + 0.5);
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.8) return;
       const d: Dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
+      this.intoMachine = null;
       if (d === sb.dir || d === opposite(sb.inDir)) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
+      if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
       if (!this.usable(x, y)) { this.blocked = true; return; }
       this.startDir = d;
       this.cells.push({ x, y });

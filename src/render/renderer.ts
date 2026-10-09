@@ -322,6 +322,11 @@ export class GameRenderer {
         if (b.split !== undefined) {
           g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * CELL / 2, p[1].y + DY[b.split] * CELL / 2 + dy);
         }
+        // Liaison de côté avec une machine : un bout de tapis jusqu'à son bord.
+        for (const fd of b.feeds ?? []) {
+          if (!this.game.factory.machineAt(b.x + DX[fd], b.y + DY[fd])) continue;
+          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[fd] * CELL / 2, p[1].y + DY[fd] * CELL / 2 + dy);
+        }
       }
     };
     line(built, 3);
@@ -339,6 +344,8 @@ export class GameRenderer {
     // Séparateurs : un losange blanc cerclé (comme sur la maquette).
     for (const b of built) {
       if (b.split === undefined) continue;
+      // Un tapis qui nourrit une machine par le côté n'est pas un vrai séparateur : pas de losange.
+      if (this.game.factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])) continue;
       const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
       g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
     }
@@ -376,7 +383,7 @@ export class GameRenderer {
       const back = (b.inDir + 2) % 4;
       if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
       // Liaison de côté : la machine voisine dépose sur ce tapis.
-      if (b.feed !== undefined && b.feed !== back && f.machineAt(b.x + DX[b.feed], b.y + DY[b.feed])) port(b, b.feed, false);
+      for (const fd of b.feeds ?? []) if (fd !== back && f.machineAt(b.x + DX[fd], b.y + DY[fd])) port(b, fd, false);
     }
   }
 

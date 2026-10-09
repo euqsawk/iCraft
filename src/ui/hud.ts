@@ -535,6 +535,10 @@ export class Hud implements GestureHandlers {
         this.showBubble(sx, sy - 56, 'Lâche pour relier la machine à ce tapis', false);
         return;
       }
+      if (this.tracer.intoMachine !== null) {
+        this.showBubble(sx, sy - 56, 'Lâche pour que le tapis nourrisse cette machine', false);
+        return;
+      }
       const locked = !!this.tracer.splitFrom && !this.game.isUnlocked('separateur');
       const label = locked ? 'Séparateur : à débloquer dans l’arbre' : n > 0 ? `${what}${n} case${n > 1 ? 's' : ''} · ${ICONS.coinSm}${n}` : this.tracer.splitFrom ? 'Glisse sur le côté pour séparer' : 'Glisse pour tracer';
       this.showBubble(sx, sy - 56, label, locked || !ok || !affordable);
@@ -551,6 +555,8 @@ export class Hud implements GestureHandlers {
     if (!cancelled) {
       if (this.tool === 'tapis' && this.tracer?.linkBelt && this.tracer.linkDir !== null) {
         this.game.linkMachineToBelt(this.tracer.linkBelt, this.tracer.linkDir);
+      } else if (this.tool === 'tapis' && this.tracer?.splitFrom && this.tracer.intoMachine !== null) {
+        this.game.linkBeltToMachine(this.tracer.splitFrom, this.tracer.intoMachine);
       } else if (this.tool === 'tapis' && this.tracer?.valid) {
         const t = this.tracer;
         this.game.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir } : undefined);
@@ -669,11 +675,13 @@ export class Hud implements GestureHandlers {
       const chain = f.chainOf(b);
       const items = chain.reduce((s, c) => s + c.items.length, 0);
       const pending = chain.some((c) => !c.built);
-      const splitter = b.split !== undefined ? '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>' : '';
-      const info = `<h3>${b.split !== undefined ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${splitter}
+      const splitter = b.split !== undefined && !f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) ? '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>' : '';
+      const info = `<h3>${splitter ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${splitter}
         <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.length} ${ICONS.coinSm}</p>`;
-      const linked = b.feed !== undefined ? f.machineAt(b.x + DX[b.feed], b.y + DY[b.feed]) : null;
-      const linkInfo = linked ? `<p>${esc(machineDef(linked.type).name)} y dépose sa production par le côté.</p>` : '';
+      const feeders = (b.feeds ?? []).map((d) => f.machineAt(b.x + DX[d], b.y + DY[d])).filter((m): m is Machine => !!m);
+      const fed = b.split !== undefined ? f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) : null;
+      const linked = feeders.length > 0 || !!fed;
+      const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre.</p>` : ''}`;
       const actions = `${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
       if (!this.setPopover(`b${sel.x},${sel.y}`, info + linkInfo, actions)) return;
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
