@@ -359,7 +359,14 @@ export class Hud implements GestureHandlers {
   private cardDown(e: PointerEvent, type: string, card: HTMLElement): void {
     const x0 = e.clientX, y0 = e.clientY;
     let dragging = false;
-    const paletteTop = () => this.palette.getBoundingClientRect().top;
+    // Pendant le glisser, la palette et la barre d'outils s'effacent : à leur place, une petite corbeille rouge
+    // (y lâcher la machine annule).
+    let trash: HTMLElement | null = null;
+    const overTrash = (ev: PointerEvent) => {
+      if (!trash) return false;
+      const r = trash.getBoundingClientRect();
+      return ev.clientX >= r.left - 16 && ev.clientX <= r.right + 16 && ev.clientY >= r.top - 16 && ev.clientY <= r.bottom + 16;
+    };
     const move = (ev: PointerEvent) => {
       if (ev.pointerId !== e.pointerId) return;
       const dx = ev.clientX - x0, dy = ev.clientY - y0;
@@ -369,14 +376,19 @@ export class Hud implements GestureHandlers {
           this.machineType = type;
           this.palette.querySelectorAll('.mcard').forEach((c) => c.classList.toggle('selected', c === card));
           this.palette.classList.add('dragging');
+          this.root.classList.add('dragging-machine');
+          trash = h('div', 'drop-trash', `${ICONS.trash}<span>Lâche ici pour annuler</span>`);
+          this.root.append(trash);
           this.closePopover();
         } else return;
       }
       ev.preventDefault();
-      if (ev.clientY > paletteTop() - 8) {
+      const hot = overTrash(ev);
+      trash?.classList.toggle('hot', hot);
+      if (hot) {
         this.r.preview = null;
         this.r.guides = [];
-        this.showBubble(ev.clientX, ev.clientY - 70, 'Lâche sur la carte pour poser', true);
+        this.bubble.classList.add('hidden');
       } else {
         this.updatePlacement(ev.clientX, ev.clientY);
       }
@@ -388,10 +400,13 @@ export class Hud implements GestureHandlers {
       window.removeEventListener('pointercancel', up, true);
       if (!dragging) return;
       this.palette.classList.remove('dragging');
+      this.root.classList.remove('dragging-machine');
+      const cancel = overTrash(ev);
+      trash?.remove();
       this.dragEnded = true;
       setTimeout(() => { this.dragEnded = false; }, 350);
       const pv = this.r.preview;
-      if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && ev.clientY < paletteTop() - 8) {
+      if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && !cancel) {
         this.game.placeMachine(type, pv.x, pv.y);
       }
       this.r.preview = null;

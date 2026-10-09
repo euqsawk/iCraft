@@ -69,6 +69,9 @@ interface ChunkView {
 interface MachineView {
   /** Revente : remplissage dessiné. */
   fill?: number;
+  /** Grand coffre : ce qu'il garde, en petit (et la signature du dernier dessin). */
+  shelf?: Container;
+  shelfSig?: string;
   root: Container;
   body: Graphics;
   icon: Container;
@@ -888,6 +891,27 @@ export class GameRenderer {
       nv.root.visible = this.inView(nv.root.x, nv.root.y, 4 * CELL);
       nv.pulse = Math.max(0, nv.pulse - dt * 3);
       nv.root.scale.set(1 + nv.pulse * 0.04);
+    }
+    // Grand coffre : ses quatre objets les plus nombreux, en petit, à la place du dessin du coffre.
+    for (const m of this.game.factory.machines.values()) {
+      if (m.type !== 'grand_coffre' || !m.built) continue;
+      const v = this.machineViews.get(m.id);
+      if (!v || !v.root.visible) continue;
+      const top = Object.entries(m.inBuf).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t]) => t);
+      const sig = top.join(',');
+      if (sig === v.shelfSig) continue;
+      v.shelfSig = sig;
+      if (!v.shelf) { v.shelf = new Container(); v.root.addChildAt(v.shelf, v.root.getChildIndex(v.icon) + 1); }
+      v.shelf.removeChildren().forEach((c) => c.destroy());
+      v.icon.visible = top.length === 0;
+      const spots = top.length === 1 ? [[0, 0]] : top.length === 2 ? [[-9, 0], [9, 0]] : [[-9, -9], [9, -9], [-9, 9], [9, 9]];
+      top.forEach((t, i) => {
+        const s = new Sprite(this.itemTextures.get(t)!);
+        s.anchor.set(0.5);
+        s.scale.set(top.length === 1 ? 1.1 : 0.8);
+        s.position.set(spots[i][0], spots[i][1]);
+        v.shelf!.addChild(s);
+      });
     }
     // Comptoir : un « ! » quand il attend qu'on choisisse une commande.
     // Revente : une jauge de remplissage.

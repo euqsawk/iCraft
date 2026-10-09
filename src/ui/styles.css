@@ -675,3 +675,16 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .link-row { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 900; }
 .link-row span { flex: 1; }
 .link-row .btn { flex: none !important; padding: 0 14px; }
+
+/* Glisser une machine depuis la palette : palette et outils s'effacent, une corbeille rouge les remplace. */
+#hud.dragging-machine .palette, #hud.dragging-machine .toolbar { opacity: 0; pointer-events: none; transition: opacity .15s; }
+.drop-trash {
+  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 22px); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: 12px; white-space: nowrap;
+  background: #FDE6E1; color: var(--coral-dark); font-weight: 800; font-size: 13px;
+  box-shadow: 0 4px 0 rgba(224, 106, 84, .35); transition: transform .12s, background .12s, color .12s;
+  animation: trash-in .18s ease-out;
+}
+.drop-trash svg { width: 18px; height: 18px; }
+.drop-trash.hot { background: var(--coral); color: #fff; transform: translateX(-50%) scale(1.08); }
+@keyframes trash-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } }
