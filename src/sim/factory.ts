@@ -3,6 +3,7 @@ import { RULES } from '../config.ts';
 import { acceptedInputs, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
+import { isFuel } from '../data/items.ts';
 
 export interface BeltItem {
   t: string;
@@ -759,23 +760,18 @@ export class Factory {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
-    if (item === 'charbon' && def.coal && m.fuel < this.fuelCap(m)) return true;
+    if (isFuel(item) && def.coal && m.fuel < this.fuelCap(m)) return true;
     if (def.kind !== 'crafter') return false;
     if (!this.acceptSet(def).has(item)) return false;
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
   }
 
-  /** Une machine qui utilise le charbon comme ingrédient (fourneau). */
-  private coalIngredient(def: MachineDef): boolean {
-    return def.recipes.some((r) => r.in.charbon);
-  }
-
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
-    if (item === 'charbon' && def.coal && m.fuel < this.fuelCap(m)) {
+    if (isFuel(item) && def.coal && m.fuel < this.fuelCap(m)) {
       // Le carburant d'abord ; un fourneau bien chargé garde le reste comme ingrédient.
-      const asIngredient = this.coalIngredient(def) && m.fuel >= 3 && (m.inBuf.charbon ?? 0) < RULES.machineBuffer;
+      const asIngredient = def.recipes.some((r) => r.in[item]) && m.fuel >= 3 && (m.inBuf[item] ?? 0) < RULES.machineBuffer;
       if (!asIngredient) { m.fuel++; return; }
     }
     m.inBuf[item] = (m.inBuf[item] ?? 0) + 1;
@@ -800,7 +796,7 @@ export class Factory {
   putInMachine(m: Machine, item: string, n: number): number {
     const def = machineDef(m.type);
     if (def.kind === 'storage') return this.putInStorage(m, item, n);
-    if (def.kind !== 'crafter' || !this.acceptSet(def).has(item) || item === 'charbon') return 0;
+    if (def.kind !== 'crafter' || !this.acceptSet(def).has(item) || (isFuel(item) && !def.recipes.some((r) => r.in[item]))) return 0;
     const k = Math.min(n, RULES.machineBuffer - (m.inBuf[item] ?? 0));
     if (k > 0) m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
     return Math.max(0, k);

@@ -209,7 +209,7 @@ export function machineDef(id: string): MachineDef {
 export function acceptedInputs(def: MachineDef): Set<string> {
   const s = new Set<string>();
   for (const rec of def.recipes) for (const k of Object.keys(rec.in)) s.add(k);
-  if (def.coal) s.add('charbon');
+  if (def.coal) { s.add('charbon'); s.add('carburant'); }
   return s;
 }
 

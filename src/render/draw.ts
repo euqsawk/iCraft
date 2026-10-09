@@ -207,15 +207,18 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.moveTo(0, 4).lineTo(6, -3).stroke({ width: 2.6, color: coral, cap: 'round' });
       g.circle(0, 4, 2.4).fill(ink);
       break;
-    case 'grand_coffre':
-      // Deux coffres empilés, plus larges.
-      g.roundRect(-15, -12, 30, 11, 3).fill(0xc98a4b);
-      g.rect(-15, -8.5, 30, 1.8).fill(0x8a5a2b);
-      g.roundRect(-15, 1, 30, 11, 3).fill(0xb67a3f);
-      g.rect(-15, 4.5, 30, 1.8).fill(0x8a5a2b);
-      g.roundRect(-2.2, -9.8, 4.4, 4.4, 1.2).fill(PALETTE.yellow).stroke({ width: 1.2, color: ink });
-      g.roundRect(-2.2, 3.2, 4.4, 4.4, 1.2).fill(PALETTE.yellow).stroke({ width: 1.2, color: ink });
+    case 'grand_coffre': {
+      // Une grosse malle : couvercle bombé, deux sangles, ferrures aux coins et une serrure.
+      const wood = 0xc98a4b, dark = 0x8a5a2b;
+      g.roundRect(-16, -4, 32, 17, 3).fill(wood);
+      g.moveTo(-16, -3).lineTo(-16, -8).quadraticCurveTo(0, -17, 16, -8).lineTo(16, -3).closePath().fill(0xd99a58);
+      g.rect(-16, -4.5, 32, 2.6).fill(dark);
+      g.rect(-10, -13, 3.2, 26).rect(6.8, -13, 3.2, 26).fill(dark);
+      for (const [x, y] of [[-16, 13], [16, 13], [-16, -4], [16, -4]]) g.circle(x * 0.93, y - (y > 0 ? 2 : 0), 1.6).fill(PALETTE.yellow);
+      g.roundRect(-3, -6, 6, 7, 1.6).fill(PALETTE.yellow).stroke({ width: 1.3, color: ink });
+      g.circle(0, -2.8, 1).fill(ink);
       break;
+    }
     case 'coffre':
       g.roundRect(-7.5, -5, 15, 11, 2.5).fill(0xc98a4b);
       g.rect(-7.5, -1.5, 15, 1.6).fill(0x8a5a2b);

@@ -1,6 +1,6 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
 import { BIOME_COLORS, CELL, PALETTE, RULES } from '../config.ts';
-import { item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
+import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
@@ -934,8 +934,8 @@ export class Hud implements GestureHandlers {
       else if (machine) {
         const name = machineDef(machine.type).name.toLowerCase();
         max = Math.min(sl.n, g.machineAccepts(machine, t));
-        verb = t === 'charbon' ? 'Recharger en charbon' : `Mettre dans la machine`;
-        if (!max) why = g.machineAccepts(machine, t) === 0 && !machineDef(machine.type).recipes.some((r) => r.in[t]) && t !== 'charbon' ? `La ${name} ne s’en sert pas` : 'Elle est pleine pour l’instant';
+        verb = isFuel(t) ? `Recharger en ${t === 'charbon' ? 'charbon' : 'carburant'}` : `Mettre dans la machine`;
+        if (!max) why = g.machineAccepts(machine, t) === 0 && !machineDef(machine.type).recipes.some((r) => r.in[t]) && !isFuel(t) ? `La ${name} ne s’en sert pas` : 'Elle est pleine pour l’instant';
       }
       else { max = sl.n; verb = ''; }
     } else {

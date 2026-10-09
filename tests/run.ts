@@ -554,6 +554,26 @@ test('une foreuse neuve sort du chantier avec 10 charbons', () => {
   for (let i = 0; i < 3000 && !m.built; i++) g.tick(1 / 30);
   assert(m.built && m.fuel + (m.burn > 0 ? 1 : 0) >= 9, `charbon à la sortie du chantier : ${m.fuel}`);
 });
+test('le carburant brûle comme le charbon : machines, robot, drones', () => {
+  const g = new Game('TEST-F1');
+  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  const four = g.placeMachine('four', -9, -1)!;
+  const chest = g.placeMachine('coffre', -6, 3)!;
+  run(g, 40);
+  assert(four.built && chest.built, 'construits');
+  // Machine : le carburant remplit la case carburant.
+  four.fuel = 0; four.burn = 0;
+  assert(g.factory.canAccept(four, 'carburant') && g.machineAccepts(four, 'carburant') === 10, 'le four accepte le carburant');
+  // Drone : sans charbon dans les coffres, il prend le carburant pour recharger le four.
+  g.factory.putInStorage(chest, 'carburant', 20);
+  run(g, 30);
+  assert(four.fuel > 0 && (chest.inBuf.carburant ?? 0) < 20, `four rechargé au carburant : ${four.fuel}`);
+  // Robot : sa case carburant se remplit avec le carburant de son inventaire.
+  g.robot.fuel = 0;
+  g.robot.inv.add('carburant', 5);
+  run(g, 1);
+  assert(g.robot.fuel >= 4 && g.robot.inv.count('carburant') <= 1, `robot : ${g.robot.fuel}`);
+});
 test('le robot mine à l’arrêt sur un filon et se ravitaille avec son charbon', () => {
   const g = new Game('TEST-22');
   g.drones[0].cargo = null;

@@ -95,3 +95,10 @@ export function itemLabel(id: string, qty: number): string {
   const d = item(id);
   return `${qty} ${qty > 1 ? d.plural : d.name.toLowerCase()}`;
 }
+
+/** Ce qui se brûle comme carburant (avant l'électricité) : le charbon, et le carburant de la raffinerie, à égalité. */
+export const FUELS = ['charbon', 'carburant'];
+
+export function isFuel(id: string | undefined): boolean {
+  return id === 'charbon' || id === 'carburant';
+}

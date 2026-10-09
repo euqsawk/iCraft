@@ -1,7 +1,7 @@
 // L'état complet d'une partie : monde, usine, robot, drones, argent, paliers, laboratoire et commandes.
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
-import { item, itemLabel } from '../data/items.ts';
+import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
 import { Factory, type Belt, type FactorySave, type Machine } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
@@ -925,7 +925,8 @@ export class Game {
   private robotPowered(dt: number): boolean {
     const r = this.robot;
     // Le robot remplit sa case carburant avec le charbon de son inventaire.
-    if (r.fuel < RULES.fuelStack) r.fuel += r.inv.take('charbon', RULES.fuelStack - r.fuel);
+    // Charbon d'abord, puis carburant : les deux brûlent pareil.
+    for (const f of FUELS) if (r.fuel < RULES.fuelStack) r.fuel += r.inv.take(f, RULES.fuelStack - r.fuel);
     if (!r.active) return r.burn > 0 || r.fuel > 0;
     if (r.burn <= 0) {
       if (r.fuel <= 0) return false;
@@ -1131,7 +1132,7 @@ export class Game {
     if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill' && def.kind !== 'station' && def.kind !== 'generator')) return 0;
     let n = 0;
     const ingredient = def.recipes.some((r) => r.in[t]);
-    if (t === 'charbon' && def.coal) n += this.factory.fuelRoom(m);
+    if (isFuel(t) && def.coal) n += this.factory.fuelRoom(m);
     if (def.kind === 'crafter' && ingredient) n += Math.max(0, RULES.machineBuffer - (m.inBuf[t] ?? 0));
     return n;
   }
@@ -1145,7 +1146,7 @@ export class Game {
     if (k <= 0) return 0;
     this.robot.inv.takeAt(slot, k);
     let rest = k;
-    if (t === 'charbon') rest -= this.factory.addFuel(m, rest);
+    if (isFuel(t)) rest -= this.factory.addFuel(m, rest);
     if (rest > 0) m.inBuf[t] = (m.inBuf[t] ?? 0) + rest;
     this.emit({ type: 'inventory' });
     return k;
@@ -1320,13 +1321,22 @@ export class Game {
     return best;
   }
 
+  /** Où prendre de quoi brûler : du charbon d'abord, sinon du carburant. */
+  private fuelSource(d: Drone): { src: Source; item: string } | null {
+    for (const item of FUELS) {
+      const src = this.sourceFor(d, item);
+      if (src) return { src, item };
+    }
+    return null;
+  }
+
   /** Le coffre où rendre la cargaison du drone : celui d'où elle vient, s'il existe encore et a de la place. */
   private returnChest(d: Drone): Machine | null {
     if (!d.cargo || d.from === undefined) return null;
     const m = this.factory.machines.get(d.from);
     if (!m || !m.built) return null;
     // Le charbon pris dans une station y retourne.
-    if (machineDef(m.type).kind === 'station') return d.cargo.t === 'charbon' && this.factory.fuelRoom(m) > 0 ? m : null;
+    if (machineDef(m.type).kind === 'station') return isFuel(d.cargo.t) && this.factory.fuelRoom(m) > 0 ? m : null;
     if (machineDef(m.type).kind !== 'storage') return null;
     return this.factory.storageRoom(m, d.cargo.t) > 0 ? m : null;
   }
@@ -1345,8 +1355,8 @@ export class Game {
 
     // Son propre carburant d'abord, toujours.
     if (d.fuel <= 3) {
-      const src = this.sourceFor(d, 'charbon');
-      if (src) return { kind: 'fetch', from: src, item: 'charbon', self: true };
+      const fs = this.fuelSource(d);
+      if (fs) return { kind: 'fetch', from: fs.src, item: fs.item, self: true };
     }
     // Machines à portée qui ont besoin de charbon, la plus vide d'abord.
     const needy = [...this.factory.machines.values()]
@@ -1360,10 +1370,10 @@ export class Game {
     if (cargo) {
       for (const cat of order) {
         if (cat === 'carburant') {
-          if (cargo.t === 'charbon' && needy[0]) return { kind: 'refuel', id: needy[0].id };
-          if (cargo.t === 'charbon' && refueler && cargo.n < RULES.invStack) {
-            const src = this.sourceFor(d, 'charbon');
-            if (src) return { kind: 'fetch', from: src, item: 'charbon' };
+          if (isFuel(cargo.t) && needy[0]) return { kind: 'refuel', id: needy[0].id };
+          if (isFuel(cargo.t) && refueler && cargo.n < RULES.invStack) {
+            const src = this.sourceFor(d, cargo.t);
+            if (src) return { kind: 'fetch', from: src, item: cargo.t };
           }
         } else if (cat === 'chantiers') {
           const job = this.freeJob();
@@ -1375,7 +1385,7 @@ export class Game {
       }
       // Personne n'en veut (sauf le charbon d'un drone ravitailleur, qu'il garde pour la prochaine machine) :
       // retour au coffre d'où elle vient ; s'il n'existe plus ou qu'il est plein, la cargaison est détruite.
-      if (!(cargo.t === 'charbon' && refueler)) {
+      if (!(isFuel(cargo.t) && refueler)) {
         const home = this.returnChest(d);
         if (home) return machineDef(home.type).kind === 'station' ? { kind: 'refuel', id: home.id } : { kind: 'deliver', id: home.id };
         d.cargo = null;
@@ -1388,8 +1398,8 @@ export class Game {
     for (const cat of order) {
       if (cat === 'carburant') {
         if (needy.length || refueler) {
-          const src = this.sourceFor(d, 'charbon');
-          if (src) return { kind: 'fetch', from: src, item: 'charbon' };
+          const fs = this.fuelSource(d);
+          if (fs) return { kind: 'fetch', from: fs.src, item: fs.item };
         }
       } else if (cat === 'chantiers') {
         const job = this.freeJob();
@@ -1449,7 +1459,7 @@ export class Game {
         }
       }
 
-    } else if (t.kind === 'refuel' && d.cargo?.t === 'charbon') {
+    } else if (t.kind === 'refuel' && d.cargo && isFuel(d.cargo.t)) {
       const m = f.machines.get(t.id);
       if (m) d.cargo.n -= f.addFuel(m, d.cargo.n);
     } else if (t.kind === 'deliver' && d.cargo) {
