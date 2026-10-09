@@ -17,7 +17,7 @@ import { BeltTracer } from '../sim/tracer.ts';
 import { DX, DY } from '../sim/geom.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
 import { ICONS } from './icons.ts';
-import { TreeScreen } from './tree.ts';
+import { TreeScreen, MYSTERY } from './tree.ts';
 import { craftableItems, maxCraftable } from '../sim/craft.ts';
 import { Tips } from './tips.ts';
 import { checkForUpdate, copyText } from './update.ts';
@@ -315,6 +315,7 @@ export class Hud implements GestureHandlers {
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
+      case 'picker': { const b = this.game.view.beltAt(e.x, e.y); if (b) setTimeout(() => this.openPickPicker(b), 120); break; }
       case 'sold': this.toast(`Le gros drone a revendu ${e.count} objet${e.count > 1 ? 's' : ''} : +${fmt(e.money)} pièces`, 'good'); break;
       case 'drones': this.toast(`${this.game.droneCount} drones travaillent avec ton robot`, 'good'); break;
       default: break;
@@ -1107,8 +1108,8 @@ export class Hud implements GestureHandlers {
       }
       const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p>${fuelLine}<p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
         ${recipes}
-        ${inChips ? `<p>${def.kind === 'storage' || def.kind === 'sell' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
-        ${outChips ? `<p>Prêt à sortir</p><div class="chips">${outChips}</div>` : ''}`;
+        ${inChips ? `<p>${this.game.view.isStop(m) ? 'Départs' : def.kind === 'storage' || def.kind === 'sell' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
+        ${outChips ? `<p>${this.game.view.isStop(m) ? 'Arrivées' : 'Prêt à sortir'}</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
           <button class="btn danger" data-act="del">${ICONS.trash}${m.built ? 'Supprimer' : 'Annuler'}</button>
@@ -1151,8 +1152,17 @@ export class Hud implements GestureHandlers {
         : fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre. Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.</p>` : '';
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
       const sortBtn = isSplit && this.game.isUnlocked('tri') ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : 'Trier un objet'}</button></div>` : '';
-      const actions = `${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
-      if (!this.setPopover(`b${sel.x},${sel.y}`, info + linkInfo, actions)) return;
+      // Un trieur sur ce tapis (à la sortie d'une machine ou d'un coffre).
+      const pb = chain.find((c) => c.pick);
+      const owner = pb ? f.outputOwner(pb) : null;
+      const pickFrom = !owner ? '' : f.isStop(owner) ? ` des arrivées ${owner.type === 'gare' ? 'de la gare' : 'du dépôt'}` : ` de ${esc(machineDef(owner.type).name.toLowerCase())}`;
+      const pickWhat = pb?.pick?.length ? `seul${pb.pick.length > 1 ? 's' : ''} ${pb.pick.map((k) => esc(item(k).name.toLowerCase())).join(', ')} sort${pb.pick.length > 1 ? 'ent' : ''}` : 'rien ne sort encore (choisis les objets)';
+      const pickInfo = pb ? `<p><b>Trieur</b> : ${pickWhat}${pickFrom} sur ce tapis. La gomme le retire avant le tapis.</p>` : '';
+      const pickBtn = pb ? `<div class="row"><button class="btn" data-act="pick">${pb.pick!.length ? `<img class="btn-ico" src="${this.itemIcons.get(pb.pick![0])}" alt="">` : ''}Choisir ce qui sort</button></div>` : '';
+      const actions = `${pickBtn}${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
+      if (!this.setPopover(`b${sel.x},${sel.y}`, info + pickInfo + linkInfo, actions)) return;
+      const pk = p.querySelector<HTMLButtonElement>('[data-act="pick"]');
+      if (pk && pb) pk.onclick = () => this.openPickPicker(pb);
       const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
       if (so) so.onclick = () => this.openSortPicker(b);
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
@@ -1226,8 +1236,15 @@ export class Hud implements GestureHandlers {
         }
         if (!shown && !raws.length) html += '<div class="card"><p class="muted">Rien ne correspond.</p></div>';
         if (locked.length && !q) {
+          const rank = (m: MachineDef) => { const n = nodeForMachine(m.id); const st = n ? g.nodeState(n) : 'locked'; return (st === 'locked' || st === 'soon' ? 100 : 0) + (n?.palier ?? 99); };
+          locked.sort((a, b) => rank(a) - rank(b));
           html += `<div class="card"><p class="muted">Encore à débloquer dans l’arbre</p><div class="rc-locked">${locked.map((m) => {
             const node = nodeForMachine(m.id);
+            // Comme dans l'arbre : une machine qu'on ne peut pas encore débloquer garde son secret.
+            const st = node ? g.nodeState(node) : 'locked';
+            if (st === 'locked' || st === 'soon') {
+              return `<div class="rc-lrow mystery"><span class="rc-q">${MYSTERY}</span><b>???</b><small>${node ? `palier ${node.palier}` : 'plus tard'}</small></div>`;
+            }
             return `<div class="rc-lrow"><img src="${this.machineIcons.get(m.id)}" alt=""><b>${esc(m.name)}</b><small>${m.recipes.length} recette${m.recipes.length > 1 ? 's' : ''}${node ? ` · palier ${node.palier}` : ''}</small></div>`;
           }).join('')}</div></div>`;
         }
@@ -1274,7 +1291,7 @@ export class Hud implements GestureHandlers {
   // ---------- Inventaires en grand : robot, coffre, fabrication ----------
 
   /** Pile choisie : une case du robot, ou un objet d'un coffre (chest) ou d'une machine (min : en attente, mout : prêt à sortir). */
-  private invSel: { side: 'chest' | 'min' | 'mout'; item: string } | { side: 'robot'; slot: number } | null = null;
+  private invSel: { side: 'chest' | 'arr' | 'min' | 'mout'; item: string } | { side: 'robot'; slot: number } | null = null;
   private invQty = 1;
   private craftSel: string | null = null;
   private craftQty = 1;
@@ -1295,7 +1312,7 @@ export class Hud implements GestureHandlers {
   }
 
   /** Une grille de cases ; data-side et data-i (ou data-item) pour la sélection. */
-  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'robot' | 'min' | 'mout', cols = 5, accept?: (t: string) => boolean): string {
+  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'arr' | 'robot' | 'min' | 'mout', cols = 5, accept?: (t: string) => boolean): string {
     const sel = this.invSel;
     return `<div class="inv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.map((c, i) => {
       if (!c) return `<button class="inv-cell empty" data-side="${side}" data-i="${i}" aria-label="Case vide"></button>`;
@@ -1306,9 +1323,9 @@ export class Hud implements GestureHandlers {
   }
 
   /** Le contenu d'un coffre, rangé en piles de 10. */
-  private chestCells(m: Machine): ({ t: string; n: number } | null)[] {
+  private chestCells(m: Machine, buf: Record<string, number> = m.inBuf): ({ t: string; n: number } | null)[] {
     const cells: ({ t: string; n: number } | null)[] = [];
-    for (const [t, n] of Object.entries(m.inBuf)) {
+    for (const [t, n] of Object.entries(buf)) {
       let left = n;
       while (left > 0) { const k = Math.min(RULES.invStack, left); cells.push({ t, n: k }); left -= k; }
     }
@@ -1320,7 +1337,7 @@ export class Hud implements GestureHandlers {
   private wireGrid(root: HTMLElement, target: Machine | null): void {
     root.querySelectorAll<HTMLButtonElement>('.inv-cell').forEach((b) => {
       b.onclick = () => {
-        const side = b.dataset.side as 'chest' | 'robot' | 'min' | 'mout';
+        const side = b.dataset.side as 'chest' | 'arr' | 'robot' | 'min' | 'mout';
         const it = b.dataset.item;
         if (!it) { this.invSel = null; this.refreshSheet(); return; }
         const n = Number(b.querySelector('b')?.textContent ?? 1);
@@ -1352,7 +1369,7 @@ export class Hud implements GestureHandlers {
       const sl = g.robot.inv.slots[sel.slot];
       if (!sl) { this.invSel = null; return null; }
       t = sl.t; have = sl.n;
-      if (chest) { max = Math.min(sl.n, g.view.storageRoom(chest, t)); verb = 'Déposer dans le coffre'; if (!max) why = 'Le coffre est plein'; }
+      if (chest) { max = Math.min(sl.n, g.view.storageRoom(chest, t)); verb = g.view.isStop(chest) ? 'Dans les départs' : 'Déposer dans le coffre'; if (!max) why = 'Le coffre est plein'; }
       else if (building) {
         const name = machineDef(building.type).name;
         max = Math.min(sl.n, g.accepts(building, t));
@@ -1367,16 +1384,16 @@ export class Hud implements GestureHandlers {
       }
       else { max = sl.n; verb = ''; }
     } else {
-      const src = sel.side === 'chest' ? chest?.inBuf : sel.side === 'min' ? machine?.inBuf : machine?.outBuf;
+      const src = sel.side === 'chest' ? chest?.inBuf : sel.side === 'arr' ? chest?.outBuf : sel.side === 'min' ? machine?.inBuf : machine?.outBuf;
       if (!src || !(src[sel.item] > 0)) { this.invSel = null; return null; }
       t = sel.item; have = src[t];
-      max = Math.min(have, g.robot.inv.room(t)); verb = sel.side === 'chest' ? `Donner à ${g.look.name}` : `Reprendre dans l’inventaire`;
+      max = Math.min(have, g.robot.inv.room(t)); verb = sel.side === 'chest' || sel.side === 'arr' ? `Donner à ${g.look.name}` : `Reprendre dans l’inventaire`;
       if (!max) why = `L’inventaire de ${g.look.name} est plein`;
     }
     const q = Math.max(max ? 1 : 0, Math.min(this.invQty, max));
     this.invQty = q;
     const bar = h('div', 'inv-bar');
-    const where = sel.side === 'robot' ? `dans la case de ${esc(g.look.name)}` : sel.side === 'chest' ? 'dans le coffre' : 'dans la machine';
+    const where = sel.side === 'robot' ? `dans la case de ${esc(g.look.name)}` : sel.side === 'arr' ? 'dans les arrivées' : sel.side === 'chest' ? (chest && g.view.isStop(chest) ? 'dans les départs' : 'dans le coffre') : 'dans la machine';
     bar.innerHTML = `<div class="ib-head"><img src="${this.itemIcons.get(t)}" alt=""><b>${esc(item(t).name)}</b><small>${fmt(have)} ${where}</small></div>
       ${max ? `<div class="ib-qty"><button class="btn ib-step" data-d="-1" aria-label="Un de moins">−</button><input class="ib-range" type="range" min="1" max="${max}" value="${q}" aria-label="Quantité"><button class="btn ib-step" data-d="1" aria-label="Un de plus">+</button><b class="ib-n">${q}</b></div>
       <div class="ib-quick"><button class="btn" data-set="1">1</button><button class="btn" data-set="half">Moitié</button><button class="btn" data-set="all">Tout (${max})</button></div>` : `<p class="muted">${why}</p>`}
@@ -1441,6 +1458,15 @@ export class Hud implements GestureHandlers {
         const dep = h('button', 'btn primary', verb);
         dep.disabled = !max;
         dep.onclick = () => { g.robotToChest(chest, slot, this.invQty); this.invSel = null; this.refreshSheet(); };
+        if (g.view.isStop(chest)) {
+          // Une gare a deux coffres : on peut aussi poser dans les arrivées (elles ressortent sur les tapis).
+          split.remove();
+          const arr = h('button', 'btn', 'Dans les arrivées');
+          const room = Math.min(sl.n, g.view.storageRoom(chest, sl.t, chest.outBuf));
+          arr.disabled = !room;
+          arr.onclick = () => { g.robotToChest(chest, slot, this.invQty, 'out'); this.invSel = null; this.refreshSheet(); };
+          acts.append(arr);
+        }
         acts.append(dep);
       } else if (machine) {
         split.remove();
@@ -1463,7 +1489,7 @@ export class Hud implements GestureHandlers {
     } else if (chest) {
       const take = h('button', 'btn primary', verb);
       take.disabled = !max;
-      take.onclick = () => { g.chestToRobot(chest, t, this.invQty); this.invSel = null; this.refreshSheet(); };
+      take.onclick = () => { g.chestToRobot(chest, t, this.invQty, sel.side === 'arr' ? 'out' : 'in'); this.invSel = null; this.refreshSheet(); };
       acts.append(take);
     } else if (machine && (sel.side === 'min' || sel.side === 'mout')) {
       const which = sel.side === 'min' ? 'in' : 'out';
@@ -1871,19 +1897,21 @@ export class Hud implements GestureHandlers {
         for (const [k, v] of Object.entries(rec.out)) maxOut[k] = v / rec.time;
       }
     }
-    if (def.coal) maxIn.charbon = (maxIn.charbon ?? 0) + 1 / RULES.coalMachineSeconds;
+    // Ce qu'elle brûle : le carburant s'il y en a dans sa case (ou s'il est seul à passer), sinon le charbon.
+    const fuelItem = def.coal && ((m.carb ?? 0) > 0 || ((real.in.carburant ?? 0) > 0 && !(real.in.charbon ?? 0) && !def.recipes.some((x) => x.in.carburant))) ? 'carburant' : 'charbon';
+    if (def.coal && !g.view.powered(m)) maxIn[fuelItem] = (maxIn[fuelItem] ?? 0) + 1 / (RULES.coalMachineSeconds * (fuelItem === 'carburant' ? RULES.carburantMult : 1));
     const rate = (x: number) => (x < 0.005 ? '0' : x >= 10 ? x.toFixed(1).replace('.', ',') : x.toFixed(2).replace('.', ','));
     const chevron = (color: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>`;
     const rows = (side: 'in' | 'out') => {
       const r = side === 'in' ? real.in : real.out, mx = side === 'in' ? maxIn : maxOut;
       const keys = [...new Set([...Object.keys(mx), ...Object.keys(r)])]
-        .sort((a, b) => Number(a === 'charbon') - Number(b === 'charbon'));
+        .sort((a, b) => Number(a === fuelItem) - Number(b === fuelItem));
       return keys.map((k) => {
         const max = mx[k] ?? 0;
         // La mesure peut dépasser d'un cheveu le maximum (bord de la fenêtre) : on la borne.
         const v = max > 0 ? Math.min(r[k] ?? 0, max) : r[k] ?? 0;
         const pct = max > 0 ? Math.min(100, (v / max) * 100) : v > 0 ? 100 : 0;
-        const fuel = side === 'in' && k === 'charbon' && !def.recipes.some((x) => x.in.charbon);
+        const fuel = side === 'in' && def.coal && isFuel(k) && !def.recipes.some((x) => x.in[k]);
         return `<div class="flow-row ${side}">
           <span class="flow-badge">${chevron(side === 'in' ? '#F47C64' : '#2E6B51')}</span>
           <div class="flow-main"><small>${side === 'in' ? 'Entrée' : 'Sortie'}${fuel ? ' · carburant' : ''}</small><span class="flow-item"><img src="${this.itemIcons.get(k)}" alt="">${esc(item(k).name)}</span></div>
@@ -2147,12 +2175,25 @@ export class Hud implements GestureHandlers {
       const chest = this.game.view.machines.get(this.chestId);
       if (!chest) { close(); return; }
       const g = this.game;
-      let total = 0;
+      let total = 0, arrived = 0;
       for (const v of Object.values(chest.inBuf)) total += v;
+      for (const v of Object.values(chest.outBuf)) arrived += v;
+      const stop = g.view.isStop(chest), cap = g.view.slotsOf(chest) * RULES.invStack;
       sheet.classList.add('inv-sheet');
-      sheet.append(this.sheetHead(machineDef(chest.type).name, `${fmt(total)} / ${g.view.slotsOf(chest) * RULES.invStack} objets · les tapis le remplissent et le vident, les drones s’y servent`, close));
+      sheet.append(this.sheetHead(machineDef(chest.type).name, stop
+        ? `Deux coffres de ${cap} objets : ce qui arrive par ${g.stationKind(chest) === 'train' ? 'train' : 'camion'}, et ce qui part`
+        : `${fmt(total)} / ${cap} objets · les tapis le remplissent et le vident, les drones s’y servent`, close));
       const c1 = h('div', 'card');
-      c1.innerHTML = `<p class="muted">${esc(machineDef(chest.type).name)}</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
+      if (stop) {
+        // Arrivées : ce que ramènent les véhicules, qui ressort sur les tapis (et où les drones se servent).
+        const c0 = h('div', 'card');
+        c0.innerHTML = `<p class="muted"><b>Arrivées</b> · ${fmt(arrived)} / ${cap} · déposé par les ${g.stationKind(chest) === 'train' ? 'trains' : 'camions'}, sort sur les tapis qui partent d’ici</p>${this.gridHtml(this.chestCells(chest, chest.outBuf), 'arr')}`;
+        this.wireGrid(c0, chest);
+        sheet.append(c0);
+        c1.innerHTML = `<p class="muted"><b>Départs</b> · ${fmt(total)} / ${cap} · apporté par les tapis et les drones, part avec les ${g.stationKind(chest) === 'train' ? 'trains' : 'camions'}</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
+      } else {
+        c1.innerHTML = `<p class="muted">${esc(machineDef(chest.type).name)}</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
+      }
       const swap = h('div', 'inv-swap', `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 V15 M3 12 L6 15 L9 12 M12 15 V3 M9 6 L12 3 L15 6"/></svg>Touche une pile pour la déplacer`);
       const c2 = h('div', 'card');
       c2.innerHTML = `<p class="muted">Inventaire de ${esc(g.look.name)}</p>${this.gridHtml(g.robot.inv.slots, 'robot')}`;
@@ -2168,7 +2209,7 @@ export class Hud implements GestureHandlers {
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(chest); };
-      const del = this.deleteButton(chest, 'Supprimer', total ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
+      const del = this.deleteButton(chest, 'Supprimer', total + arrived ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
       acts.append(mv, del);
       sheet.append(acts);
     }, true);
@@ -2238,6 +2279,43 @@ export class Hud implements GestureHandlers {
 
   /** Met à jour la bulle. Renvoie vrai si les boutons ont été recréés (il faut les rebrancher). */
   /** Tri : choisir l'objet qui part dans la dérivation d'un séparateur. */
+  /** Le trieur d'un tapis : les objets qui ont le droit de sortir de la machine ou du coffre (plusieurs possibles). */
+  private openPickPicker(b: Belt): void {
+    this.closePopover();
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      if (!b.pick || g.view.beltAt(b.x, b.y) !== b) { close(); return; }
+      const owner = g.view.outputOwner(b);
+      const from = owner ? (g.view.isStop(owner) ? `des arrivées ${owner.type === 'gare' ? 'de la gare' : 'du dépôt'}` : `de ${machineDef(owner.type).name.toLowerCase()}`) : 'de la machine';
+      sheet.append(this.sheetHead('Trieur', `Ce qui sort ${from} sur ce tapis · touche les objets (plusieurs possibles)`, close));
+      // D'abord ce qu'elle contient en ce moment, puis ce qu'on fabrique déjà, puis le reste.
+      const here = owner ? Object.keys(machineDef(owner.type).kind === 'storage' ? g.view.outOf(owner) : owner.outBuf) : [];
+      const known = Object.keys(g.factory.stats.made);
+      const order = [...new Set([...here, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
+      const card = h('div', 'card');
+      const picked = new Set(b.pick);
+      const status = h('p', 'muted small', '');
+      const say = () => { status.textContent = picked.size ? `${picked.size} objet${picked.size > 1 ? 's' : ''} choisi${picked.size > 1 ? 's' : ''} : le reste attend dans ${owner && machineDef(owner.type).kind === 'storage' ? 'le coffre' : 'la machine'} (ou sort par un autre tapis).` : 'Rien de choisi : rien ne sort par ce tapis.'; };
+      say();
+      const grid = h('div', 'sort-grid');
+      for (const id of order) {
+        const c = h('button', `sort-cell${picked.has(id) ? ' on' : ''}${here.includes(id) ? ' here' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
+        c.onclick = () => {
+          if (picked.has(id)) picked.delete(id); else picked.add(id);
+          g.setBeltPick(b, [...picked]);
+          c.classList.toggle('on', picked.has(id));
+          say();
+        };
+        grid.append(c);
+      }
+      card.append(status, grid);
+      sheet.append(card);
+      const ok = h('button', 'btn primary', 'Terminé');
+      ok.onclick = close;
+      sheet.append(ok);
+    });
+  }
+
   private openSortPicker(b: Belt): void {
     this.closePopover();
     const g = this.game;

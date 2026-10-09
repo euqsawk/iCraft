@@ -88,7 +88,7 @@ export const BRANCHES: Branch[] = [
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 0, 2, { plaque_fer: 60 }, ['separateur'], 'Un coffre de 2 × 2 qui garde 300 objets (un coffre simple en garde 100).', m('grand_coffre')),
       n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tous les tapis vont trois fois plus vite qu’au départ.', { kind: 'beltSpeed', mult: 3 }),
       n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Le Dépôt : pose-en deux, remplis-les par tapis comme un coffre, puis relie-les depuis la fenêtre d’un dépôt. Un camion fait les allers-retours (20 objets à la fois) ; on peut ajouter des camions et un troisième arrêt.', m('depot')),
-      n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Un séparateur qui choisit : touche un séparateur et choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', { kind: 'sorter' }),
+      n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Le Trieur, posé sur un tapis qui part d’un coffre, d’une gare ou d’une machine, ne laisse sortir que les objets choisis. Et le séparateur peut trier : un seul objet part dans la dérivation.', { kind: 'sorter' }),
       n('entrepot', 'Entrepôt', 'entrepot', 4, 0, 6, { cadre: 20, acier: 100 }, ['tri'], 'Un grand bâtiment de 3 × 3 qui garde 900 objets et les range par sorte (il montre ce qu’il garde le plus).', m('entrepot')),
       n('souterrain', 'Tapis souterrains', 'souterrain', 3, 1, 5, { acier: 60, engrenage: 40 }, ['express'], 'Outil Sous-sol : depuis un coffre ou une machine, trace un tapis sous le sol jusqu’à un autre coffre ou une machine. Il passe sous tout.', { kind: 'tunnel' }),
       n('train', 'Trains', 'train', 3, 2, 5, { moteur: 40 }, ['camion'], 'La Gare : comme le dépôt, mais pour un train, plus rapide, qui emporte 80 objets à la fois. Pour aller chercher l’or et l’uranium au loin.', m('gare')),
@@ -158,6 +158,7 @@ export const BASE_UNLOCKS: string[] = ALL_NODES.filter((x) => Object.keys(x.cost
 
 /** Le nœud qui débloque une machine, s'il y en a un. */
 export function nodeForMachine(machineId: string): UnlockNode | undefined {
+  if (machineId === 'trieur') return NODE.tri;
   return ALL_NODES.find((x) => x.effect.kind === 'machine' && x.effect.id === machineId);
 }
 

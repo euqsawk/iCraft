@@ -296,6 +296,13 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
       g.rect(-10, -10, 4, 6).fill(ink);
       g.circle(-7, 8, 3).circle(1, 8, 3).circle(9, 8, 3).fill(ink);
       break;
+    case 'trieur':
+      // Un entonnoir au-dessus d'un tapis : seuls certains objets passent.
+      g.moveTo(-12, 11).lineTo(12, 11).stroke({ width: 5, color: PALETTE.white, cap: 'round' });
+      g.moveTo(-12, 11).lineTo(12, 11).stroke({ width: 1.5, color: PALETTE.roller, cap: 'round' });
+      g.poly([-12, -11, 12, -11, 3, -1, 3, 6, -3, 6, -3, -1]).fill(coral).stroke({ width: 2.4, color: ink, join: 'round' });
+      g.circle(-5, -6, 1.8).circle(1, -7, 1.8).circle(6, -6, 1.8).fill(PALETTE.white);
+      break;
     case 'compteur':
       // Un petit cadran : arc, aiguille, et un tapis dessous.
       g.moveTo(-12, 10).lineTo(12, 10).stroke({ width: 5, color: PALETTE.white, cap: 'round' });

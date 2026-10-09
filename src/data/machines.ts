@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger' | 'rocket' | 'tree' | 'filter';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger' | 'rocket' | 'tree' | 'filter' | 'picker';
 
 export interface MachineDef {
   id: string;
@@ -153,6 +153,10 @@ export const MACHINES: Record<string, MachineDef> = {
   compteur: {
     id: 'compteur', name: 'Compteur', kind: 'meter', coal: false, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true,
     hint: 'Se pose sur un tapis : son débit, sur les 20 dernières secondes',
+  },
+  trieur: {
+    id: 'trieur', name: 'Trieur', kind: 'picker', coal: false, w: 1, h: 1, cost: 20, unlock: 1, recipes: [], buildable: true,
+    hint: 'Se pose sur un tapis qui part d’un coffre, d’une gare ou d’une machine : tu choisis ce qui en sort',
   },
   grand_coffre: {
     id: 'grand_coffre', name: 'Grand coffre', kind: 'storage', coal: false, w: 2, h: 2, cost: 50, unlock: 1, recipes: [], buildable: true,

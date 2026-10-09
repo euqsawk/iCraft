@@ -813,3 +813,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .node.locked .tile.mystery .ico, .node.soon .tile.mystery .ico { opacity: 1; }
 .node.locked .lbl, .node.soon .lbl { letter-spacing: .5px; }
 .ts-icon.mystery { background: #E3ECE7; }
+.rc-lrow.mystery { background: #E9F1ED; border: 2px dashed #C9D6CF; padding: 6px 10px; }
+.rc-lrow.mystery b { letter-spacing: 1px; color: #8C99A0; }
+.rc-q { width: 26px; height: 26px; flex: none; display: flex; }
+.rc-q svg { width: 26px; height: 26px; }
+.sort-cell.here:not(.on) { box-shadow: inset 0 0 0 2px var(--coin-edge); }

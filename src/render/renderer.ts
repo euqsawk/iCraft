@@ -191,6 +191,8 @@ export class GameRenderer {
   private rocketAnim: { x: number; y: number; t: number } | null = null;
   /** Tri : l'objet trié, en petit, sur la case du séparateur. */
   private filterLayer = new Container();
+  /** Les trieurs, par-dessus les machines (leur pastille déborde du tapis). */
+  private pickLayer = new Container();
   private glowPool: Sprite[] = [];
   private glowTex: Texture | null = null;
   private roomG = new Graphics();
@@ -206,7 +208,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -440,6 +442,35 @@ export class GameRenderer {
     this.beltsDirty = false;
     this.drawPipes();
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
+    this.pickLayer.removeChildren().forEach((c) => c.destroy());
+    // Trieurs : un portillon en travers du tapis, et l'objet choisi (ou un « ? » s'il n'y a encore rien de choisi).
+    for (const b of this.game.view.belts.values()) {
+      if (!b.pick) continue;
+      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+      const px = -DY[b.dir], py = DX[b.dir];
+      const gate = new Graphics();
+      gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 6, color: PALETTE.ink, cap: 'round' });
+      gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 2.5, color: PALETTE.coral, cap: 'round' });
+      const bx = cx, by = cy - 13;
+      const n = b.pick.length;
+      const w = n > 1 ? 26 : 17;
+      gate.roundRect(bx - w / 2, by - 8.5, w, 17, 8.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
+      this.pickLayer.addChild(gate);
+      if (n) {
+        const sp = new Sprite(this.itemTextures.get(b.pick[0])!);
+        sp.anchor.set(0.5); sp.scale.set(0.55); sp.position.set(n > 1 ? bx - 5 : bx, by);
+        this.pickLayer.addChild(sp);
+        if (n > 1) {
+          const t = new Text({ text: `+${n - 1}`, style: { fontFamily: FONT, fontSize: 8.5, fontWeight: '900', fill: PALETTE.ink }, resolution: 3 });
+          t.anchor.set(0.5); t.position.set(bx + 6.5, by + 0.5);
+          this.pickLayer.addChild(t);
+        }
+      } else {
+        const t = new Text({ text: '?', style: { fontFamily: FONT, fontSize: 11, fontWeight: '900', fill: PALETTE.coral }, resolution: 3 });
+        t.anchor.set(0.5); t.position.set(bx, by + 0.5);
+        this.pickLayer.addChild(t);
+      }
+    }
     for (const b of this.game.view.belts.values()) {
       if (!b.filter || b.split === undefined) continue;
       const x = (b.x + 0.5) * CELL + DX[b.split] * 7, y = (b.y + 0.5) * CELL + DY[b.split] * 7;

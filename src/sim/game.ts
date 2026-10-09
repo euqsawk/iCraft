@@ -140,7 +140,8 @@ export type GameEvent =
   | { type: 'inventory' }
   | { type: 'crafted'; item: string; n: number }
   | { type: 'gift'; building: GiftType; id: number; again?: boolean }
-  | { type: 'unlock'; id: string };
+  | { type: 'unlock'; id: string }
+  | { type: 'picker'; x: number; y: number };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
 export interface OfflineReport {
@@ -900,6 +901,11 @@ export class Game {
   placeMachine(type: string, x: number, y: number): Machine | null {
     const def = machineDef(type);
     if (def.kind === 'meter') { this.placeMeter(x, y); return null; }
+    if (def.kind === 'picker') {
+      if (!this.hasMachine(type)) { this.emit({ type: 'toast', text: `${def.name} : à débloquer dans l’arbre`, tone: 'warn' }); return null; }
+      this.placePicker(x, y);
+      return null;
+    }
     if (def.gift) {
       this.emit({ type: 'toast', text: `${def.name} : le Noyau te l’offre bientôt`, tone: 'info' });
       return null;
@@ -974,10 +980,30 @@ export class Game {
     this.view.removeBelt(b);
     const k = key(b.x, b.y);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
-    return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0);
+    return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0)
+      + (b.meter ? MACHINES.compteur.cost : 0) + (b.pick ? MACHINES.trieur.cost : 0);
   }
 
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
+  /** Pose un trieur à la sortie d'une machine ou d'un coffre ; au départ rien ne sort, on choisit les objets. */
+  placePicker(x: number, y: number): boolean {
+    const check = this.view.checkMachine('trieur', x, y);
+    if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return false; }
+    if (!this.spend(MACHINES.trieur.cost)) return false;
+    const b = this.view.beltAt(x, y)!;
+    b.pick = [];
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'picker', x, y });
+    return true;
+  }
+
+  /** Ce qu'un trieur laisse sortir. */
+  setBeltPick(b: Belt, items: string[]): void {
+    if (!b.pick) return;
+    b.pick = [...new Set(items)];
+    this.emit({ type: 'factory' });
+  }
+
   /** Pose un compteur de débit sur un tapis (tout de suite). */
   placeMeter(x: number, y: number): boolean {
     const check = this.view.checkMachine('compteur', x, y);
@@ -1010,7 +1036,6 @@ export class Game {
     const { machines, belts, cables } = this.areaContents(x0, y0, x1, y1);
     let n = 0;
     for (const b of belts) {
-      if (b.meter) this.earn(MACHINES.compteur.cost);
       this.earn(this.refundBelt(b));
       n++;
     }
@@ -1039,6 +1064,13 @@ export class Game {
     if (b?.meter) {
       delete b.meter;
       this.earn(MACHINES.compteur.cost);
+      this.emit({ type: 'factory' });
+      return true;
+    }
+    // Un trieur aussi : il part avant le tapis.
+    if (b?.pick) {
+      delete b.pick;
+      this.earn(MACHINES.trieur.cost);
       this.emit({ type: 'factory' });
       return true;
     }
@@ -1574,24 +1606,26 @@ export class Game {
   }
 
   /** Du coffre vers le robot ; renvoie la quantité déplacée. */
-  chestToRobot(m: Machine, item: string, n: number): number {
-    const k = Math.min(n, m.inBuf[item] ?? 0, this.robot.inv.room(item));
+  chestToRobot(m: Machine, item: string, n: number, which: 'in' | 'out' = 'in'): number {
+    const buf = which === 'out' ? m.outBuf : m.inBuf;
+    const k = Math.min(n, buf[item] ?? 0, this.robot.inv.room(item));
     if (k <= 0) return 0;
-    this.factory.takeFromStorage(m, item, k);
+    this.factory.takeFromStorage(m, item, k, buf);
     this.robot.inv.add(item, k);
     this.emit({ type: 'inventory' });
     return k;
   }
 
   /** D'une case du robot vers le coffre ; renvoie la quantité déplacée. */
-  robotToChest(m: Machine, slot: number, n: number): number {
+  robotToChest(m: Machine, slot: number, n: number, which: 'in' | 'out' = 'in'): number {
     const sl = this.robot.inv.slots[slot];
     if (!sl) return 0;
-    const k = Math.min(n, sl.n, this.factory.storageRoom(m, sl.t));
+    const buf = which === 'out' ? m.outBuf : m.inBuf;
+    const k = Math.min(n, sl.n, this.factory.storageRoom(m, sl.t, buf));
     if (k <= 0) return 0;
     const t = sl.t;
     this.robot.inv.takeAt(slot, k);
-    this.factory.putInStorage(m, t, k);
+    this.factory.putInStorage(m, t, k, buf);
     this.emit({ type: 'inventory' });
     return k;
   }
@@ -1819,7 +1853,7 @@ export class Game {
     }
     let best: Source | null = null, bd = Infinity;
     for (const m of this.factory.machines.values()) {
-      if (machineDef(m.type).kind !== 'storage' || !m.built || !(m.inBuf[item] > 0)) continue;
+      if (machineDef(m.type).kind !== 'storage' || !m.built || !(this.factory.outOf(m)[item] > 0)) continue;
       const c = this.center(m);
       if (!this.near(c, this.anchor.supply)) continue;
       const dist = Math.hypot(c.x - d.x, c.y - d.y);
@@ -1845,7 +1879,7 @@ export class Game {
     // Le charbon pris dans une station y retourne.
     if (machineDef(m.type).kind === 'station') return isFuel(d.cargo.t) && this.factory.fuelRoom(m) > 0 ? m : null;
     if (machineDef(m.type).kind !== 'storage') return null;
-    return this.factory.storageRoom(m, d.cargo.t) > 0 ? m : null;
+    return this.factory.storageRoom(m, d.cargo.t, this.factory.outOf(m)) > 0 ? m : null;
   }
 
   /** Ce qui manque à un bâtiment, et le bâtiment lui-même. */
@@ -1975,13 +2009,15 @@ export class Game {
       if (m && (m.power ?? 0) > 0) { d.fuel = RULES.fuelStack; d.carb = 0; d.burn = RULES.coalDroneSeconds; }
     } else if (t.kind === 'refuel' && d.cargo && isFuel(d.cargo.t)) {
       const m = f.machines.get(t.id);
-      if (m) d.cargo.n -= f.addFuel(m, d.cargo.n);
+      if (m) d.cargo.n -= f.addFuel(m, d.cargo.n, d.cargo.t);
     } else if (t.kind === 'deliver' && d.cargo) {
       const m = f.machines.get(t.id);
       if (m) {
         const kind = machineDef(m.type).kind;
+        // Une cargaison prise dans les arrivées d'une gare y retourne (pas dans ses départs).
         d.cargo.n -= kind === 'core' || kind === 'lab' || kind === 'missions'
           ? this.receive(m, d.cargo.t, d.cargo.n)
+          : f.isStop(m) && d.from === m.id ? f.putInStorage(m, d.cargo.t, d.cargo.n, m.outBuf)
           : f.putInMachine(m, d.cargo.t, d.cargo.n);
       }
     }

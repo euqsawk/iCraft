@@ -42,6 +42,8 @@ export interface Belt {
   splitJump?: number;
   /** Compteur posé sur cette case : les objets qui en sortent (date et matière), pour le débit. */
   meter?: { ev: { t: number; k: string }[]; since: number };
+  /** Trieur posé à la sortie d'une machine ou d'un coffre : seuls ces objets en sortent sur ce tapis. */
+  pick?: string[];
 }
 
 /** Longueur parcourue sur une case de tapis, en cases (plus longue sur un pont). */
@@ -150,13 +152,12 @@ export interface Vehicle {
   moving: boolean;
   /** Temps passé à l'arrêt. */
   t: number;
-  /** Ce qu'il a déposé à l'arrêt où il est (il ne le reprend pas). Non sauvegardé. */
-  dropped?: string[];
-  taken?: string[];
   cargo: Record<string, number>;
+  /** À l'arrêt, il a commencé à charger : il ne dépose plus rien avant le prochain arrêt. */
+  loading?: boolean;
 }
 
-/** Une ligne : 2 ou 3 arrêts parcourus en boucle, et ses véhicules. La route ou les rails sont posés en L entre deux arrêts. */
+/** Une ligne : 2 à 6 arrêts parcourus en boucle, et ses véhicules. La route ou les rails sont posés en L entre deux arrêts. */
 export interface Line {
   id: number;
   kind: VehicleKind;
@@ -346,6 +347,13 @@ export class Factory {
 
   // ---------- Compteurs de débit ----------
 
+  /** La machine (ou le coffre) qui dépose sur ce tapis, s'il part d'elle. */
+  outputOwner(b: Belt): Machine | null {
+    this.refresh();
+    for (const [m, list] of this.outputs) if (list.includes(b)) return m;
+    return null;
+  }
+
   addMeter(b: Belt): void {
     b.meter = { ev: [], since: this.clock };
   }
@@ -443,6 +451,13 @@ export class Factory {
       const b = this.beltAt(x, y);
       if (!b) return { ok: false, reason: 'Pose-le sur un tapis' };
       if (b.meter) return { ok: false, reason: 'Ce tapis a déjà un compteur' };
+      return { ok: true };
+    }
+    // Un trieur se pose sur la première case d'un tapis qui part d'une machine ou d'un coffre.
+    if (def.kind === 'picker') {
+      const b = this.beltAt(x, y);
+      if (!b || !this.outputOwner(b)) return { ok: false, reason: 'Pose-le sur un tapis qui part d’un coffre ou d’une machine' };
+      if (b.pick) return { ok: false, reason: 'Ce tapis a déjà un trieur' };
       return { ok: true };
     }
     const oreCount = new Map<string, { n: number; rate: number }>();
@@ -702,26 +717,26 @@ export class Factory {
         }
         if (!here.built) continue;
         v.t += dt;
-        // À l'arrêt : il dépose ce que l'arrêt reçoit, puis prend ce qu'il envoie (jamais ce qu'il vient d'y déposer).
+        // À l'arrêt : il dépose dans les arrivées ce que l'arrêt reçoit, puis prend dans les départs ce qu'il envoie.
+        // Deux coffres séparés : il ne reprend jamais ce qu'il vient de déposer.
         const { take, drop } = stopRules(stop);
-        // Il ne redépose pas ce qu'il vient de prendre ici, ni ne reprend ce qu'il vient d'y déposer.
-        const dropped = (v.dropped ??= []), taken = (v.taken ??= []);
-        const dropKey = () => Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && ruleHas(drop, x) && !taken.includes(x) && this.storageRoom(here, x) > 0);
-        const takeKey = () => this.cargoCount(v) < cap ? Object.keys(here.inBuf).find((x) => here.inBuf[x] > 0 && ruleHas(take, x) && !dropped.includes(x) && !(Array.isArray(drop) && drop.includes(x))) : undefined;
+        const arr = here.outBuf;
+        // Une fois qu'il a commencé à charger, il ne dépose plus rien ici (sinon il redéposerait ce qu'il vient de prendre).
+        const dropKey = () => v.loading ? undefined : Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && ruleHas(drop, x) && this.storageRoom(here, x, arr) > 0);
+        const takeKey = () => this.cargoCount(v) < cap ? Object.keys(here.inBuf).find((x) => here.inBuf[x] > 0 && ruleHas(take, x)) : undefined;
         let busy = false;
         while (v.t >= 0.1) {
           const d = dropKey();
           if (d) {
             v.cargo[d]--; if (!v.cargo[d]) delete v.cargo[d];
-            here.inBuf[d] = (here.inBuf[d] ?? 0) + 1;
-            if (!dropped.includes(d)) dropped.push(d);
+            arr[d] = (arr[d] ?? 0) + 1;
             v.t -= 0.1; busy = true; continue;
           }
           const k = takeKey();
           if (k) {
             here.inBuf[k]--; if (!here.inBuf[k]) delete here.inBuf[k];
             v.cargo[k] = (v.cargo[k] ?? 0) + 1;
-            if (!taken.includes(k)) taken.push(k);
+            v.loading = true;
             v.t -= 0.1; busy = true; continue;
           }
           break;
@@ -734,7 +749,7 @@ export class Factory {
         if (c >= cap) leave = true;
         else if (take === 'none') leave = c === 0 || v.t >= RULES.vehicleWait;
         else if (v.t >= RULES.vehicleWait) leave = c > 0 || othersGive;
-        if (leave) { v.moving = true; v.t = 0; v.dropped = []; v.taken = []; docked.delete(here.id); }
+        if (leave) { v.moving = true; v.t = 0; v.loading = false; docked.delete(here.id); }
         else if (c === 0 && !othersGive) v.t = Math.min(v.t, RULES.vehicleWait);
       }
     }
@@ -1278,17 +1293,28 @@ export class Factory {
     return m.type === 'grand_coffre' || m.type === 'depot' || m.type === 'gare' ? RULES.bigChestSlots : this.chestSlots;
   }
 
-  storageSlots(m: Machine): number {
+  storageSlots(m: Machine, buf: Record<string, number> = m.inBuf): number {
     let n = 0;
-    for (const v of Object.values(m.inBuf)) n += Math.ceil(v / RULES.invStack);
+    for (const v of Object.values(buf)) n += Math.ceil(v / RULES.invStack);
     return n;
   }
 
-  /** Place restante dans un coffre pour un type d'objet. */
-  storageRoom(m: Machine, item: string): number {
-    const have = m.inBuf[item] ?? 0;
+  /** Place restante dans un coffre pour un type d'objet (dans les départs d'une gare, sauf `buf`). */
+  storageRoom(m: Machine, item: string, buf: Record<string, number> = m.inBuf): number {
+    const have = buf[item] ?? 0;
     const partial = have % RULES.invStack ? RULES.invStack - (have % RULES.invStack) : 0;
-    return partial + Math.max(0, this.slotsOf(m) - this.storageSlots(m)) * RULES.invStack;
+    return partial + Math.max(0, this.slotsOf(m) - this.storageSlots(m, buf)) * RULES.invStack;
+  }
+
+  /** Dépôt ou gare : deux coffres. Les départs (inBuf) se remplissent par les tapis et les drones, et partent avec les véhicules ;
+   *  les arrivées (outBuf) reçoivent ce que ramènent les véhicules, et ressortent sur les tapis. */
+  isStop(m: Machine): boolean {
+    return m.type === 'depot' || m.type === 'gare';
+  }
+
+  /** Le coffre d'où l'on sort (tapis, drones, monte-charge) : les arrivées d'une gare, sinon tout le contenu. */
+  outOf(m: Machine): Record<string, number> {
+    return this.isStop(m) ? m.outBuf : m.inBuf;
   }
 
   /** Brûle du charbon pour travailler dt secondes ; faux s'il n'y en a plus. */
@@ -1333,17 +1359,17 @@ export class Factory {
   }
 
   /** Retire des objets d'un coffre ; renvoie la quantité prise. */
-  takeFromStorage(m: Machine, item: string, n: number): number {
-    const k = Math.min(n, m.inBuf[item] ?? 0);
-    if (k > 0) m.inBuf[item] -= k;
-    if (m.inBuf[item] === 0) delete m.inBuf[item];
+  takeFromStorage(m: Machine, item: string, n: number, buf: Record<string, number> = this.outOf(m)): number {
+    const k = Math.min(n, buf[item] ?? 0);
+    if (k > 0) buf[item] -= k;
+    if (buf[item] === 0) delete buf[item];
     return k;
   }
 
   /** Dépose des objets dans un coffre ; renvoie la quantité déposée. */
-  putInStorage(m: Machine, item: string, n: number): number {
-    const k = Math.min(n, this.storageRoom(m, item));
-    if (k > 0) m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
+  putInStorage(m: Machine, item: string, n: number, buf: Record<string, number> = m.inBuf): number {
+    const k = Math.min(n, this.storageRoom(m, item, buf));
+    if (k > 0) buf[item] = (buf[item] ?? 0) + k;
     return k;
   }
 
@@ -1515,9 +1541,10 @@ export class Factory {
         for (const k of Object.keys(buf)) if (!buf[k]) delete buf[k];
       }
       if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage' || def.kind === 'atelier') {
-        this.pushOutputs(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
-        if (m.links?.length) this.pushLinks(m, def.kind === 'storage' ? m.inBuf : m.outBuf, dt);
-        if (this.tunnels.size) this.pushTunnels(m, def.kind === 'storage' ? m.inBuf : m.outBuf);
+        const out = def.kind === 'storage' ? this.outOf(m) : m.outBuf;
+        this.pushOutputs(m, out);
+        if (m.links?.length) this.pushLinks(m, out, dt);
+        if (this.tunnels.size) this.pushTunnels(m, out);
       }
     }
     if (this.tunnels.size) this.tickTunnels(dt);
@@ -1717,8 +1744,9 @@ export class Factory {
     m.liftT = 0;
     for (const s of this.machines.values()) {
       if (!s.built || machineDef(s.type).kind !== 'storage' || !this.touching(m, s)) continue;
-      const k = Object.keys(s.inBuf).find((t) => s.inBuf[t] > 0 && this.bufCount(m.inBuf) < ATELIER_BUFFER && this.atelierWants(m, t));
-      if (k) { s.inBuf[k]--; if (!s.inBuf[k]) delete s.inBuf[k]; m.inBuf[k] = (m.inBuf[k] ?? 0) + 1; }
+      const sb = this.outOf(s);
+      const k = Object.keys(sb).find((t) => sb[t] > 0 && this.bufCount(m.inBuf) < ATELIER_BUFFER && this.atelierWants(m, t));
+      if (k) { sb[k]--; if (!sb[k]) delete sb[k]; m.inBuf[k] = (m.inBuf[k] ?? 0) + 1; }
       const o = Object.keys(m.outBuf).find((t) => m.outBuf[t] > 0 && this.storageRoom(s, t) > 0);
       if (o) { m.outBuf[o]--; if (!m.outBuf[o]) delete m.outBuf[o]; s.inBuf[o] = (s.inBuf[o] ?? 0) + 1; }
     }
@@ -1762,7 +1790,9 @@ export class Factory {
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
-      const kinds = sends ? all.filter((k) => sends(b, k)) : all;
+      // Un trieur sur ce tapis : seuls les objets choisis sortent par là.
+      const allowed = b.pick ? all.filter((k) => b.pick!.includes(k)) : all;
+      const kinds = sends ? allowed.filter((k) => sends(b, k)) : allowed;
       if (!kinds.length) continue;
       const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
       if (side) {
@@ -1797,7 +1827,7 @@ export class Factory {
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '']),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', b.pick ?? 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1812,7 +1842,7 @@ export class Factory {
     for (const k of s.cables ?? []) this.cables.add(k);
     this.pipes.clear();
     for (const k of s.pipes ?? []) this.pipes.add(k);
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
@@ -1821,6 +1851,7 @@ export class Factory {
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       if (meter) this.addMeter(b);
+      if (Array.isArray(pick)) b.pick = pick.filter((t) => typeof t === 'string');
       // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
       if (feed !== undefined && feed >= 0) {
         b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
@@ -1867,7 +1898,7 @@ export interface FactorySave {
   pipes?: number[];
   lines?: Line[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;

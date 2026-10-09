@@ -719,6 +719,68 @@ test('tapis souterrain : d’un coffre à un four, sous un tapis et une machine'
   assert(g.factory.tunnels.size === 0 && g.money - m1 === MACHINES.four.cost + g.tunnelPrice(t2.cells.length), 'retiré avec la machine');
 });
 
+test('trieur : posé à la sortie d’un coffre, seuls les objets choisis en sortent', () => {
+  const g = new Game('TEST-TR');
+  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
+  g.unlocks.add('grand_coffre');
+  const chest = g.placeMachine('coffre', 2, 5)!;
+  g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
+  for (const b of g.factory.belts.values()) b.built = true;
+  chest.built = true; g.pending = []; g.factory.markBuilt();
+  assert(!g.placeMachine('trieur', 3, 5) && !g.factory.beltAt(3, 5)!.pick, 'à débloquer (Tri)');
+  g.unlocks.add('tri');
+  assert(!g.view.checkMachine('trieur', 6, 5).ok, 'pas au milieu d’un tapis');
+  const m0 = g.money;
+  g.placeMachine('trieur', 3, 5);
+  const b = g.factory.beltAt(3, 5)!;
+  assert(Array.isArray(b.pick) && m0 - g.money === MACHINES.trieur.cost, 'posé');
+  g.factory.putInStorage(chest, 'fer', 20);
+  g.factory.putInStorage(chest, 'cuivre', 20);
+  run(g, 3);
+  assert(!g.factory.belts.size || [...g.factory.belts.values()].every((x) => x.items.length === 0), 'rien de choisi : rien ne sort');
+  g.setBeltPick(b, ['cuivre']);
+  run(g, 4);
+  const on = [...g.factory.belts.values()].flatMap((x) => x.items.map((i) => i.t));
+  assert(on.length > 0 && on.every((t) => t === 'cuivre') && chest.inBuf.fer === 20, `seul le cuivre sort : ${on.join(',')}`);
+  const g2 = new Game('TEST-TR', JSON.parse(JSON.stringify(g.serialize())));
+  assert(JSON.stringify(g2.factory.beltAt(3, 5)!.pick) === '["cuivre"]', 'sauvegardé');
+  const m1 = g.money;
+  assert(g.removeAt(3, 5) && !b.pick && g.factory.beltAt(3, 5) && g.money - m1 === MACHINES.trieur.cost, 'la gomme retire le trieur avant le tapis');
+});
+
+test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis remplissent les départs', () => {
+  const g = new Game('TEST-G2');
+  g.money = 100000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null; g.drones.length = 0;
+  g.unlocks.add('train');
+  const gare = g.placeMachine('gare', 4, 4)!;
+  // Un tapis qui part de la gare vers la droite, un autre qui y arrive par la gauche.
+  g.placeBelts([...Array(5)].map((_, i) => ({ x: 6 + i, y: 4, dir: 0, inDir: 0 })) as TraceCell[]);
+  g.placeBelts([...Array(3)].map((_, i) => ({ x: 1 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
+  for (const b of g.factory.belts.values()) b.built = true;
+  gare.built = true; g.pending = []; g.factory.markBuilt();
+  g.factory.putInStorage(gare, 'carburant', 60, gare.outBuf);
+  g.factory.putInStorage(gare, 'fer', 10);
+  for (let i = 0; i < 4 * 30; i++) {
+    if (i % 15 === 0) g.factory.beltAt(1, 5)!.items.push({ t: 'cuivre', p: 0 });
+    g.tick(1 / 30);
+  }
+  const out = [6, 7, 8, 9, 10].flatMap((x) => g.factory.beltAt(x, 4)!.items.map((i) => i.t));
+  assert(out.length > 0 && out.every((t) => t === 'carburant') && gare.inBuf.fer === 10, `seules les arrivées sortent : ${out.join(',')}`);
+  assert((gare.inBuf.cuivre ?? 0) > 0 && !gare.outBuf.cuivre, `les tapis remplissent les départs : ${JSON.stringify(gare.inBuf)}`);
+  // Le robot prend dans l'un ou l'autre.
+  assert(g.chestToRobot(gare, 'carburant', 2, 'out') === 2 && g.chestToRobot(gare, 'fer', 2) === 2, 'le robot se sert dans les deux coffres');
+});
+
+test('un drone qui recharge une machine en carburant y met du carburant', () => {
+  const g = new Game('TEST-DC');
+  g.money = 10000; g.world.reveal(8, 8, 20);
+  const four = g.placeMachine('four', 9, 4)!;
+  four.built = true; g.pending = []; g.factory.markBuilt();
+  four.fuel = 0; four.carb = 0; four.burn = 0;
+  g.factory.addFuel(four, 3, 'carburant');
+  assert(four.fuel === 3 && four.carb === 3, `carburant compté : ${four.fuel} ${four.carb}`);
+});
+
 test('grand coffre : 2 × 2, 300 objets ; un coffre simple en garde 100', () => {
   const g = new Game('TEST-GC');
   g.money = 10000; g.world.reveal(6, 6, 20);
@@ -774,10 +836,10 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
   run(g, 3);
   assert(g.factory.cargoCount(l.vehicles[0]) === RULES.truckLoad && l.vehicles[0].moving, 'parti plein');
   run(g, 12);
-  assert((b.inBuf.fer ?? 0) === RULES.truckLoad, `livré : ${b.inBuf.fer}`);
+  assert((b.outBuf.fer ?? 0) === RULES.truckLoad && !b.inBuf.fer, `livré dans les arrivées : ${b.outBuf.fer}`);
   // Deux camions de plus : la ligne va plus vite.
   assert(g.addVehicle(l.id) && g.addVehicle(l.id) && l.vehicles.length === 3, 'trois camions');
-  const before = b.inBuf.fer;
+  const before = b.outBuf.fer;
   // Un seul camion à quai par dépôt : les autres attendent leur tour sur la route, sans se chevaucher.
   let queued = 0;
   for (let i = 0; i < 30 * 30; i++) {
@@ -790,12 +852,12 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
     if (l.vehicles.some((v) => v.moving && v.pos > 0 && v.pos < g.factory.legLength(g.factory.machines.get(l.stops[v.at].id)!, g.factory.machines.get(l.stops[(v.at + 1) % 2].id)!) - 0.5 && g.factory.legLength(g.factory.machines.get(l.stops[v.at].id)!, g.factory.machines.get(l.stops[(v.at + 1) % 2].id)!) - v.pos <= RULES.truckGap + 0.01)) queued++;
   }
   assert(queued > 0, 'personne n’a attendu devant un dépôt');
-  assert(b.inBuf.fer - before >= 3 * RULES.truckLoad, `plus vite : ${b.inBuf.fer - before} en 30 s`);
+  assert(b.outBuf.fer - before >= 3 * RULES.truckLoad, `plus vite : ${b.outBuf.fer - before} en 30 s`);
   // Troisième arrêt : A et B chargent, C décharge tout ; les camions passent par les trois.
   assert(g.addStop(l.id, c) && l.stops.length === 3 && !g.addStop(l.id, c), 'troisième arrêt');
   g.setStopLoad(l.id, 1, true);
   run(g, 60);
-  assert((c.inBuf.fer ?? 0) > 0, `le troisième dépôt reçoit aussi : ${c.inBuf.fer}`);
+  assert((c.outBuf.fer ?? 0) > 0, `le troisième dépôt reçoit aussi : ${c.outBuf.fer}`);
   // Sauvegarde ; fermer la ligne la rembourse.
   const g2 = new Game('TEST-V1', JSON.parse(JSON.stringify(g.serialize())));
   assert(g2.factory.lines.size === 1 && [...g2.factory.lines.values()][0].vehicles.length === 3, 'rechargée');
@@ -813,7 +875,7 @@ test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () =
   const l = g.linkStations(a, b)!;
   g.factory.putInStorage(a, 'cuivre', 200);
   run(g, 20);
-  assert((b.inBuf.cuivre ?? 0) >= RULES.trainLoad, `train livré : ${b.inBuf.cuivre}`);
+  assert((b.outBuf.cuivre ?? 0) >= RULES.trainLoad, `train livré : ${b.outBuf.cuivre}`);
   const m1 = g.money, refund = g.linePrice(l);
   g.removeMachine(b);
   assert(g.factory.lines.size === 0 && g.money - m1 === MACHINES.gare.cost + refund, 'retirée avec la gare');
@@ -1134,8 +1196,9 @@ test('lignes dans les deux sens : du carburant vers la mine, du minerai au retou
   g.factory.putInStorage(base, 'vis', 30);
   g.factory.putInStorage(mine, 'sable', 40);
   run(g, 60);
-  assert((mine.inBuf.vis ?? 0) >= 20 && !(mine.inBuf.sable > 20), `mine : ${JSON.stringify(mine.inBuf)}`);
-  assert((base.inBuf.sable ?? 0) >= 20 && (base.inBuf.vis ?? 0) < 30, `base : ${JSON.stringify(base.inBuf)}`);
+  // Deux coffres par dépôt : ce qui arrive (outBuf) n'est jamais repris pour repartir.
+  assert((mine.outBuf.vis ?? 0) >= 20 && !(mine.inBuf.sable > 20) && !mine.outBuf.sable, `mine : ${JSON.stringify(mine)}`);
+  assert((base.outBuf.sable ?? 0) >= 20 && (base.inBuf.vis ?? 0) < 30 && !base.outBuf.vis, `base : ${JSON.stringify(base)}`);
   // Plus de deux arrêts.
   const extra = [0, 1, 2, 3, 4].map((i) => { const m = g.placeMachine('depot', 5 + i * 4, 16)!; m.built = true; return m; });
   g.factory.markBuilt();

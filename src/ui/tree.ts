@@ -11,7 +11,7 @@ const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" strok
 const LOCK = '<svg width="11" height="11" viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="4.5" width="8" height="5.5" rx="1.5" fill="currentColor"/><path d="M3 4.5 V3.2 A2 2 0 0 1 7 3.2 V4.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
 
 // Un nœud pas encore ouvert garde son cadre mais cache ce qu'il débloque : la surprise donne envie d'avancer.
-const MYSTERY = '<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M14.5 15 a5.5 5.5 0 1 1 8.2 4.8 c-1.8 1-2.7 2.1-2.7 4.2 v1" fill="none" stroke="#9AAAA2" stroke-width="3.6" stroke-linecap="round"/><circle cx="20" cy="30.5" r="2.3" fill="#9AAAA2"/></svg>';
+export const MYSTERY = '<svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><path d="M14.5 15 a5.5 5.5 0 1 1 8.2 4.8 c-1.8 1-2.7 2.1-2.7 4.2 v1" fill="none" stroke="#9AAAA2" stroke-width="3.6" stroke-linecap="round"/><circle cx="20" cy="30.5" r="2.3" fill="#9AAAA2"/></svg>';
 const HIDDEN_NAME = '???';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
