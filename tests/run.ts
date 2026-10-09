@@ -1118,6 +1118,35 @@ test('grande foreuse : tout le filon, sans perte ; seule sur son filon', () => {
   run(g, 1.4);
   assert(sf.made >= 5, `elle extrait vite : ${sf.made} en 1,4 s`);
 });
+test('lignes dans les deux sens : du carburant vers la mine, du minerai au retour ; jusqu’à 6 arrêts', () => {
+  const g = new Game('TEST-V3');
+  g.money = 1e6; g.world.reveal(14, 10, 30); g.drones[0].cargo = null;
+  g.unlocks.add('camion');
+  const base = g.placeMachine('depot', 3, 8)!, mine = g.placeMachine('depot', 23, 8)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const l = g.linkStations(base, mine)!;
+  // La base envoie du carburant et reçoit le reste ; la mine reçoit le carburant et renvoie tout le reste.
+  g.setStopRule(l.id, 0, 'take', ['vis']);
+  g.setStopRule(l.id, 0, 'drop', 'all');
+  g.setStopRule(l.id, 1, 'drop', ['vis']);
+  g.setStopRule(l.id, 1, 'take', 'all');
+  g.factory.putInStorage(base, 'vis', 30);
+  g.factory.putInStorage(mine, 'sable', 40);
+  run(g, 60);
+  assert((mine.inBuf.vis ?? 0) >= 20 && !(mine.inBuf.sable > 20), `mine : ${JSON.stringify(mine.inBuf)}`);
+  assert((base.inBuf.sable ?? 0) >= 20 && (base.inBuf.vis ?? 0) < 30, `base : ${JSON.stringify(base.inBuf)}`);
+  // Plus de deux arrêts.
+  const extra = [0, 1, 2, 3, 4].map((i) => { const m = g.placeMachine('depot', 5 + i * 4, 16)!; m.built = true; return m; });
+  g.factory.markBuilt();
+  let added = 0;
+  for (const m of extra) if (g.addStop(l.id, m)) added++;
+  assert(added === RULES.maxStops - 2 && l.stops.length === RULES.maxStops, `arrêts : ${l.stops.length}`);
+  assert(g.removeStop(l.id, 2) && l.stops.length === RULES.maxStops - 1, 'arrêt retiré');
+  const g2 = new Game('TEST-V3', JSON.parse(JSON.stringify(g.serialize())));
+  const l2 = [...g2.factory.lines.values()][0];
+  assert(JSON.stringify(l2.stops[0].take) === '["vis"]' && l2.stops[1].take === 'all', 'règles sauvegardées');
+});
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {
   const g = new Game('TEST-M1');

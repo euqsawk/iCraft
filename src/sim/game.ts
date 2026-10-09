@@ -4,7 +4,7 @@ import { MACHINES, machineDef } from '../data/machines.ts';
 import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
 import { addTo, burnOne, moveFuel } from './fuel.ts';
 import { World } from '../world/world.ts';
-import { Factory, ROCKET_NEEDS, type Belt, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
+import { Factory, ROCKET_NEEDS, stopRules, type Belt, type StopRule, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
@@ -1105,10 +1105,10 @@ export class Game {
     return this.trackPrice(l.kind, Math.max(0, after - before));
   }
 
-  /** Ajoute un arrêt à une ligne (3 au plus). */
+  /** Ajoute un arrêt à une ligne (6 au plus). */
   addStop(lineId: number, m: Machine): boolean {
     const l = this.factory.lines.get(lineId);
-    if (!l || l.stops.length >= 3 || this.stationKind(m) !== l.kind || l.stops.some((st) => st.id === m.id)) return false;
+    if (!l || l.stops.length >= RULES.maxStops || this.stationKind(m) !== l.kind || l.stops.some((st) => st.id === m.id)) return false;
     if (!this.spend(this.stopPrice(l, m))) return false;
     l.stops.push({ id: m.id, load: false });
     this.emit({ type: 'factory' });
@@ -1140,7 +1140,32 @@ export class Game {
     const st = this.factory.lines.get(lineId)?.stops[i];
     if (!st) return;
     st.load = load;
+    st.take = load ? 'all' : 'none';
+    st.drop = load ? 'none' : 'all';
     this.emit({ type: 'factory' });
+  }
+
+  /** Ce qu'un véhicule prend (take) ou dépose (drop) à un arrêt : rien, tout, ou certains objets. */
+  setStopRule(lineId: number, i: number, which: 'take' | 'drop', rule: StopRule): void {
+    const st = this.factory.lines.get(lineId)?.stops[i];
+    if (!st) return;
+    const r = stopRules(st);
+    st.take = r.take; st.drop = r.drop;
+    st[which] = Array.isArray(rule) ? (rule.length ? [...rule] : 'none') : rule;
+    st.load = st.take !== 'none';
+    this.emit({ type: 'factory' });
+  }
+
+  /** Retire un arrêt d'une ligne (il en reste au moins deux ; la route en trop est remboursée). */
+  removeStop(lineId: number, i: number): boolean {
+    const l = this.factory.lines.get(lineId);
+    if (!l || l.stops.length <= 2 || !l.stops[i]) return false;
+    const before = this.factory.lineLength(l);
+    l.stops.splice(i, 1);
+    for (const v of l.vehicles) { v.at = Math.min(v.at, l.stops.length - 1); v.pos = 0; v.moving = false; v.t = 0; }
+    this.earn(this.trackPrice(l.kind, Math.max(0, before - this.factory.lineLength(l))));
+    this.emit({ type: 'factory' });
+    return true;
   }
 
   /** Ferme une ligne (route et véhicules remboursés). */

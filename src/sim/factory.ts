@@ -125,7 +125,22 @@ export type VehicleKind = 'camion' | 'train';
 /** Un arrêt d'une ligne : un dépôt (camions) ou une gare (trains), où l'on charge ou décharge. */
 export interface LineStop {
   id: number;
+  /** Ancien réglage (charge tout ou décharge tout), gardé pour les vieilles sauvegardes. */
   load: boolean;
+  /** Ce que le véhicule prend à cet arrêt, et ce qu'il y dépose : rien, tout, ou une liste d'objets. */
+  take?: StopRule;
+  drop?: StopRule;
+}
+
+export type StopRule = 'none' | 'all' | string[];
+
+/** Ce qu'un arrêt fait prendre et déposer (avec les anciens réglages « charge » / « décharge »). */
+export function stopRules(st: LineStop): { take: StopRule; drop: StopRule } {
+  return { take: st.take ?? (st.load ? 'all' : 'none'), drop: st.drop ?? (st.load ? 'none' : 'all') };
+}
+
+export function ruleHas(r: StopRule, item: string): boolean {
+  return r === 'all' ? true : r === 'none' ? false : r.includes(item);
 }
 
 /** Un camion ou un train d'une ligne : l'arrêt où il est (ou qu'il vient de quitter), sa position sur le trajet suivant. */
@@ -135,6 +150,9 @@ export interface Vehicle {
   moving: boolean;
   /** Temps passé à l'arrêt. */
   t: number;
+  /** Ce qu'il a déposé à l'arrêt où il est (il ne le reprend pas). Non sauvegardé. */
+  dropped?: string[];
+  taken?: string[];
   cargo: Record<string, number>;
 }
 
@@ -684,31 +702,40 @@ export class Factory {
         }
         if (!here.built) continue;
         v.t += dt;
-        if (stop.load) {
-          while (this.cargoCount(v) < cap && v.t >= 0.1) {
-            const k = Object.keys(here.inBuf).find((x) => here.inBuf[x] > 0);
-            if (!k) break;
-            here.inBuf[k]--;
-            if (!here.inBuf[k]) delete here.inBuf[k];
+        // À l'arrêt : il dépose ce que l'arrêt reçoit, puis prend ce qu'il envoie (jamais ce qu'il vient d'y déposer).
+        const { take, drop } = stopRules(stop);
+        // Il ne redépose pas ce qu'il vient de prendre ici, ni ne reprend ce qu'il vient d'y déposer.
+        const dropped = (v.dropped ??= []), taken = (v.taken ??= []);
+        const dropKey = () => Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && ruleHas(drop, x) && !taken.includes(x) && this.storageRoom(here, x) > 0);
+        const takeKey = () => this.cargoCount(v) < cap ? Object.keys(here.inBuf).find((x) => here.inBuf[x] > 0 && ruleHas(take, x) && !dropped.includes(x) && !(Array.isArray(drop) && drop.includes(x))) : undefined;
+        let busy = false;
+        while (v.t >= 0.1) {
+          const d = dropKey();
+          if (d) {
+            v.cargo[d]--; if (!v.cargo[d]) delete v.cargo[d];
+            here.inBuf[d] = (here.inBuf[d] ?? 0) + 1;
+            if (!dropped.includes(d)) dropped.push(d);
+            v.t -= 0.1; busy = true; continue;
+          }
+          const k = takeKey();
+          if (k) {
+            here.inBuf[k]--; if (!here.inBuf[k]) delete here.inBuf[k];
             v.cargo[k] = (v.cargo[k] ?? 0) + 1;
-            v.t -= 0.1;
+            if (!taken.includes(k)) taken.push(k);
+            v.t -= 0.1; busy = true; continue;
           }
-          const c = this.cargoCount(v);
-          // Il part plein, ou après un moment s'il a quelque chose ; vide, il attend.
-          if (c >= cap || (c > 0 && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; docked.delete(here.id); }
-          if (c === 0) v.t = Math.min(v.t, 0.1);
-        } else {
-          let k = Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && this.storageRoom(here, x) > 0);
-          while (k && v.t >= 0.1) {
-            v.cargo[k]--;
-            if (!v.cargo[k]) delete v.cargo[k];
-            here.inBuf[k] = (here.inBuf[k] ?? 0) + 1;
-            v.t -= 0.1;
-            k = Object.keys(v.cargo).find((x) => v.cargo[x] > 0 && this.storageRoom(here, x) > 0);
-          }
-          // Vide (ou le dépôt est plein depuis un moment) : il repart.
-          if (this.cargoCount(v) === 0 || (!k && v.t >= RULES.vehicleWait)) { v.moving = true; v.t = 0; docked.delete(here.id); }
+          break;
         }
+        if (busy || dropKey() || takeKey()) continue;
+        // Plus rien à faire ici : il part plein, ou après un moment s'il a quelque chose (ou si un autre arrêt a de quoi lui donner).
+        const c = this.cargoCount(v);
+        const othersGive = l.stops.some((o) => o !== stop && stopRules(o).take !== 'none');
+        let leave = false;
+        if (c >= cap) leave = true;
+        else if (take === 'none') leave = c === 0 || v.t >= RULES.vehicleWait;
+        else if (v.t >= RULES.vehicleWait) leave = c > 0 || othersGive;
+        if (leave) { v.moving = true; v.t = 0; v.dropped = []; v.taken = []; docked.delete(here.id); }
+        else if (c === 0 && !othersGive) v.t = Math.min(v.t, RULES.vehicleWait);
       }
     }
   }

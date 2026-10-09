@@ -98,7 +98,13 @@ export class TreeScreen {
     const cols = [off + base * 0.185, off + base * 0.5, off + base * 0.815];
     const top = (row: number) => TOP + row * ROW;
     const maxRow = Math.max(...br.nodes.map((x) => x.row));
-    canvas.style.height = `${TOP + maxRow * ROW + TILE + 310}px`;
+    // De la place en bas pour la fiche du nœud (sa hauteur varie avec le texte) : on peut toujours voir la dernière ligne.
+    const fit = () => {
+      const sheetH = el.querySelector<HTMLElement>('.tree-sheet')?.offsetHeight ?? 300;
+      canvas.style.height = `${TOP + maxRow * ROW + TILE + Math.max(310, sheetH + 60)}px`;
+    };
+    fit();
+    requestAnimationFrame(fit);
     let html = '';
     for (const child of br.nodes) {
       for (const pid of child.parents) {

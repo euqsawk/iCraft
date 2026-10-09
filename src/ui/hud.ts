@@ -1,10 +1,10 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
 import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
-import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
+import { FLUIDS, isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import { FLOW_WINDOW, ROCKET_NEEDS, type Belt, type Line, type Machine } from '../sim/factory.ts';
+import { FLOW_WINDOW, ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
@@ -1937,7 +1937,7 @@ export class Hud implements GestureHandlers {
     const n = f.cargoCount(v);
     const load = n ? ` · ${n} objet${n > 1 ? 's' : ''}` : '';
     if (v.moving) return `vers ${next ? this.stationName(next) : '?'}${load}`;
-    return `${l.stops[v.at % l.stops.length].load ? 'charge' : 'décharge'} à ${here ? this.stationName(here) : '?'}${load}`;
+    return `à quai à ${here ? this.stationName(here) : '?'}${load}`;
   }
 
   /** Dans la fenêtre d'un dépôt ou d'une gare : ses lignes, et le bouton pour en ouvrir une. */
@@ -1994,7 +1994,59 @@ export class Hud implements GestureHandlers {
     this.sheetKind = 'line';
   }
 
-  /** Une ligne : ses arrêts (charge ou décharge), ses véhicules, un troisième arrêt. */
+  /** Ce qu'un véhicule dépose ou prend à un arrêt : rien, tout, ou des objets choisis. */
+  private openStopRule(lineId: number, i: number, which: 'take' | 'drop'): void {
+    const g = this.game;
+    const l = g.factory.lines.get(lineId);
+    const st = l?.stops[i];
+    if (!l || !st) return;
+    const m = g.factory.machines.get(st.id);
+    let rule = stopRules(st)[which];
+    let picked = new Set<string>(Array.isArray(rule) ? rule : []);
+    this.openSheet((sheet, close) => {
+      const back = () => { close(); this.openLine(lineId); };
+      sheet.append(this.sheetHead(`${which === 'take' ? 'Prend' : 'Dépose'} à ${m ? this.stationName(m) : '?'}`, which === 'take' ? 'Ce que le véhicule emporte d’ici (jamais ce qu’il vient d’y déposer)' : 'Ce que le véhicule laisse ici en arrivant', back));
+      const card = h('div', 'card');
+      const modes = h('div', 'rule-seg');
+      for (const [mode, label] of [['none', 'Rien'], ['all', 'Tout'], ['list', 'Choisir']] as const) {
+        const on = mode === 'list' ? Array.isArray(rule) : rule === mode;
+        const b = h('button', `btn${on ? ' primary' : ''}`, label);
+        b.onclick = () => {
+          rule = mode === 'list' ? [...picked] : mode;
+          if (mode !== 'list') g.setStopRule(lineId, i, which, rule);
+          this.refreshSheet();
+        };
+        modes.append(b);
+      }
+      card.append(modes);
+      if (Array.isArray(rule)) {
+        // Les objets de la partie : ceux qui passent déjà dans ce dépôt d'abord.
+        const here = m ? Object.keys(m.inBuf) : [];
+        const known = Object.keys(g.factory.stats.made);
+        const order = [...new Set([...here, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
+        const grid = h('div', 'sort-grid');
+        for (const id of order) {
+          const c = h('button', `sort-cell${picked.has(id) ? ' on' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
+          c.onclick = () => {
+            if (picked.has(id)) picked.delete(id); else picked.add(id);
+            rule = [...picked];
+            g.setStopRule(lineId, i, which, rule.length ? rule : 'none');
+            if (!rule.length) rule = [];
+            c.classList.toggle('on', picked.has(id));
+          };
+          grid.append(c);
+        }
+        card.append(h('p', 'muted small', 'Touche les objets (plusieurs possibles).'), grid);
+      }
+      sheet.append(card);
+      const ok = h('button', 'btn primary', 'Terminé');
+      ok.onclick = back;
+      sheet.append(ok);
+    });
+    void picked;
+  }
+
+  /** Une ligne : ses arrêts (ce qu'on y dépose et ce qu'on y prend), ses véhicules, d'autres arrêts. */
   openLine(id: number): void {
     this.closePopover();
     this.openSheet((sheet, close) => {
@@ -2004,27 +2056,38 @@ export class Hud implements GestureHandlers {
       sheet.append(this.sheetHead(truck ? 'Ligne de camions' : 'Ligne de trains', `${l.stops.length} arrêts, parcourus en boucle · ${truck ? RULES.truckLoad : RULES.trainLoad} objets par voyage`, close));
       // Arrêts
       const stops = h('div', 'card');
-      stops.append(h('p', 'muted', 'Arrêts · on charge tout ce que l’arrêt garde, ou on y vide tout'));
+      stops.append(h('p', 'muted', 'Arrêts, parcourus dans l’ordre · à chacun, le véhicule dépose ce qui est prévu, puis prend ce qu’il faut emporter'));
+      const ruleText = (r: StopRule) => r === 'all' ? 'tout' : r === 'none' ? 'rien' : r.length <= 2 ? r.map((k) => item(k).name.toLowerCase()).join(', ') : `${r.length} objets`;
+      const ruleIcons = (r: StopRule) => Array.isArray(r) ? r.slice(0, 3).map((k) => `<img class="btn-ico" src="${this.itemIcons.get(k)}" alt="">`).join('') : '';
       l.stops.forEach((st, i) => {
         const m = f.machines.get(st.id);
-        const row = h('div', 'row link-row stop-row', `<span><b>${i + 1}.</b> ${esc(m ? this.stationName(m) : '?')}</span>`);
-        const seg = h('div', 'seg');
-        for (const [load, label] of [[true, 'Charge'], [false, 'Décharge']] as const) {
-          const b = h('button', `btn${st.load === load ? ' primary' : ''}`, label);
-          b.onclick = () => { g.setStopLoad(l.id, i, load); this.refreshSheet(); };
-          seg.append(b);
+        const { take, drop } = stopRules(st);
+        const box = h('div', 'stop-box');
+        const head = h('div', 'row link-row', `<span><b>${i + 1}.</b> ${esc(m ? this.stationName(m) : '?')}</span>`);
+        if (l.stops.length > 2) {
+          const del = h('button', 'btn danger stop-del', '×');
+          del.setAttribute('aria-label', 'Retirer cet arrêt');
+          del.onclick = () => { g.removeStop(l.id, i); this.refreshSheet(); };
+          head.append(del);
         }
-        row.append(seg);
-        stops.append(row);
+        box.append(head);
+        const rules = h('div', 'row stop-rules');
+        const dropBtn = h('button', 'btn', `<span>Dépose</span>${ruleIcons(drop)}<b>${esc(ruleText(drop))}</b>`);
+        dropBtn.onclick = () => this.openStopRule(l.id, i, 'drop');
+        const takeBtn = h('button', 'btn', `<span>Prend</span>${ruleIcons(take)}<b>${esc(ruleText(take))}</b>`);
+        takeBtn.onclick = () => this.openStopRule(l.id, i, 'take');
+        rules.append(dropBtn, takeBtn);
+        box.append(rules);
+        stops.append(box);
       });
-      if (l.stops.length < 3) {
+      if (l.stops.length < RULES.maxStops) {
         const cand = [...f.machines.values()].filter((x) => g.stationKind(x) === l.kind && !l.stops.some((st) => st.id === x.id));
         const add = h('button', 'btn', `Ajouter un arrêt${cand.length ? '' : ` (pose ${truck ? 'un autre dépôt' : 'une autre gare'})`}`);
         add.disabled = !cand.length;
         add.onclick = () => {
           this.closeSheet();
           this.openMap({
-            title: 'Troisième arrêt', sub: 'Touche l’arrêt à ajouter', candidates: cand,
+            title: 'Ajouter un arrêt', sub: 'Touche l’arrêt à ajouter (il dépose tout par défaut)', candidates: cand,
             onPick: (m) => { if (!g.addStop(l.id, m)) this.toast('Pas assez de pièces', 'warn'); this.openLine(l.id); },
           });
         };
