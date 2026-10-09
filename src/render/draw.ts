@@ -2,7 +2,6 @@
 import { Graphics } from 'pixi.js';
 import { PALETTE } from '../config.ts';
 import { item, type ItemShape } from '../data/items.ts';
-import { MACHINES } from '../data/machines.ts';
 
 /** Trace une ligne brisée en pointillés. */
 export function dashedPolyline(g: Graphics, pts: { x: number; y: number }[], dash: number, gap: number, closed = false): void {
@@ -125,13 +124,6 @@ export function drawBolt(g: Graphics, x: number, y: number, s = 1): void {
 export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
   const ink = PALETTE.ink, coral = PALETTE.coral;
   const st = { width: 3, color: ink, cap: 'round' as const, join: 'round' as const };
-  // Version électrique : le dessin de la machine, avec un petit éclair dans le coin.
-  const def = MACHINES[type];
-  if (def?.base) {
-    drawMachineIcon(g, def.base, ore);
-    drawBolt(g, 12, -10, 0.85);
-    return;
-  }
   switch (type) {
     case 'generateur':
       g.roundRect(-14, -12, 28, 24, 6).fill(ink);

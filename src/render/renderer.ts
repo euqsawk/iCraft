@@ -777,7 +777,7 @@ export class GameRenderer {
         if (f.hasCable(nx, ny)) { links++; if (d < 2) segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL, y1: cy + DY[d] * CELL, on }); continue; }
         // Une machine électrique collée au câble : il file jusqu'à son bord.
         const m = f.machineAt(nx, ny);
-        if (m && (machineDef(m.type).power || machineDef(m.type).supply)) {
+        if (m && (f.powerUse(m) || machineDef(m.type).supply)) {
           links++;
           segs.push({ x0: cx, y0: cy, x1: cx + DX[d] * CELL * 0.6, y1: cy + DY[d] * CELL * 0.6, on });
         }
@@ -1012,7 +1012,7 @@ export class GameRenderer {
     lamp.visible = false;
     root.addChild(body, icon, badge, lamp);
     let label: Text | null = null;
-    const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.base ? machineDef(def.base).name : def.name;
+    const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
     label = this.makeLabel(name);
     label.position.set(0, -bh / 2 - 4);
     root.addChild(label);
@@ -1072,8 +1072,11 @@ export class GameRenderer {
       if (v.label) v.label.visible = this.camera.zoom > 0.6 && !this.machineAbove(m);
       const low = this.game.factory.lowFuel(m);
       v.lamp.visible = low && Math.sin(this.time * (m.fuel <= 0 && m.burn <= 0 ? 12 : 6)) > -0.2;
-      if (m.status !== v.status) {
-        v.status = m.status;
+      // Branchée sur un réseau qui a du courant : un petit éclair dans le coin (elle se passe de charbon).
+      const powered = m.built && this.game.factory.powered(m);
+      const st = `${m.status}${powered ? '+' : ''}`;
+      if (st !== v.status) {
+        v.status = st;
         v.badge.clear();
         if (m.built && m.status === 'blocked') {
           // Pastille « en pause » dans le coin, sans déborder sur une machine voisine.
@@ -1085,6 +1088,9 @@ export class GameRenderer {
           const r = 7.5, x = def.w * CELL / 2 - 4 - r, y = -def.h * CELL / 2 + 4 + r;
           v.badge.circle(x, y, r).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
           drawBolt(v.badge, x, y, 0.62);
+        } else if (powered) {
+          const x = def.w * CELL / 2 - 10, y = -def.h * CELL / 2 + 11;
+          drawBolt(v.badge, x, y, def.w === 1 ? 0.55 : 0.7);
         }
       }
     }
@@ -1584,7 +1590,7 @@ export class GameRenderer {
     const g = new Graphics();
     drawMachineBody(g, 46, 46, 15);
     const ig = new Graphics();
-    drawMachineIcon(ig, type, type === 'foreuse' || type === 'foreuse_elec' ? 'fer' : undefined);
+    drawMachineIcon(ig, type, type === 'foreuse' ? 'fer' : undefined);
     if (type === 'coffre') ig.scale.set(1.8);
     c.addChild(g, ig);
     const canvas = this.app.renderer.extract.canvas({ target: c, resolution: 3 }) as HTMLCanvasElement;

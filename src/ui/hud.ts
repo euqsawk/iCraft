@@ -351,7 +351,7 @@ export class Hud implements GestureHandlers {
   private static paletteCat(m: MachineDef): string {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator' || m.power) return 'electricite';
+    if (m.kind === 'generator') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
     if (m.kind === 'storage' || m.kind === 'sell') return 'stockage';
     return 'outils';
@@ -952,7 +952,7 @@ export class Hud implements GestureHandlers {
         if (raws.length) {
           html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get('foreuse')}" alt=""><b>Foreuse</b><small>sur un filon découvert</small></div><div class="recipes">${raws.map((id) => `<div class="recipe"><span class="it">Filon</span><span class="arrow">→</span>${it(id, 1)}</div>`).join('')}</div></div>`;
         }
-        const machines = Object.values(MACHINES).filter((m) => m.kind === 'crafter' && !m.base);
+        const machines = Object.values(MACHINES).filter((m) => m.kind === 'crafter');
         const locked: MachineDef[] = [];
         let shown = 0;
         for (const m of machines) {
@@ -960,7 +960,7 @@ export class Hud implements GestureHandlers {
           const rows = m.recipes.filter((r) => match([...Object.keys(r.in), ...Object.keys(r.out)]));
           if (!rows.length) continue;
           shown += rows.length;
-          const elec = g.hasMachine(`${m.id}_elec`) ? '<small class="rc-elec">aussi en électrique</small>' : '';
+          const elec = g.factory.canPower(m.id) ? '<small class="rc-elec">aussi en électrique</small>' : '';
           html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get(m.id)}" alt=""><b>${esc(m.name)}</b>${elec}</div><div class="recipes">${rows.map((r) => {
             const ins = Object.entries(r.in).map(([k, v]) => it(k, v)).join('<span class="arrow">+</span>');
             const outs = Object.entries(r.out).map(([k, v]) => it(k, v)).join('');
@@ -989,14 +989,14 @@ export class Hud implements GestureHandlers {
     const f = this.game.factory, def = machineDef(m.type), net = f.netOf(m);
     const bar = (pct: number, low: boolean, label: string, right: string) =>
       `<div class="gauge power${low ? ' low' : ''}"><span class="g-label">${ICONS.cable}${label}</span><span class="g-bar"><span style="width:${Math.max(0, Math.min(100, pct))}%"></span></span><b>${right}</b></div>`;
-    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">Aucun câble ne la touche : trace un câble jusqu’à un générateur (outil Câble).</p>`;
+    if (!net) return `${bar(0, true, 'Courant', '—')}<p class="muted small">${def.supply ? 'Aucun câble ne le touche' : 'Elle marche au charbon tant qu’aucun câble ne la touche'} : trace un câble jusqu’à un générateur (outil Câble).</p>`;
     if (def.supply) {
       const used = Math.min(net.demand, net.supply);
       const gens = net.gens.length;
       return `${bar(net.supply ? (used / net.supply) * 100 : 0, false, 'Charge du réseau', `${fmtN(used)}/${fmtN(net.supply)}`)}
         <p class="muted small">${net.users.length} machine${net.users.length > 1 ? 's' : ''} électrique${net.users.length > 1 ? 's' : ''} sur ce réseau${gens > 1 ? `, ${gens} générateurs` : ''}. Chaque générateur alimente ${def.supply} machines à plein ; il ne brûle du charbon que pour celles qui travaillent.</p>`;
     }
-    if (net.supply <= 0) return `${bar(0, true, 'Courant', '0 %')}<p class="muted small">Le réseau n’a pas de courant : ${net.gens.length ? 'son générateur n’a plus de charbon' : 'aucun générateur n’y est relié'}.</p>`;
+    if (net.supply <= 0) return `${bar(0, true, 'Courant', '0 %')}<p class="muted small">Le réseau n’a pas de courant : ${net.gens.length ? 'son générateur n’a plus de charbon' : 'aucun générateur n’y est relié'}. En attendant, elle brûle son charbon.</p>`;
     const pct = Math.round((m.power ?? 1) * 100);
     return `${bar(pct, pct < 100, 'Courant', `${pct} %`)}${pct < 100 ? `<p class="muted small">Trop de machines pour ce réseau (${fmtN(net.demand)} pour ${fmtN(net.supply)}) : elles tournent moins vite. Ajoute un générateur.</p>` : ''}`;
   }
@@ -1443,7 +1443,7 @@ export class Hud implements GestureHandlers {
       if (tc) sheet.append(tc);
       // Charbon et recettes
       const top = h('div', 'card mrec');
-      top.innerHTML = `${def.coal ? this.gauge('Carburant', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm), mm.carb) : ''}${def.power ? this.powerCard(mm) : ''}${this.recipesHtml(def, mm)}`;
+      top.innerHTML = `${def.coal ? this.gauge('Carburant', mm.fuel, g.factory.fuelCap(mm), g.factory.lowFuel(mm), mm.carb) : ''}${g.factory.powerUse(mm) ? this.powerCard(mm) : ''}${this.recipesHtml(def, mm)}`;
       if (mm.type === 'raffinerie') {
         const cur = mm.choice ?? 'plastique';
         const row = h('div', 'row');

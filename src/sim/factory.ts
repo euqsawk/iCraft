@@ -1,6 +1,6 @@
 // L'usine : tapis et machines sur la grille, et leur simulation.
 import { RULES } from '../config.ts';
-import { acceptedInputs, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
+import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
@@ -183,6 +183,32 @@ export class Factory {
   speedMult = 1;
   /** Cases d'un coffre (déblocage Grand coffre). */
   chestSlots = RULES.chestSlots;
+  /** Les types de machines qui peuvent marcher au courant (nœuds « électriques » de la branche Énergie). */
+  private electric = new Set<string>();
+
+  setElectric(types: Iterable<string>): void {
+    const next = new Set(types);
+    if (next.size === this.electric.size && [...next].every((t) => this.electric.has(t))) return;
+    this.electric = next;
+    this.dirty = true;
+  }
+
+  /** Ce type de machine peut marcher au courant. */
+  canPower(type: string): boolean {
+    return this.electric.has(type);
+  }
+
+  /** Courant demandé par la machine quand elle travaille (0 : elle ne se branche pas). */
+  powerUse(m: Machine): number {
+    return this.electric.has(m.type) ? 1 : 0;
+  }
+
+  /** Branchée par câble sur un réseau dont un générateur tourne : elle se passe de charbon. */
+  powered(m: Machine): boolean {
+    if (!this.powerUse(m)) return false;
+    const n = this.netOf(m);
+    return !!n && n.supply > 0;
+  }
   /** Les bâtiments spéciaux (Noyau, Laboratoire, Comptoir) acceptent-ils cet objet ? */
   buildingAccepts: (m: Machine, item: string) => boolean = () => true;
   /** Appelé quand un objet entre dans un bâtiment spécial. */
@@ -659,7 +685,7 @@ export class Factory {
     const touch = new Map<Machine, number[]>();
     for (const m of this.machines.values()) {
       const def = machineDef(m.type);
-      if (!def.power && !def.supply) continue;
+      if (!this.powerUse(m) && !def.supply) continue;
       const found: number[] = [];
       for (let y = m.y - 1; y <= m.y + m.h; y++) {
         for (let x = m.x - 1; x <= m.x + m.w; x++) {
@@ -693,11 +719,11 @@ export class Factory {
 
   /** Le courant de chaque réseau : les générateurs qui ont du charbon servent les machines qui veulent travailler. */
   private stepPower(dt: number): void {
-    for (const m of this.machines.values()) if (machineDef(m.type).power) m.power = 0;
+    for (const m of this.machines.values()) m.power = 0;
     for (const n of this.nets) {
       let supply = 0, demand = 0;
       for (const g of n.gens) if (g.built && (g.fuel > 0 || g.burn > 0)) supply += machineDef(g.type).supply!;
-      for (const u of n.users) if (u.built && u.want) demand += machineDef(u.type).power!;
+      for (const u of n.users) if (u.built && u.want) demand += this.powerUse(u);
       const ratio = supply <= 0 ? 0 : demand <= 0 ? 1 : Math.min(1, supply / demand);
       for (const u of n.users) u.power = ratio;
       n.supply = supply; n.demand = demand; n.ratio = ratio;
@@ -723,10 +749,22 @@ export class Factory {
     g.status = 'working';
   }
 
-  /** Électrique : part du courant reçue (et on note qu'elle en veut). Au charbon : 1 si elle a de quoi brûler. */
+  /**
+   * Branchée au réseau : part du courant reçue (et on note qu'elle en veut).
+   * Sans courant (pas de câble, générateur à l'arrêt) : 1 si elle a de quoi brûler.
+   */
   private energy(m: Machine, def: MachineDef, dt: number): number {
-    if (def.power) { m.want = true; return m.power ?? 0; }
+    if (this.powerUse(m) && this.netOfMachine.has(m)) {
+      m.want = true;
+      if ((m.power ?? 0) > 0) return m.power!;
+    }
+    if (!def.coal) return 0;
     return this.useFuel(m, def, dt) ? 1 : 0;
+  }
+
+  /** Arrêtée faute d'énergie : branchée → « pas de courant », sinon « pas de charbon ». */
+  private noEnergy(m: Machine): MachineStatus {
+    return this.powerUse(m) && this.netOfMachine.has(m) && m.fuel <= 0 ? 'nopower' : 'nofuel';
   }
 
   setChoice(m: Machine, out: string): void {
@@ -836,7 +874,7 @@ export class Factory {
   /** Place restante dans la case carburant. */
   fuelRoom(m: Machine): number {
     const def = machineDef(m.type);
-    if (this.selfFed(m)) return 0;
+    if (this.selfFed(m) || this.powered(m)) return 0;
     return def.coal ? Math.max(0, this.fuelCap(m) - m.fuel) : 0;
   }
 
@@ -860,7 +898,7 @@ export class Factory {
 
   /** La machine fait clignoter son voyant : il lui faut du charbon. */
   lowFuel(m: Machine): boolean {
-    return m.built && machineDef(m.type).coal && !this.selfFed(m) && m.fuel <= RULES.lowFuel;
+    return m.built && machineDef(m.type).coal && !this.selfFed(m) && !this.powered(m) && m.fuel <= RULES.lowFuel;
   }
 
   /** Cases occupées d'un coffre (piles de 10). */
@@ -1062,7 +1100,7 @@ export class Factory {
     for (const m of this.machines.values()) {
       if (!m.built) continue;
       const def = machineDef(m.type);
-      if (def.power) m.want = false;
+      m.want = false;
       if (def.kind === 'drill') this.tickDrill(m, dt);
       else if (def.kind === 'crafter') this.tickCrafter(m, def, dt);
       if (def.kind === 'drill' || def.kind === 'crafter' || def.kind === 'storage') {
@@ -1087,9 +1125,9 @@ export class Factory {
     // Sur du charbon, elle démarre même à vide : elle brûlera ce qu'elle extrait.
     const def = machineDef(m.type);
     const k = this.energy(m, def, dt);
-    if (k <= 0 && !this.selfFed(m)) { m.status = def.power ? 'nopower' : 'nofuel'; return; }
+    if (k <= 0 && !this.selfFed(m)) { m.status = this.noEnergy(m); return; }
     m.status = 'working';
-    m.drillT += dt * m.rate * (def.power ? k : 1);
+    m.drillT += dt * m.rate * (k > 0 ? k : 1);
     if (m.drillT >= 1) {
       m.drillT -= 1;
       m.made++;
@@ -1116,7 +1154,7 @@ export class Factory {
       const rec = def.recipes[m.craft.ri];
       if (m.craft.t < rec.time) {
         const k = this.energy(m, def, dt);
-        if (k <= 0) { m.status = def.power ? 'nopower' : 'nofuel'; return; }
+        if (k <= 0) { m.status = this.noEnergy(m); return; }
         m.craft.t += dt * k;
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
@@ -1241,6 +1279,7 @@ export class Factory {
     for (const sm of s.machines) {
       // Chaque machine garde son numéro. (Avant, un numéro provisoire pouvait effacer
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
+      sm.type = baseType(sm.type); // les anciennes « machines électriques » redeviennent des machines normales
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });

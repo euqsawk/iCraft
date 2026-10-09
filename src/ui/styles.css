@@ -303,7 +303,7 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .node { position: absolute; width: 100px; display: flex; flex-direction: column; align-items: center; gap: 7px; }
 .node .tile {
   position: relative; width: 76px; height: 76px; box-sizing: border-box; border-radius: 22px;
-  display: flex; align-items: center; justify-content: center; border: 2.5px solid transparent;
+  display: flex; align-items: center; justify-content: center; border: 2.5px solid transparent; isolation: isolate;
 }
 .node .ico { width: 40px; height: 40px; display: flex; }
 .node.owned .tile { background: #fff; box-shadow: 0 4px 0 var(--shadow); border-color: #fff; }
@@ -313,7 +313,9 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .node.soon .tile { background: #F4F8F6; border: 2.5px dashed #C9D6CF; }
 .node.soon .ico { opacity: .55; }
 /* Cadre de sélection : un anneau posé exactement autour de la tuile (l'outline de Safari ne suit pas toujours l'arrondi). */
-.node.sel .tile::after { content: ''; position: absolute; inset: -8px; border-radius: 29px; border: 3px solid var(--coral); pointer-events: none; }
+.node.sel .tile::after { content: ''; position: absolute; inset: -8px; border-radius: 29px; border: 3px solid var(--coral); pointer-events: none; z-index: 1; }
+/* Les pastilles (check, prix, cadenas) restent par-dessus le cadre. */
+.nb-owned, .nb-cost, .nb-lock, .nb-level, .nb-soon { z-index: 2; }
 @keyframes avail { 0%, 100% { box-shadow: 0 4px 0 #E0A82E, 0 0 0 0 rgba(255, 200, 87, 0); } 50% { box-shadow: 0 4px 0 #E0A82E, 0 0 0 6px rgba(255, 200, 87, .35); } }
 .node .lbl { padding: 1px 7px; border-radius: 8px; background: var(--ground); font-size: 12px; font-weight: 800; line-height: 16px; white-space: nowrap; }
 .node.locked .lbl, .node.soon .lbl { color: #6B7684; }

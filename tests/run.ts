@@ -10,7 +10,7 @@ import { PALIERS } from '../src/data/paliers.ts';
 import { NODE } from '../src/data/unlocks.ts';
 import { decodeSave, encodeSave } from '../src/save/code.ts';
 import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
-import { MACHINES } from '../src/data/machines.ts';
+import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
 
 let failed = 0, passed = 0;
@@ -58,7 +58,7 @@ test('chaque recette se déduit de ses entrées (sauf la raffinerie)', () => {
   for (const m of Object.values(MACHINES)) {
     const sigs = m.recipes.map((r) => Object.keys(r.in).sort().join('+'));
     const dup = sigs.filter((s, i) => sigs.indexOf(s) !== i);
-    if (m.id === 'raffinerie' || m.base === 'raffinerie') assert(dup.length === 1 && dup[0] === 'petrole', 'raffinerie : seul le pétrole est ambigu');
+    if (m.id === 'raffinerie') assert(dup.length === 1 && dup[0] === 'petrole', 'raffinerie : seul le pétrole est ambigu');
     else assert(dup.length === 0, `${m.id} : recettes ambiguës ${dup}`);
   }
 });
@@ -807,41 +807,61 @@ test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () =
 });
 
 console.log('Électricité');
-test('générateur, câbles et machines électriques', () => {
+test('générateur, câbles et machines qui passent au courant', () => {
   const g = new Game('TEST-E1');
+  const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
   g.money = 100000; g.world.reveal(8, 8, 20); g.drones[0].cargo = null;
   assert(!g.placeMachine('generateur', 4, 4) && !g.placeCables([{ x: 6, y: 4 }]), 'à débloquer');
-  for (const id of ['generateur', 'four_elec', 'presse_elec']) g.unlocks.add(id);
+  assert(!MACHINES.four_elec && !BUILDABLE.some((m) => m.id.endsWith('_elec')), 'plus de machine électrique à part');
+  g.unlocks.add('generateur'); apply();
   const gen = g.placeMachine('generateur', 4, 4)!;
-  const four = g.placeMachine('four_elec', 9, 4)!;
+  const four = g.placeMachine('four', 9, 4)!;
+  g.unlocks.add('broyeur');
+  const broyeur = g.placeMachine('broyeur', 6, 2)!;
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
-  assert(MACHINES.four_elec.name === 'Four électrique' && !MACHINES.four_elec.coal && MACHINES.four_elec.recipes.length === MACHINES.four.recipes.length, 'définition');
-  four.inBuf = { fer: 10 };
+  four.inBuf = { fer: 10 }; four.fuel = 0;
   run(g, 3);
-  assert(four.status === 'nopower' && !(four.outBuf.lingot_fer > 0), `sans câble : ${four.status}`);
+  assert(four.status === 'nofuel', `four au charbon, sans charbon : ${four.status}`);
   // Câble du générateur (cases 4-5) jusqu'au four (cases 9-10) : il touche les deux.
   const cells = [6, 7, 8].map((x) => ({ x, y: 4 }));
   const m0 = g.money;
   assert(g.placeCables(cells) && m0 - g.money === 3 * RULES.cableCost, 'câbles posés');
-  assert(g.factory.netOf(four) && g.factory.netOf(four) === g.factory.netOf(gen), 'même réseau');
-  run(g, 3);
-  assert(four.status === 'nopower', 'générateur sans charbon');
   gen.fuel = 10;
+  assert(!g.factory.netOf(four), 'four pas encore électrique : il ne se branche pas');
+  // Le nœud « Four électrique » : les fours déjà posés se branchent.
+  g.unlocks.add('four_elec'); apply();
+  assert(g.factory.netOf(four) && g.factory.netOf(four) === g.factory.netOf(gen), 'même réseau');
+  assert(!g.factory.netOf(broyeur) || !g.factory.netOf(broyeur)!.users.includes(broyeur), 'le broyeur (non débloqué) reste au charbon');
   run(g, 20);
   assert((four.outBuf.lingot_fer ?? 0) >= 3 && four.fuel === 0, `lingots sans charbon dans le four : ${four.outBuf.lingot_fer}`);
+  assert(g.factory.powered(four) && g.factory.fuelRoom(four) === 0 && !g.factory.lowFuel(four), 'alimenté : pas de charbon à livrer');
   assert(gen.fuel < 10 && gen.fuel >= 7, `le générateur brûle selon la charge : ${gen.fuel}`);
+  // Générateur à sec : le four reprend son charbon, puis s'arrête « sans courant ».
+  gen.fuel = 0; gen.burn = 0; four.inBuf = { fer: 10 }; four.outBuf = {}; four.fuel = 2;
+  run(g, 4);
+  assert(!g.factory.powered(four) && four.fuel < 2 && (four.outBuf.lingot_fer ?? 0) >= 1, `secours au charbon : ${four.fuel}`);
+  four.fuel = 0; four.burn = 0;
+  run(g, 3);
+  assert(four.status === 'nopower' && g.factory.fuelRoom(four) > 0, `ni courant ni charbon : ${four.status}`);
+  gen.fuel = 10;
   // Au repos, il ne brûle rien.
   four.inBuf = {}; four.outBuf = {};
   run(g, 3);
   const f = gen.fuel + gen.burn;
   run(g, 30);
   assert(gen.fuel + gen.burn === f && gen.status === 'idle', `au repos : ${f} → ${gen.fuel + gen.burn}`);
+  // Ancienne sauvegarde avec un « four_elec » : il redevient un four.
+  const old = JSON.parse(JSON.stringify(g.serialize()));
+  old.factory.machines.find((x: { id: number }) => x.id === four.id).type = 'four_elec';
+  const g0 = new Game('TEST-E1', old);
+  assert(g0.factory.machines.get(four.id)?.type === 'four', 'four_elec → four');
+  g.unlocks.add('presse'); g.unlocks.add('presse_elec'); apply();
   // Six machines pour un générateur de 5 : chacune reçoit 5/6 du courant.
-  const presses = [0, 1, 2, 3, 4, 5].map((i) => g.placeMachine('presse_elec', 4 + i * 2, 7)!);
+  const presses = [0, 1, 2, 3, 4, 5].map((i) => g.placeMachine('presse', 4 + i * 2, 7)!);
   const four2 = presses.pop()!;
   g.factory.removeMachine(four2);
-  const extra = g.placeMachine('four_elec', 14, 7)!;
+  const extra = g.placeMachine('four', 14, 7)!;
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
   g.placeCables([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].map((x) => ({ x, y: 6 })));

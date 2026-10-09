@@ -573,6 +573,7 @@ export class Game {
     }
     this.factory.speedMult = speed;
     this.factory.chestSlots = slots;
+    this.factory.setElectric([...this.unlocks].flatMap((id) => { const e = NODE[id]?.effect; return e?.kind === 'electric' ? [e.id] : []; }));
     if (this.drones.length !== this.droneCount && this.drones.length > 0) {
       this.rebuildDrones();
       this.emit({ type: 'drones' });
