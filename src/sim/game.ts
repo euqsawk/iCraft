@@ -496,6 +496,14 @@ export class Game {
     this.refreshChoices();
   }
 
+  /** Abandonne la commande en cours : ce qui a déjà été livré est perdu, trois nouveaux choix arrivent. */
+  abandonOrder(): boolean {
+    if (!this.order) return false;
+    this.order = null;
+    this.refreshChoices();
+    return true;
+  }
+
   acceptOrder(o: Order): void {
     this.order = o;
     this.choices = [];

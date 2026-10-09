@@ -939,6 +939,11 @@ test('Comptoir : la commande se livre et se paie en pièces', () => {
   assert(g.receive(c, 'lingot_fer', 50) === 10, 'le comptoir prend juste la commande');
   assert(g.order === null && g.choices.length === 3 && g.money > m0, 'commande payée');
   assert(g.receive(c, 'lingot_fer', 5) === 0, 'sans commande, rien n’est pris');
+  // Abandonner une commande : trois nouveaux choix, pas de paiement.
+  g.acceptOrder(g.choices[0]);
+  const m1 = g.money, seq = g.orderSeq;
+  assert(g.abandonOrder() && g.order === null && g.choices.length === 3 && g.orderSeq > seq && g.money === m1, 'commande abandonnée');
+  assert(!g.abandonOrder(), 'rien à abandonner');
 });
 test('les drones vident les coffres vers le Noyau et le Laboratoire, selon leur priorité', () => {
   const g = new Game('TEST-43');

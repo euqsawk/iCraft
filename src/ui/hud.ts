@@ -1287,6 +1287,8 @@ export class Hud implements GestureHandlers {
    * même si la fenêtre se redessine entre les deux touchers (elle se rafraîchit toute seule).
    */
   private armedDelete: { id: number; until: number } | null = null;
+  /** Abandon de la commande du Comptoir en attente de confirmation (jusqu'à cette date). */
+  private armedAbandon = 0;
   /** Destruction d'objets du robot en attente de confirmation. */
   private armedTrash: { slot: number; until: number } | null = null;
 
@@ -1970,6 +1972,21 @@ export class Hud implements GestureHandlers {
         sheet.append(h('div', 'card', this.orderCardHtml(g.order, true)));
         const comptoir = [...g.factory.machines.values()].find((x) => x.type === 'comptoir');
         if (comptoir) sheet.append(this.depositCard(comptoir));
+        // Abandonner : en deux temps (ce qui a déjà été livré est perdu).
+        const armed = performance.now() < this.armedAbandon;
+        const quit = h('button', `btn danger${armed ? ' armed' : ''}`, armed ? 'Toucher encore : ce qui est livré sera perdu' : 'Abandonner la commande');
+        quit.onclick = () => {
+          if (performance.now() >= this.armedAbandon) {
+            this.armedAbandon = performance.now() + 4000;
+            this.refreshSheet();
+            setTimeout(() => { if (performance.now() >= this.armedAbandon && this.sheetKind === 'building') this.refreshSheet(); }, 4100);
+            return;
+          }
+          this.armedAbandon = 0;
+          if (g.abandonOrder()) this.toast('Commande abandonnée : choisis-en une autre', 'info');
+          this.refreshSheet();
+        };
+        sheet.append(quit);
       } else {
         sheet.append(this.sheetHead('Comptoir', 'Choisis une commande. Pas de chrono, pas de pénalité : elle se paie en pièces.', close));
         for (const o of g.choices) {
