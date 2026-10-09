@@ -11,6 +11,7 @@ import type { TraceCell } from './tracer.ts';
 import { Inventory, type Slot } from './inventory.ts';
 import { planCraft, type CraftStep } from './craft.ts';
 import { RICHNESS_RATE } from '../world/world.ts';
+import { ACHIEVEMENTS } from '../data/achievements.ts';
 import { ALL_NODES, BASE_UNLOCKS, LAB_ITEMS, NODE, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 import { MAX_PALIER, palierMission } from '../data/paliers.ts';
 import { cleanLook, DEFAULT_LOOK, type RobotLook } from '../data/look.ts';
@@ -182,6 +183,9 @@ export interface GameSave {
   look?: RobotLook;
   tips?: TipState;
   played?: number;
+  /** Statistiques de production et succès. */
+  stats?: { made: Record<string, number>; used: Record<string, number> };
+  achievements?: string[];
   gifts?: Record<string, number>;
   ordersDone?: number;
   sellT?: number;
@@ -1972,6 +1976,46 @@ export class Game {
 
   private wasNight: boolean | null = null;
 
+  /** Succès obtenus. */
+  achievements = new Set<string>();
+  private achT = 0;
+
+  private checkAchievements(): void {
+    for (const a of ACHIEVEMENTS) {
+      if (this.achievements.has(a.id)) continue;
+      let ok = false;
+      try { ok = a.test(this); } catch { ok = false; }
+      if (!ok) continue;
+      this.achievements.add(a.id);
+      this.emit({ type: 'toast', text: `Succès : ${a.name}`, tone: 'good' });
+    }
+  }
+
+  /** Statistiques : ce qui a été fabriqué, relevé toutes les 10 secondes (les 10 dernières minutes). */
+  statHistory: { t: number; made: Record<string, number> }[] = [];
+  private statT = 0;
+
+  /** Débit de fabrication d'un objet, par minute, sur les `seconds` dernières secondes. */
+  ratePerMinute(item: string, seconds = 60): number {
+    const h = this.statHistory;
+    if (!h.length) return 0;
+    const now = this.factory.stats.made[item] ?? 0;
+    const target = this.played - seconds;
+    let old = h[0];
+    for (const p of h) if (p.t <= target) old = p; else break;
+    const dt = Math.max(10, this.played - old.t);
+    return ((now - (old.made[item] ?? 0)) / dt) * 60;
+  }
+
+  /** Change ce que trie un séparateur (null : il ne trie plus, un objet sur deux de chaque côté). */
+  setBeltFilter(b: Belt, item: string | null): boolean {
+    if (!this.isUnlocked('tri') || b.split === undefined) return false;
+    if (item) b.filter = item; else delete b.filter;
+    this.view.markBuilt();
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
   tick(dt: number): void {
     this.time += dt;
     this.played += dt;
@@ -1982,6 +2026,14 @@ export class Game {
       this.emit({ type: 'toast', text: night ? 'La nuit tombe : les panneaux solaires s’arrêtent, les batteries prennent le relais' : 'Le jour se lève : les panneaux solaires repartent', tone: 'info' });
     }
     this.wasNight = night;
+    this.achT += dt;
+    if (this.achT > 2) { this.achT = 0; this.checkAchievements(); }
+    this.statT += dt;
+    if (this.statT >= 10 || !this.statHistory.length) {
+      this.statT = 0;
+      this.statHistory.push({ t: this.played, made: { ...this.factory.stats.made } });
+      if (this.statHistory.length > 61) this.statHistory.shift();
+    }
     this.tickRobot(dt);
     this.tickDrones(dt);
     this.factory.tick(dt);
@@ -2005,6 +2057,7 @@ export class Game {
       palier: this.palier, palierDone: this.palierDone, lab: this.lab, extraDrones: this.extraDrones,
       look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
       gifts: this.gifts, ordersDone: this.ordersDone,
+      stats: this.factory.stats, achievements: [...this.achievements],
       crew: {
         robot: { fuel: r.fuel, carb: r.carb, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
         drones: this.drones.map((d) => ({ fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
@@ -2018,6 +2071,8 @@ export class Game {
     this.robot.x = s.robot.x; this.robot.y = s.robot.y;
     this.world.loadFog(s.fog);
     this.factory.load(s.factory);
+    if (s.stats) { this.factory.stats.made = { ...s.stats.made }; this.factory.stats.used = { ...s.stats.used }; }
+    for (const id of s.achievements ?? []) this.achievements.add(id);
     this.pending = s.pending.filter((j) => (j.kind === 'belt' ? this.factory.belts.has(j.k) : this.factory.machines.has(j.id)));
     this.order = s.order; this.choices = s.choices;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;

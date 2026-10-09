@@ -7,6 +7,8 @@ export type UnlockEffect =
   /** Les machines de ce type (déjà posées ou à venir) marchent aussi au courant. */
   | { kind: 'electric'; id: string }
   | { kind: 'splitter' }
+  /** Le séparateur peut trier : un seul type d'objet part dans la dérivation. */
+  | { kind: 'sorter' }
   | { kind: 'bridge' }
   | { kind: 'tunnel' }
   | { kind: 'vehicle'; id: 'camion' | 'train' }
@@ -85,7 +87,8 @@ export const BRANCHES: Branch[] = [
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 0, 2, { plaque_fer: 60 }, ['separateur'], 'Un coffre de 2 × 2 qui garde 300 objets (un coffre simple en garde 100).', m('grand_coffre')),
       n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tous les tapis vont trois fois plus vite qu’au départ.', { kind: 'beltSpeed', mult: 3 }),
       n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Le Dépôt : pose-en deux, remplis-les par tapis comme un coffre, puis relie-les depuis la fenêtre d’un dépôt. Un camion fait les allers-retours (20 objets à la fois) ; on peut ajouter des camions et un troisième arrêt.', m('depot')),
-      n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Un séparateur qui choisit : un seul objet part de côté.', soon),
+      n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Un séparateur qui choisit : touche un séparateur et choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', { kind: 'sorter' }),
+      n('entrepot', 'Entrepôt', 'entrepot', 4, 0, 6, { cadre: 20, acier: 100 }, ['tri'], 'Un grand bâtiment de 3 × 3 qui garde 900 objets et les range par sorte (il montre ce qu’il garde le plus).', m('entrepot')),
       n('souterrain', 'Tapis souterrains', 'souterrain', 3, 1, 5, { acier: 60, engrenage: 40 }, ['express'], 'Outil Sous-sol : depuis un coffre ou une machine, trace un tapis sous le sol jusqu’à un autre coffre ou une machine. Il passe sous tout.', { kind: 'tunnel' }),
       n('train', 'Trains', 'train', 3, 2, 5, { moteur: 40 }, ['camion'], 'La Gare : comme le dépôt, mais pour un train, plus rapide, qui emporte 80 objets à la fois. Pour aller chercher l’or et l’uranium au loin.', m('gare')),
     ],
@@ -107,6 +110,7 @@ export const BRANCHES: Branch[] = [
   {
     id: 'energie', label: 'Énergie', nodes: [
       n('charbon', 'Charbon', 'charbon', 0, 1, 1, {}, [], 'Au début, tout tourne au charbon : machines, robot et drones.', base),
+      n('lampadaire', 'Lampadaire', 'lampadaire', 1, 0, 2, { lingot_fer: 20, fil_cuivre: 10 }, ['charbon'], 'Un lampadaire d’une case : la nuit, il éclaire loin autour de lui (sans courant ni charbon).', m('lampadaire')),
       n('generateur', 'Générateur', 'generateur', 1, 1, 4, { moteur: 10, cable: 40 }, ['charbon'], 'Brûle du charbon et fournit 600 kW (une presse consomme 60 kW, un fabricant 300 kW ; débloque ensuite chaque type de machine au courant). Débloque aussi les câbles : trace-les au doigt : un câble alimente les machines à 5 cases autour de lui.', m('generateur')),
       // Chaque machine a sa version électrique : plus de charbon à livrer, il suffit d'un câble.
       n('foreuse_elec', 'Foreuse électrique', 'foreuse_elec', 2, 0, 4, { cable: 20, engrenage: 20 }, ['generateur'], 'Tes foreuses marchent au courant quand un câble les relie à un générateur : plus de charbon à livrer. Chacune consomme 90 kW quand elle travaille.', elec('foreuse')),

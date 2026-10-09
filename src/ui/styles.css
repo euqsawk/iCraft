@@ -764,3 +764,31 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .minimap { position: relative; }
 .daynight { position: absolute; left: 3px; top: 3px; width: 22px; height: 22px; border-radius: 11px; background: #FFF6D6; box-shadow: 0 2px 0 var(--shadow); display: flex; align-items: center; justify-content: center; pointer-events: none; }
 .daynight svg { width: 16px; height: 16px; }
+/* Tri : la grille des objets. */
+.sort-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+.sort-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 4px; border-radius: 14px; background: #F0F5F2; }
+.sort-cell img { width: 30px; height: 30px; }
+.sort-cell small { font-size: 10.5px; font-weight: 800; line-height: 1.15; text-align: center; color: var(--ink2); }
+.sort-cell.on { background: var(--ink); }
+.sort-cell.on small { color: #fff; }
+.sort-cell .sc-none { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; }
+.sort-cell.on .sc-none { color: #fff; }
+.btn-ico { width: 20px; height: 20px; }
+/* Statistiques et succès. */
+.stats .stat-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #EEF3F0; }
+.stats .stat-row:last-child { border-bottom: none; }
+.stat-row > img { width: 28px; height: 28px; flex: none; }
+.st-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.st-name b { font-size: 13px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.st-name small, .st-rate small { font-size: 10.5px; font-weight: 700; color: var(--ink2); }
+.st-spark { width: 70px; height: 26px; flex: none; }
+.st-rate { display: flex; flex-direction: column; align-items: flex-end; min-width: 74px; }
+.st-rate b { font-size: 15px; font-weight: 900; }
+.ach-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #EEF3F0; opacity: 0.55; }
+.ach-row:last-child { border-bottom: none; }
+.ach-row.done { opacity: 1; }
+.ach-row div { display: flex; flex-direction: column; }
+.ach-row b { font-size: 13.5px; font-weight: 900; }
+.ach-row small { font-size: 11.5px; font-weight: 700; color: var(--ink2); }
+.ach-ico { width: 30px; height: 30px; border-radius: 15px; background: #F0F5F2; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #9AA6B2; flex: none; }
+.ach-row.done .ach-ico { background: var(--yellow); color: var(--ink); }

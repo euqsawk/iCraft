@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp';
 
 export interface MachineDef {
   id: string;
@@ -180,6 +180,14 @@ export const MACHINES: Record<string, MachineDef> = {
   comptoir: {
     id: 'comptoir', name: 'Comptoir', kind: 'missions', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 60, unlock: 1, recipes: [], buildable: true,
     hint: 'Des commandes au choix, payées en pièces',
+  },
+  entrepot: {
+    id: 'entrepot', name: 'Entrepôt', kind: 'storage', coal: false, w: 3, h: 3, cost: 300, unlock: 1, recipes: [], buildable: true,
+    hint: 'Garde 900 objets, rangés par sorte · 3 × 3',
+  },
+  lampadaire: {
+    id: 'lampadaire', name: 'Lampadaire', kind: 'lamp', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
+    hint: 'Éclaire loin autour de lui la nuit',
   },
   solaire: {
     id: 'solaire', name: 'Panneau solaire', kind: 'solar', coal: false, w: 2, h: 2, cost: 180, unlock: 1, recipes: [], buildable: true, supply: 120,

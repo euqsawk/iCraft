@@ -932,6 +932,39 @@ test('jour et nuit ; panneaux solaires et batteries', () => {
   assert(Math.abs((g2.factory.machines.get(bat.id)!.charge ?? 0) - bat.charge!) < 1, 'charge sauvegardée');
   assert(!g.enterAtelier(sol), 'un panneau n’est pas un atelier');
 });
+test('tri : seul l’objet choisi part de côté ; entrepôt ; statistiques et succès', () => {
+  const g = new Game('TEST-T1');
+  g.money = 100000; g.world.reveal(8, 8, 25);
+  for (const id of ['separateur', 'grand_coffre', 'tri', 'entrepot']) g.unlocks.add(id);
+  const src = g.placeMachine('coffre', 1, 5)!;
+  const straight = g.placeMachine('coffre', 10, 5)!;
+  const side = g.placeMachine('coffre', 5, 9)!;
+  assert(g.placeBelts(trace(g, [[1.5, 5.5], [9.5, 5.5], [10.5, 5.5]]).result()), 'tapis');
+  for (const b of g.factory.belts.values()) b.built = true;
+  const t = trace(g, [[5.5, 5.5], [5.5, 8.5], [5.5, 9.5]]);
+  assert(t.splitFrom && g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir! }), 'dérivation');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const sb = g.factory.beltAt(5, 5)!;
+  assert(g.setBeltFilter(sb, 'cuivre') && sb.filter === 'cuivre', 'tri sur le cuivre');
+  g.factory.putInStorage(src, 'fer', 10);
+  g.factory.putInStorage(src, 'cuivre', 10);
+  run(g, 40);
+  assert(side.inBuf.cuivre === 10 && !side.inBuf.fer && straight.inBuf.fer === 10 && !straight.inBuf.cuivre, `tri : côté ${JSON.stringify(side.inBuf)}, tout droit ${JSON.stringify(straight.inBuf)}`);
+  const g2 = new Game('TEST-T1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.beltAt(5, 5)!.filter === 'cuivre', 'tri sauvegardé');
+  const e = g.placeMachine('entrepot', 14, 12)!;
+  assert(e && g.factory.slotsOf(e) === 90 && g.factory.putInStorage(e, 'fer', 2000) === 900, 'entrepôt : 900 objets');
+  // Statistiques et succès.
+  const four = g.placeMachine('four', 14, 2)!;
+  four.built = true; four.inBuf = { fer: 3 }; four.fuel = 5; g.factory.markBuilt();
+  run(g, 10);
+  assert((g.factory.stats.made.lingot_fer ?? 0) >= 3 && g.achievements.has('lingot'), `stats : ${JSON.stringify(g.factory.stats.made)}`);
+  assert(g.ratePerMinute('lingot_fer', 60) > 0, 'débit par minute');
+  const g3 = new Game('TEST-T1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g3.achievements.has('lingot') && (g3.factory.stats.made.lingot_fer ?? 0) >= 3, 'stats et succès sauvegardés');
+});
 console.log('Modules');
 test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvegardé, copié', () => {
   const g = new Game('TEST-M1');

@@ -111,6 +111,8 @@ export const RULES = {
   chestSlots: 10,
   /** Grand coffre (2 × 2) : 30 cases, 300 objets. */
   bigChestSlots: 30,
+  /** Entrepôt (3 × 3) : 90 cases de 10. */
+  warehouseSlots: 90,
   /** Sans charbon, le robot avance au quart de sa vitesse ; les drones se posent sur lui. */
   robotNoFuelSpeed: 0.25,
   /** Minage du robot : objets par seconde sur un filon normal. */

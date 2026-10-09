@@ -30,6 +30,8 @@ export interface Belt {
   split?: Dir;
   /** Seconde dérivation, de l'autre côté, vers une machine collée : le tapis nourrit deux machines et continue tout droit. */
   split2?: Dir;
+  /** Tri : seul cet objet part dans la dérivation, tout le reste continue tout droit. */
+  filter?: string;
   /** Alternance du séparateur. */
   toggle?: number;
   /** Liaisons de côté : les machines voisines dans ces sens y déposent leur production (sans case de tapis). */
@@ -266,6 +268,7 @@ export class Factory {
     f.speedMult = this.speedMult;
     f.chestSlots = this.chestSlots;
     f.electric = this.electric;
+    f.stats = this.stats;
     m.inner = f;
     m.size = size;
     return f;
@@ -350,7 +353,7 @@ export class Factory {
 
   /** Retire la dérivation d'un séparateur. */
   clearSplit(b: Belt): void {
-    delete b.split; delete b.splitJump; delete b.split2;
+    delete b.split; delete b.splitJump; delete b.split2; delete b.filter;
     this.dirty = true;
   }
 
@@ -1000,6 +1003,7 @@ export class Factory {
   /** Un objet entre dans une case : sur un séparateur, il prend une sortie sur deux. */
   private enter(b: Belt, it: BeltItem): void {
     if (b.split === undefined) { delete it.o; return; }
+    if (b.filter) { if (it.t === b.filter) it.o = 1; else delete it.o; return; }
     // Deux sorties : un sur deux ; trois sorties (deux machines de part et d'autre) : un sur trois.
     const n = b.split2 !== undefined ? 3 : 2;
     b.toggle = ((b.toggle ?? 0) + 1) % n;
@@ -1061,6 +1065,7 @@ export class Factory {
   /** Cases occupées d'un coffre (piles de 10). */
   /** Nombre de cases d'un coffre (30 pour un grand coffre). */
   slotsOf(m: Machine): number {
+    if (m.type === 'entrepot') return RULES.warehouseSlots;
     return m.type === 'grand_coffre' || m.type === 'depot' || m.type === 'gare' ? RULES.bigChestSlots : this.chestSlots;
   }
 
@@ -1160,7 +1165,15 @@ export class Factory {
   clock = 0;
 
   /** Note un objet qui entre dans une machine (consommé) ou qui en sort (fabriqué). */
+  /** Statistiques : tout ce qui a été fabriqué ou extrait, et consommé (partagé avec les ateliers). */
+  stats: { made: Record<string, number>; used: Record<string, number> } = { made: {}, used: {} };
+
   private flow(m: Machine, k: string, n: number, out: boolean): void {
+    const kind = machineDef(m.type).kind;
+    if (kind === 'drill' || kind === 'crafter') {
+      const t = out ? this.stats.made : this.stats.used;
+      t[k] = (t[k] ?? 0) + n;
+    }
     const ev = (m.flowEv ??= []);
     if (m.flowSince === undefined) m.flowSince = this.clock;
     ev.push({ t: this.clock, k, n, out });
@@ -1207,7 +1220,7 @@ export class Factory {
           if (k > 0) it.o = k as 1 | 2; else delete it.o;
         }
         // Le premier objet d'un séparateur prend une autre sortie si la sienne est bouchée.
-        if (i === 0 && branch) {
+        if (i === 0 && branch && !b.filter) {
           const want = outs[it.o ?? 0];
           if (!this.canTake(want, it.t)) {
             const k = outs.findIndex((o) => !!o && o !== want && this.canTake(o, it.t));
@@ -1524,7 +1537,7 @@ export class Factory {
       cables: [...this.cables],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '']),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1537,11 +1550,12 @@ export class Factory {
   load(s: FactorySave): void {
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
     for (const k of s.cables ?? []) this.cables.add(k);
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
       if (split2 !== undefined && split2 >= 0 && b.split !== undefined) b.split2 = split2 as Dir;
+      if (filter && b.split !== undefined) b.filter = filter;
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       if (meter) this.addMeter(b);
@@ -1590,7 +1604,7 @@ export interface FactorySave {
   cables?: number[];
   lines?: Line[];
   tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;

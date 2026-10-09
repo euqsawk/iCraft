@@ -177,6 +177,8 @@ export class GameRenderer {
   private glowLayer = new Container();
   private lightRT: RenderTexture | null = null;
   private lightSprite = new Sprite();
+  /** Tri : l'objet trié, en petit, sur la case du séparateur. */
+  private filterLayer = new Container();
   private glowPool: Sprite[] = [];
   private glowTex: Texture | null = null;
   private roomG = new Graphics();
@@ -192,7 +194,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -390,6 +392,15 @@ export class GameRenderer {
 
   private redrawBelts(): void {
     this.beltsDirty = false;
+    this.filterLayer.removeChildren().forEach((c) => c.destroy());
+    for (const b of this.game.view.belts.values()) {
+      if (!b.filter || b.split === undefined) continue;
+      const x = (b.x + 0.5) * CELL + DX[b.split] * 7, y = (b.y + 0.5) * CELL + DY[b.split] * 7;
+      const badge = new Graphics().circle(x, y, 7.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
+      const sp = new Sprite(this.itemTextures.get(b.filter)!);
+      sp.anchor.set(0.5); sp.scale.set(0.5); sp.position.set(x, y);
+      this.filterLayer.addChild(badge, sp);
+    }
     const gg = this.ghostBeltG;
     gg.clear();
     const built: Belt[] = [], ghosts: Belt[] = [];
@@ -1243,12 +1254,13 @@ export class GameRenderer {
     // Grand coffre : ses quatre objets les plus nombreux, en petit, à la place du dessin du coffre.
     // Petit coffre : l'objet qu'il garde ; s'il en garde de plusieurs sortes, une icône « mélange ».
     for (const m of this.game.view.machines.values()) {
-      if ((m.type !== 'grand_coffre' && m.type !== 'coffre') || !m.built) continue;
+      if ((m.type !== 'grand_coffre' && m.type !== 'coffre' && m.type !== 'entrepot') || !m.built) continue;
       const v = this.machineViews.get(m.id);
       if (!v || !v.root.visible) continue;
       const kinds = Object.entries(m.inBuf).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([t]) => t);
       const small = m.type === 'coffre';
-      const top = kinds.slice(0, small ? 1 : 4);
+      const big = m.type === 'entrepot';
+      const top = kinds.slice(0, small ? 1 : big ? 9 : 4);
       const sig = small && kinds.length > 1 ? '*' : top.join(',');
       if (sig === v.shelfSig) continue;
       v.shelfSig = sig;
@@ -1269,11 +1281,13 @@ export class GameRenderer {
         }
         continue;
       }
-      const spots = top.length === 1 ? [[0, 0]] : top.length === 2 ? [[-9, 0], [9, 0]] : [[-9, -9], [9, -9], [-9, 9], [9, 9]];
+      // Entrepôt : jusqu'à neuf sortes, rangées en grille.
+      const spots = big ? [[-18, -18], [0, -18], [18, -18], [-18, 0], [0, 0], [18, 0], [-18, 18], [0, 18], [18, 18]]
+        : top.length === 1 ? [[0, 0]] : top.length === 2 ? [[-9, 0], [9, 0]] : [[-9, -9], [9, -9], [-9, 9], [9, 9]];
       top.forEach((t, i) => {
         const s = new Sprite(this.itemTextures.get(t)!);
         s.anchor.set(0.5);
-        s.scale.set(top.length === 1 ? 1.1 : 0.8);
+        s.scale.set(big ? 0.8 : top.length === 1 ? 1.1 : 0.8);
         s.position.set(spots[i][0], spots[i][1]);
         v.shelf!.addChild(s);
       });
@@ -2088,10 +2102,11 @@ export class GameRenderer {
       if (!m.built) continue;
       const cx = (m.x + m.w / 2) * CELL, cy = (m.y + m.h / 2) * CELL;
       const r = Math.max(m.w, m.h) * CELL * 0.8 + CELL * 1.2;
-      if (!this.inView(cx, cy, r)) continue;
+      if (!this.inView(cx, cy, m.type === 'lampadaire' ? CELL * 6 : r)) continue;
       // Une machine qui travaille éclaire un peu plus, et sa lumière vacille à peine.
       const busy = m.status === 'working' ? 1 : 0.8;
       const flick = 0.95 + 0.05 * Math.sin(this.time * 3 + m.id);
+      if (m.type === 'lampadaire') { glow(cx, cy, CELL * 5.5, 0xffe7b8, 1); continue; }
       glow(cx, cy, r, m.type === 'noyau' ? 0xffa58a : 0xffcf8f, 0.9 * busy * flick);
     }
     const rb = this.game.robot;

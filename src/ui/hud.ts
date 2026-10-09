@@ -4,13 +4,14 @@ import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import { FLOW_WINDOW, type Line, type Machine } from '../sim/factory.ts';
+import { FLOW_WINDOW, type Belt, type Line, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
 import { TunnelTracer } from '../sim/tunnels.ts';
+import { ACHIEVEMENTS } from '../data/achievements.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { DX, DY } from '../sim/geom.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
@@ -1070,7 +1071,10 @@ export class Hud implements GestureHandlers {
       const chain = f.chainOf(b);
       const items = chain.reduce((s, c) => s + c.items.length, 0);
       const pending = chain.some((c) => !c.built);
-      const splitter = b.split !== undefined && !f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) ? '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>' : '';
+      const isSplit = b.split !== undefined && !f.machineAt(b.x + DX[b.split], b.y + DY[b.split]);
+      const splitter = !isSplit ? '' : b.filter
+        ? `<p><b>Tri</b> : seul ${esc(item(b.filter).name.toLowerCase())} part dans la dérivation ; tout le reste continue tout droit.</p>`
+        : '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>';
       // Un compteur sur la chaîne : son débit, matière par matière.
       const mb = chain.find((c) => c.meter);
       let meter = '';
@@ -1089,8 +1093,11 @@ export class Hud implements GestureHandlers {
         ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} et ${esc(machineDef(fed2.type).name.toLowerCase())} de part et d’autre, et continue tout droit : un objet sur trois pour chacun.</p>`
         : fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre. Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.</p>` : '';
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
-      const actions = `${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
+      const sortBtn = isSplit && this.game.isUnlocked('tri') ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : 'Trier un objet'}</button></div>` : '';
+      const actions = `${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
       if (!this.setPopover(`b${sel.x},${sel.y}`, info + linkInfo, actions)) return;
+      const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
+      if (so) so.onclick = () => this.openSortPicker(b);
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
       const un = p.querySelector<HTMLButtonElement>('[data-act="unlink"]');
       if (un) un.onclick = () => { this.game.unlinkBelt(b); this.closePopover(); };
@@ -2052,6 +2059,81 @@ export class Hud implements GestureHandlers {
   private popActions = '';
 
   /** Met à jour la bulle. Renvoie vrai si les boutons ont été recréés (il faut les rebrancher). */
+  /** Tri : choisir l'objet qui part dans la dérivation d'un séparateur. */
+  private openSortPicker(b: Belt): void {
+    this.closePopover();
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      sheet.append(this.sheetHead('Trier', 'Choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', close));
+      // D'abord ce qui passe sur ce tapis et ce qu'on fabrique déjà, puis le reste.
+      const onBelt = new Set<string>();
+      for (const c of g.view.chainOf(b)) for (const it of c.items) onBelt.add(it.t);
+      const known = Object.keys(g.factory.stats.made);
+      const order = [...new Set([...onBelt, ...known, ...ITEM_LIST.map((x) => x.id)])];
+      const card = h('div', 'card');
+      const grid = h('div', 'sort-grid');
+      const none = h('button', `sort-cell${!b.filter ? ' on' : ''}`, '<span class="sc-none">½</span><small>Un sur deux</small>');
+      none.onclick = () => { g.setBeltFilter(b, null); close(); };
+      grid.append(none);
+      for (const id of order) {
+        const c = h('button', `sort-cell${b.filter === id ? ' on' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
+        c.onclick = () => { g.setBeltFilter(b, id); close(); };
+        grid.append(c);
+      }
+      card.append(grid);
+      sheet.append(card);
+    });
+  }
+
+  /** Statistiques : ce que l'usine fabrique, par minute, et depuis le début. */
+  private openStats(): void {
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      sheet.append(this.sheetHead('Statistiques', 'Ce que ton usine fabrique et extrait · par minute, sur la dernière minute et les 5 dernières', close));
+      const made = g.factory.stats.made;
+      const ids = Object.keys(made).filter((k) => made[k] > 0).sort((a, b) => g.ratePerMinute(b, 300) - g.ratePerMinute(a, 300) || made[b] - made[a]);
+      const total = Object.values(made).reduce((a, b) => a + b, 0);
+      const head = h('div', 'card');
+      head.innerHTML = `<p class="muted">${fmt(total)} objets fabriqués ou extraits depuis le début · ${ids.length} sortes</p>`;
+      sheet.append(head);
+      const card = h('div', 'card stats');
+      if (!ids.length) card.innerHTML = '<p class="muted">Rien encore : pose une foreuse sur un filon.</p>';
+      for (const id of ids) {
+        const r1 = g.ratePerMinute(id, 60), r5 = g.ratePerMinute(id, 300);
+        // La courbe des 10 dernières minutes (une valeur toutes les 10 secondes).
+        const hist = g.statHistory;
+        const pts: number[] = [];
+        for (let i = 1; i < hist.length; i++) pts.push(((hist[i].made[id] ?? 0) - (hist[i - 1].made[id] ?? 0)) * 6);
+        const max = Math.max(1, ...pts);
+        const W = 90, H = 26;
+        const line = pts.map((v, i) => `${(i / Math.max(1, pts.length - 1)) * W},${H - (v / max) * (H - 2) - 1}`).join(' ');
+        const row = h('div', 'stat-row');
+        row.innerHTML = `<img src="${this.itemIcons.get(id)}" alt=""><div class="st-name"><b>${esc(item(id).name)}</b><small>${fmt(made[id])} en tout</small></div>
+          <svg class="st-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${pts.length > 1 ? `<polyline points="${line}" fill="none" stroke="#2E6B51" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : ''}</svg>
+          <div class="st-rate"><b>${fmtN(r1)}</b><small>/ min · ${fmtN(r5)} sur 5 min</small></div>`;
+        card.append(row);
+      }
+      sheet.append(card);
+    }, true);
+  }
+
+  /** Les succès : obtenus, et ceux qui restent (avec un indice). */
+  private openAchievements(): void {
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      const n = ACHIEVEMENTS.filter((a) => g.achievements.has(a.id)).length;
+      sheet.append(this.sheetHead('Succès', `${n} sur ${ACHIEVEMENTS.length}`, close));
+      const card = h('div', 'card ach');
+      for (const a of ACHIEVEMENTS) {
+        const done = g.achievements.has(a.id);
+        const row = h('div', `ach-row${done ? ' done' : ''}`);
+        row.innerHTML = `<span class="ach-ico">${done ? '★' : '☆'}</span><div><b>${esc(a.name)}</b><small>${esc(a.hint)}</small></div>`;
+        card.append(row);
+      }
+      sheet.append(card);
+    });
+  }
+
   private setPopover(k: string, info: string, actions: string): boolean {
     const p = this.popover;
     if (k !== this.popKey || !p.firstElementChild) {
@@ -2348,6 +2430,10 @@ export class Hud implements GestureHandlers {
       center.onclick = () => { this.r.centerOnRobot(); close(); };
       const recipesBtn = h('button', 'btn', 'Toutes les recettes');
       recipesBtn.onclick = () => this.openRecipes();
+      const statsBtn = h('button', 'btn', 'Statistiques');
+      statsBtn.onclick = () => this.openStats();
+      const achBtn = h('button', 'btn', `Succès · ${[...g.achievements].length}/${ACHIEVEMENTS.length}`);
+      achBtn.onclick = () => this.openAchievements();
 
       const saveCard = h('div', 'card');
       saveCard.innerHTML = `<p class="muted">Cette partie · ${playTime(g.played)} de jeu · graine ${esc(g.world.seed)}</p>`;
@@ -2371,7 +2457,7 @@ export class Hud implements GestureHandlers {
       const standalone = (navigator as unknown as { standalone?: boolean }).standalone || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
       help.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer ${esc(g.look.name)}. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
         ${standalone ? '' : '<p class="muted"><b>Installer</b> · Dans Safari : Partager, puis « Sur l’écran d’accueil ». Le jeu s’ouvre alors en plein écran et ta sauvegarde est mieux protégée.</p>'}`;
-      sheet.append(head, upd, treeBtn, recipesBtn, center, saveCard, title, help);
+      sheet.append(head, upd, treeBtn, recipesBtn, statsBtn, achBtn, center, saveCard, title, help);
     });
   }
 

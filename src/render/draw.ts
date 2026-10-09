@@ -125,6 +125,16 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
   const ink = PALETTE.ink, coral = PALETTE.coral;
   const st = { width: 3, color: ink, cap: 'round' as const, join: 'round' as const };
   switch (type) {
+    case 'lampadaire':
+      g.moveTo(0, 9).lineTo(0, -5).stroke({ width: 2.4, color: ink, cap: 'round' });
+      g.moveTo(-4, 9).lineTo(4, 9).stroke({ width: 2.4, color: ink, cap: 'round' });
+      g.circle(0, -7, 4).fill(PALETTE.yellow).stroke({ width: 1.8, color: ink });
+      break;
+    case 'entrepot':
+      g.poly([-22, -6, 0, -20, 22, -6]).fill(0xc98a4b).stroke({ width: 3, color: ink, join: 'round' });
+      g.rect(-18, -6, 36, 24).fill(0xe8d3b4).stroke({ width: 3, color: ink });
+      g.rect(-8, 4, 16, 14).fill(0x8a5a2b);
+      break;
     case 'solaire': {
       // Un panneau bleu quadrillé, et un petit soleil.
       g.roundRect(-14, -9, 26, 20, 3).fill(0x3a6ea5).stroke({ width: 2.4, color: ink });
