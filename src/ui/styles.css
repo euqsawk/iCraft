@@ -620,3 +620,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .inv-cell.no { opacity: .35; }
 .mcard { touch-action: pan-x; }
 .palette.dragging { opacity: .55; }
+.mrec > p { margin: 0; font-size: 12px; font-weight: 700; color: var(--ink2); }
+.bubble .rate { display: inline-flex; align-items: center; gap: 4px; }
+.bubble .rate img { width: 16px; height: 16px; }
+.bubble .rate b { font-size: 15px; font-weight: 900; }

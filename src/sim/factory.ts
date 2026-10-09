@@ -413,7 +413,7 @@ export class Factory {
     return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
   }
 
-  /** Une machine qui utilise le charbon comme ingrédient (fourneau nu). */
+  /** Une machine qui utilise le charbon comme ingrédient (fourneau). */
   private coalIngredient(def: MachineDef): boolean {
     return def.recipes.some((r) => r.in.charbon);
   }
@@ -422,7 +422,7 @@ export class Factory {
     const def = machineDef(m.type);
     if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
     if (item === 'charbon' && def.coal && m.fuel < RULES.fuelStack) {
-      // Le carburant d'abord ; un fourneau nu bien chargé garde le reste comme ingrédient.
+      // Le carburant d'abord ; un fourneau bien chargé garde le reste comme ingrédient.
       const asIngredient = this.coalIngredient(def) && m.fuel >= 3 && (m.inBuf.charbon ?? 0) < RULES.machineBuffer;
       if (!asIngredient) { m.fuel++; return; }
     }

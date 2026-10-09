@@ -936,6 +936,44 @@ export class Game {
     return got;
   }
 
+  /** Combien une machine (four, foreuse…) accepte encore de cet objet : charbon dans sa case carburant, ingrédients. */
+  machineAccepts(m: Machine, t: string): number {
+    const def = machineDef(m.type);
+    if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill')) return 0;
+    let n = 0;
+    const ingredient = def.recipes.some((r) => r.in[t]);
+    if (t === 'charbon' && def.coal) n += this.factory.fuelRoom(m);
+    if (def.kind === 'crafter' && ingredient) n += Math.max(0, RULES.machineBuffer - (m.inBuf[t] ?? 0));
+    return n;
+  }
+
+  /** D'une case du robot vers une machine ; renvoie la quantité donnée. */
+  robotToMachine(m: Machine, slot: number, n: number): number {
+    const sl = this.robot.inv.slots[slot];
+    if (!sl) return 0;
+    const t = sl.t;
+    const k = Math.min(n, sl.n, this.machineAccepts(m, t));
+    if (k <= 0) return 0;
+    this.robot.inv.takeAt(slot, k);
+    let rest = k;
+    if (t === 'charbon') rest -= this.factory.addFuel(m, rest);
+    if (rest > 0) m.inBuf[t] = (m.inBuf[t] ?? 0) + rest;
+    this.emit({ type: 'inventory' });
+    return k;
+  }
+
+  /** Reprend des objets d'une machine (en attente ou prêts à sortir) ; renvoie la quantité reprise. */
+  machineToRobot(m: Machine, which: 'in' | 'out', t: string, n: number): number {
+    const buf = which === 'in' ? m.inBuf : m.outBuf;
+    const k = Math.min(n, buf[t] ?? 0, this.robot.inv.room(t));
+    if (k <= 0) return 0;
+    buf[t] -= k;
+    if (buf[t] <= 0) delete buf[t];
+    this.robot.inv.add(t, k);
+    this.emit({ type: 'inventory' });
+    return k;
+  }
+
   /** Sépare une pile du robot en deux. */
   splitRobotSlot(slot: number, n: number): boolean {
     const ok = this.robot.inv.split(slot, n) >= 0;

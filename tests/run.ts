@@ -546,6 +546,23 @@ test('coffre ↔ robot : prendre, déposer, séparer une pile', () => {
   g.robot.inv.add('fer', 50);
   assert(g.chestToRobot(chest, 'lingot_fer', 19) <= g.robot.inv.room('lingot_fer') + 19, 'pas plus que la place');
 });
+test('machine ↔ robot : charbon, ingrédients, reprendre ce qui sort', () => {
+  const g = new Game('TEST-66');
+  g.money = 1000; g.world.reveal(6, 6, 20);
+  const four = g.placeMachine('four', 6, 9)!;
+  run(g, 20);
+  g.robot.inv.add('charbon', 10); g.robot.inv.add('fer', 10); g.robot.inv.add('vis', 3);
+  const slot = (t: string) => g.robot.inv.slots.findIndex((x) => x?.t === t);
+  assert(g.machineAccepts(four, 'vis') === 0 && g.robotToMachine(four, slot('vis'), 3) === 0, 'le four ne prend pas de vis');
+  const fuel0 = four.fuel;
+  assert(g.robotToMachine(four, slot('charbon'), 10) === 10 - fuel0 && four.fuel === 10, `charbon ${four.fuel}`);
+  assert(g.robotToMachine(four, slot('fer'), 10) === 6 && four.inBuf.fer === 6 && g.robot.inv.count('fer') === 4, 'six minerais au plus');
+  run(g, 10);
+  const out = four.outBuf.lingot_fer ?? 0;
+  if (out > 0) assert(g.machineToRobot(four, 'out', 'lingot_fer', out) === out && g.robot.inv.count('lingot_fer') === out, 'reprendre les lingots');
+  const waiting = four.inBuf.fer ?? 0, fer0 = g.robot.inv.count('fer');
+  assert(g.machineToRobot(four, 'in', 'fer', 99) === waiting && g.robot.inv.count('fer') === fer0 + waiting && !four.inBuf.fer, 'reprendre le minerai en attente');
+});
 test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais déplaçables', () => {
   const g = new Game('TEST-64');
   const gifts: string[] = [];

@@ -441,6 +441,7 @@ export class Hud implements GestureHandlers {
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     if (m?.built && m.type === 'coffre') { this.openChest(m); return; }
     if (m?.built && m.type === 'revente') { this.openSell(m); return; }
+    if (m?.built && (machineDef(m.type).kind === 'crafter' || machineDef(m.type).kind === 'drill')) { this.openMachine(m); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
@@ -473,6 +474,13 @@ export class Hud implements GestureHandlers {
     this.r.guides = guides;
     const s = this.r.camera.worldToScreen(cx, p.y * CELL);
     const onBelt = check.ok && check.belts ? ' · sur le tapis' : '';
+    // Une foreuse sur un filon : ce qu'elle va extraire, en direct.
+    if (def.kind === 'drill' && check.ok && check.ore) {
+      const rate = (check.rate ?? 0).toFixed(2).replace('.', ',');
+      const tail = this.tool === 'move' ? 'déplacer ici' : `${ICONS.coinSm}${def.cost}`;
+      this.showBubble(s.x, s.y - 8, `<span class="rate"><img src="${this.itemIcons.get(check.ore)}" alt=""><b>${rate} / s</b></span> ${esc(item(check.ore).name.toLowerCase())} · ${tail}${onBelt}`, false);
+      return;
+    }
     const label = this.tool === 'move' ? `Déplacer ici${onBelt}` : check.ok ? `${def.name} · ${ICONS.coinSm}${def.cost}${onBelt}` : esc(check.reason ?? 'Impossible');
     this.showBubble(s.x, s.y - 8, label, !check.ok);
   }
@@ -692,12 +700,14 @@ export class Hud implements GestureHandlers {
 
   // ---------- Inventaires en grand : robot, coffre, fabrication ----------
 
-  private invSel: { side: 'chest'; item: string } | { side: 'robot'; slot: number } | null = null;
+  /** Pile choisie : une case du robot, ou un objet d'un coffre (chest) ou d'une machine (min : en attente, mout : prêt à sortir). */
+  private invSel: { side: 'chest' | 'min' | 'mout'; item: string } | { side: 'robot'; slot: number } | null = null;
   private invQty = 1;
   private craftSel: string | null = null;
   private craftQty = 1;
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
-  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | '' = '';
+  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | '' = '';
+  private machineId = -1;
   private chestId = -1;
   private liveTimer = 0;
 
@@ -712,7 +722,7 @@ export class Hud implements GestureHandlers {
   }
 
   /** Une grille de cases ; data-side et data-i (ou data-item) pour la sélection. */
-  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'robot', cols = 5, accept?: (t: string) => boolean): string {
+  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'robot' | 'min' | 'mout', cols = 5, accept?: (t: string) => boolean): string {
     const sel = this.invSel;
     return `<div class="inv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.map((c, i) => {
       if (!c) return `<button class="inv-cell empty" data-side="${side}" data-i="${i}" aria-label="Case vide"></button>`;
@@ -737,7 +747,7 @@ export class Hud implements GestureHandlers {
   private wireGrid(root: HTMLElement, target: Machine | null): void {
     root.querySelectorAll<HTMLButtonElement>('.inv-cell').forEach((b) => {
       b.onclick = () => {
-        const side = b.dataset.side as 'chest' | 'robot';
+        const side = b.dataset.side as 'chest' | 'robot' | 'min' | 'mout';
         const it = b.dataset.item;
         if (!it) { this.invSel = null; this.refreshSheet(); return; }
         const n = Number(b.querySelector('b')?.textContent ?? 1);
@@ -746,7 +756,7 @@ export class Hud implements GestureHandlers {
           const same = this.invSel?.side === 'robot' && this.invSel.slot === slot;
           this.invSel = same ? null : { side, slot };
         } else {
-          const same = this.invSel?.side === 'chest' && this.invSel.item === it;
+          const same = this.invSel?.side === side && (this.invSel as { item: string }).item === it;
           this.invSel = same ? null : { side, item: it };
         }
         this.invQty = n;
@@ -760,8 +770,10 @@ export class Hud implements GestureHandlers {
   private invBar(target: Machine | null): HTMLElement | null {
     const g = this.game, sel = this.invSel;
     if (!sel) return null;
-    const chest = target && machineDef(target.type).kind === 'storage' ? target : null;
-    const building = target && !chest ? target : null;
+    const kind = target ? machineDef(target.type).kind : null;
+    const chest = kind === 'storage' ? target : null;
+    const machine = kind === 'crafter' || kind === 'drill' ? target : null;
+    const building = target && !chest && !machine ? target : null;
     let t: string, have: number, max: number, verb: string, why = '';
     if (sel.side === 'robot') {
       const sl = g.robot.inv.slots[sel.slot];
@@ -774,17 +786,24 @@ export class Hud implements GestureHandlers {
         verb = `Donner ${building.type === 'revente' ? 'à la' : 'au'} ${name}`;
         if (!max) why = building.type === 'revente' ? 'La Revente est pleine (ou le gros drone est là)' : `${name} n’en a pas besoin pour l’instant`;
       }
+      else if (machine) {
+        const name = machineDef(machine.type).name.toLowerCase();
+        max = Math.min(sl.n, g.machineAccepts(machine, t));
+        verb = t === 'charbon' ? 'Recharger en charbon' : `Mettre dans la machine`;
+        if (!max) why = g.machineAccepts(machine, t) === 0 && !machineDef(machine.type).recipes.some((r) => r.in[t]) && t !== 'charbon' ? `La ${name} ne s’en sert pas` : 'Elle est pleine pour l’instant';
+      }
       else { max = sl.n - 1; verb = ''; if (!max) why = 'Une seule unité : rien à séparer'; }
     } else {
-      if (!chest || !(chest.inBuf[sel.item] > 0)) { this.invSel = null; return null; }
-      t = sel.item; have = chest.inBuf[t];
-      max = Math.min(have, g.robot.inv.room(t)); verb = `Donner à ${g.look.name}`;
+      const src = sel.side === 'chest' ? chest?.inBuf : sel.side === 'min' ? machine?.inBuf : machine?.outBuf;
+      if (!src || !(src[sel.item] > 0)) { this.invSel = null; return null; }
+      t = sel.item; have = src[t];
+      max = Math.min(have, g.robot.inv.room(t)); verb = sel.side === 'chest' ? `Donner à ${g.look.name}` : `Reprendre dans l’inventaire`;
       if (!max) why = `L’inventaire de ${g.look.name} est plein`;
     }
     const q = Math.max(max ? 1 : 0, Math.min(this.invQty, max));
     this.invQty = q;
     const bar = h('div', 'inv-bar');
-    const where = sel.side === 'robot' ? `dans la case de ${esc(g.look.name)}` : 'dans le coffre';
+    const where = sel.side === 'robot' ? `dans la case de ${esc(g.look.name)}` : sel.side === 'chest' ? 'dans le coffre' : 'dans la machine';
     bar.innerHTML = `<div class="ib-head"><img src="${this.itemIcons.get(t)}" alt=""><b>${esc(item(t).name)}</b><small>${fmt(have)} ${where}</small></div>
       ${max ? `<div class="ib-qty"><button class="btn ib-step" data-d="-1" aria-label="Un de moins">−</button><input class="ib-range" type="range" min="1" max="${max}" value="${q}" aria-label="Quantité"><button class="btn ib-step" data-d="1" aria-label="Un de plus">+</button><b class="ib-n">${q}</b></div>
       <div class="ib-quick"><button class="btn" data-set="1">1</button><button class="btn" data-set="half">Moitié</button><button class="btn" data-set="all">Tout (${max})</button></div>` : `<p class="muted">${why}</p>`}
@@ -820,6 +839,12 @@ export class Hud implements GestureHandlers {
         dep.disabled = !max;
         dep.onclick = () => { g.robotToChest(chest, slot, this.invQty); this.invSel = null; this.refreshSheet(); };
         acts.append(dep);
+      } else if (machine) {
+        split.remove();
+        const dep = h('button', 'btn primary', verb);
+        dep.disabled = !max;
+        dep.onclick = () => { g.robotToMachine(machine, slot, this.invQty); this.invSel = null; this.refreshSheet(); };
+        acts.append(dep);
       } else if (building) {
         split.remove();
         const dep = h('button', 'btn primary', verb);
@@ -836,6 +861,12 @@ export class Hud implements GestureHandlers {
       const take = h('button', 'btn primary', verb);
       take.disabled = !max;
       take.onclick = () => { g.chestToRobot(chest, t, this.invQty); this.invSel = null; this.refreshSheet(); };
+      acts.append(take);
+    } else if (machine && (sel.side === 'min' || sel.side === 'mout')) {
+      const which = sel.side === 'min' ? 'in' : 'out';
+      const take = h('button', 'btn primary', verb);
+      take.disabled = !max;
+      take.onclick = () => { g.machineToRobot(machine, which, t, this.invQty); this.invSel = null; this.refreshSheet(); };
       acts.append(take);
     }
     return bar;
@@ -946,6 +977,73 @@ export class Hud implements GestureHandlers {
     const bar = this.invBar(m);
     if (bar) card.append(bar);
     return card;
+  }
+
+  /** Une machine en grand (four, foreuse…) : état, charbon, recettes, ce qu'elle contient, et l'inventaire du robot. */
+  openMachine(m: Machine): void {
+    this.closePopover();
+    this.invSel = null;
+    this.machineId = m.id;
+    this.openSheet((sheet, close) => {
+      const g = this.game;
+      const mm = g.factory.machines.get(this.machineId);
+      if (!mm) { close(); return; }
+      const def = machineDef(mm.type);
+      sheet.classList.add('inv-sheet');
+      let title = def.name, status = `${STATUS_TEXT[mm.status]}.`;
+      if (def.kind === 'drill') {
+        const patch = g.world.patchAt(mm.x, mm.y) ?? g.world.patchAt(mm.x + 1, mm.y + 1);
+        title = `Foreuse · ${mm.ore ? item(mm.ore).name.toLowerCase() : '?'}`;
+        status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(mm.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
+      }
+      sheet.append(this.sheetHead(title, esc(status), close));
+      // Charbon et recettes
+      const top = h('div', 'card mrec');
+      top.innerHTML = `${def.coal ? this.gauge('Charbon', mm.fuel, 10, g.factory.lowFuel(mm)) : ''}${this.recipesHtml(def, mm)}`;
+      if (mm.type === 'raffinerie') {
+        const cur = mm.choice ?? 'plastique';
+        const row = h('div', 'row');
+        for (const [id, label] of [['plastique', 'Plastique'], ['carburant', 'Carburant']]) {
+          const b = h('button', `btn ${cur === id ? 'primary' : ''}`, label);
+          b.onclick = () => { g.factory.setChoice(mm, id); this.refreshSheet(); };
+          row.append(b);
+        }
+        top.append(row);
+      }
+      sheet.append(top);
+      // Ce que la machine contient : en attente, et prêt à sortir
+      const cellsOf = (buf: Record<string, number>) => {
+        const c: ({ t: string; n: number } | null)[] = Object.entries(buf).filter(([, n]) => n > 0).map(([t, n]) => ({ t, n }));
+        while (c.length < 6) c.push(null);
+        return c;
+      };
+      const box = h('div', 'card');
+      box.innerHTML = `${def.kind === 'crafter' ? `<p class="muted">En attente</p>${this.gridHtml(cellsOf(mm.inBuf), 'min', 6)}` : ''}
+        <p class="muted">Prêt à sortir · touche une pile pour la reprendre</p>${this.gridHtml(cellsOf(mm.outBuf), 'mout', 6)}`;
+      this.wireGrid(box, mm);
+      const sel = this.invSel;
+      if (sel && sel.side !== 'robot') { const bar = this.invBar(mm); if (bar) box.append(bar); }
+      sheet.append(box);
+      // Depuis l'inventaire du robot
+      const dep = h('div', 'card');
+      dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · charbon et ingrédients</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
+      this.wireGrid(dep, mm);
+      if (sel && sel.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
+      sheet.append(dep);
+      const acts = h('div', 'row');
+      const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+      mv.onclick = () => { close(); this.setTool('move'); this.moving = mm; this.toast('Glisse la machine à sa nouvelle place', 'info'); };
+      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer · rend ${def.cost}`);
+      let armed = false;
+      del.onclick = () => {
+        if (!armed) { armed = true; del.textContent = 'Toucher encore'; return; }
+        g.removeMachine(mm);
+        close();
+      };
+      acts.append(mv, del);
+      sheet.append(acts);
+    }, true);
+    this.sheetKind = 'machine';
   }
 
   /** La Revente en grand : contenu, passage du gros drone, et dépôt depuis l'inventaire. */
@@ -1485,7 +1583,7 @@ export class Hud implements GestureHandlers {
         if (job && bar) bar.style.width = `${(job.t / job.total) * 100}%`;
       });
       this.liveTimer += dt;
-      if (this.liveTimer > 1 && (this.sheetKind === 'robot' || this.sheetKind === 'sell')) { this.liveTimer = 0; this.sheetDirty = true; }
+      if (this.liveTimer > 1 && (this.sheetKind === 'robot' || this.sheetKind === 'sell' || this.sheetKind === 'machine')) { this.liveTimer = 0; this.sheetDirty = true; }
     }
     this.refreshTimer += dt;
     if (this.refreshTimer > 0.8 && !this.pressing) {

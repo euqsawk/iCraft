@@ -88,6 +88,8 @@ export class GameRenderer {
   private filonLayer = new Container();
   private beltG = new Graphics();
   private ghostBeltG = new Graphics();
+  /** Raccords entre les tapis et les machines (au-dessus des machines). */
+  private portG = new Graphics();
   private machineLayer = new Container();
   private itemLayer = new Container();
   private actorLayer = new Container();
@@ -121,7 +123,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.dots, this.filonLayer, this.beltG, this.ghostBeltG, this.machineLayer, this.itemLayer, this.actorLayer, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.dots, this.filonLayer, this.beltG, this.ghostBeltG, this.machineLayer, this.portG, this.itemLayer, this.actorLayer, this.fx, this.fogLayer, this.overlay);
     for (const d of ITEM_LIST) {
       const g = new Graphics();
       drawItem(g, d.id);
@@ -344,6 +346,46 @@ export class GameRenderer {
     gg.stroke({ width: 11, color: PALETTE.white, alpha: 0.9, cap: 'round' });
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
     gg.stroke({ width: 2, color: PALETTE.ink, alpha: 0.18, cap: 'round' });
+    this.drawPorts();
+  }
+
+  /**
+   * Raccord propre entre un tapis et une machine : une petite bouche posée sur le bord de la machine,
+   * avec un chevron dans le sens du flux (vers la machine pour une entrée, vers le tapis pour une sortie).
+   */
+  private drawPorts(): void {
+    const g = this.portG;
+    g.clear();
+    const f = this.game.factory;
+    const port = (b: Belt, d: number, into: boolean) => {
+      const ex = (b.x + 0.5 + DX[d] * 0.5) * CELL, ey = (b.y + 0.5 + DY[d] * 0.5) * CELL;
+      const ax = DX[d], ay = DY[d], px = -ay, py = ax;
+      const half = 9.5, depth = 4.5;
+      // Le tapis se prolonge jusque sous la bouche (plus de trou sous le bord de la machine).
+      g.moveTo(ex - ax * 4, ey - ay * 4).lineTo(ex + ax * 3, ey + ay * 3).stroke({ width: 14, color: b.built ? PALETTE.white : PALETTE.white, alpha: b.built ? 1 : 0.9 });
+      const pts = [
+        ex - px * half - ax * depth, ey - py * half - ay * depth,
+        ex + px * half - ax * depth, ey + py * half - ay * depth,
+        ex + px * half + ax * depth, ey + py * half + ay * depth,
+        ex - px * half + ax * depth, ey - py * half + ay * depth,
+      ];
+      g.poly(pts).fill({ color: 0xeef5f1, alpha: b.built ? 1 : 0.8 }).stroke({ width: 1.5, color: PALETTE.shadow, join: 'round' });
+      // La fente côté machine
+      g.moveTo(ex + ax * 2.5 - px * 6, ey + ay * 2.5 - py * 6).lineTo(ex + ax * 2.5 + px * 6, ey + ay * 2.5 + py * 6)
+        .stroke({ width: 2.5, color: PALETTE.ink, alpha: b.built ? 0.4 : 0.2, cap: 'round' });
+      // Chevron du flux
+      const s = into ? 1 : -1, cx = ex - ax * 1.5, cy = ey - ay * 1.5;
+      g.moveTo(cx - ax * 2 * s + px * 3.5, cy - ay * 2 * s + py * 3.5).lineTo(cx + ax * 1.5 * s, cy + ay * 1.5 * s).lineTo(cx - ax * 2 * s - px * 3.5, cy - ay * 2 * s - py * 3.5)
+        .stroke({ width: 2, color: into ? PALETTE.coral : PALETTE.green, alpha: b.built ? 0.9 : 0.4, cap: 'round', join: 'round' });
+    };
+    for (const b of f.belts.values()) {
+      // Entrée : le tapis donne dans une machine.
+      if (f.machineAt(b.x + DX[b.dir], b.y + DY[b.dir])) port(b, b.dir, true);
+      if (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split])) port(b, b.split, true);
+      // Sortie : le tapis part d'une machine.
+      const back = (b.inDir + 2) % 4;
+      if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
+    }
   }
 
   private drawItems(): void {
