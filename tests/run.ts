@@ -459,6 +459,29 @@ test('un drone sans travail se pose sur le robot et ne brûle plus de charbon', 
   run(g, 1);
   assert(a && b && d.state !== 'rest', `il repart : ${d.state}`);
 });
+test('chenilles et antennes : plusieurs niveaux, le meilleur compte', () => {
+  const g = new Game('TEST-R2');
+  g.world.reveal(0, 0, 40);
+  const time = () => {
+    const x0 = g.robot.x, y0 = g.robot.y;
+    g.sendRobot(x0 + 20, y0);
+    let t = 0;
+    while (g.robot.target && t < 30) { g.tick(1 / 30); t += 1 / 30; }
+    g.sendRobot(x0, y0);
+    while (g.robot.target && t < 60) g.tick(1 / 30);
+    return t;
+  };
+  const t0 = time();
+  g.unlocks.add('chenilles'); g.unlocks.add('chenilles2');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const t1 = time();
+  assert(g.robotSpeedMult === 1.5 && Math.abs(t0 / t1 - 1.5) < 0.1, `vitesse : ${t0.toFixed(2)} s → ${t1.toFixed(2)} s`);
+  g.unlocks.add('antenne');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(g.droneRangeMult === 1.5, `portée ${g.droneRangeMult}`);
+  for (const id of ['antenne2', 'antenne3', 'chenilles3']) assert(NODE[id] && NODE[id].effect.kind !== 'soon', `${id} existe`);
+  assert(!/marais/.test(NODE.chenilles.hint), 'plus de marais');
+});
 test('station : son drone travaille autour d’elle, loin du robot', () => {
   const g = new Game('TEST-19');
   g.money = 10000; g.world.reveal(30, 2, 26);

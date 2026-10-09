@@ -10,6 +10,8 @@ export type UnlockEffect =
   | { kind: 'beltSpeed'; mult: number }
   | { kind: 'chestSlots'; slots: number }
   | { kind: 'drone' }
+  | { kind: 'robotSpeed'; mult: number }
+  | { kind: 'droneRange'; mult: number }
   /** Acquis d'office (point de départ d'une branche). */
   | { kind: 'base' }
   /** Prévu dans le document de game design, pas encore dans le jeu. */
@@ -81,11 +83,15 @@ export const BRANCHES: Branch[] = [
   {
     id: 'robot', label: 'Robot', nodes: [
       n('robot', 'Robot', 'robot', 0, 1, 1, {}, [], 'Ton robot construit, mine à l’arrêt sur un filon et emmène ses drones.', base),
-      n('station', 'Station', 'station', 1, 1, 1, { lingot_fer: 30, lingot_cuivre: 10 }, ['robot'], 'Une station avec son propre drone : il construit, recharge et livre dans un rayon de 12 cases autour d’elle.', m('station')),
       n('drone2', 'Deuxième drone', 'drone', 1, 0, 2, { plaque_fer: 40, fil_cuivre: 30 }, ['robot'], 'Un drone de plus pour construire, recharger et livrer.', { kind: 'drone' }),
-      n('antenne', 'Antenne', 'antenne', 1, 2, 3, { fil_cuivre: 60, acier: 20 }, ['robot'], 'Les drones vont plus loin autour du robot.', soon),
+      n('station', 'Station', 'station', 1, 1, 1, { lingot_fer: 30, lingot_cuivre: 10 }, ['robot'], 'Une station avec son propre drone : il construit, recharge et livre dans un rayon de 12 cases autour d’elle.', m('station')),
+      n('antenne', 'Antenne', 'antenne', 1, 2, 2, { fil_cuivre: 40, plaque_fer: 20 }, ['robot'], 'Les drones du robot vont 1,5 fois plus loin autour de lui (construire et livrer).', { kind: 'droneRange', mult: 1.5 }),
       n('drone3', 'Troisième drone', 'drone', 2, 0, 3, { vis: 40, acier: 30, fil_cuivre: 30 }, ['drone2'], 'Un drone de plus.', { kind: 'drone' }),
-      n('chenilles', 'Chenilles', 'chenilles', 2, 2, 4, { engrenage: 40 }, ['antenne'], 'Le robot roule plus vite, même dans les marais.', soon),
+      n('chenilles', 'Chenilles', 'chenilles', 2, 1, 2, { vis: 30, plaque_fer: 30 }, ['station'], 'Le robot roule 1,25 fois plus vite.', { kind: 'robotSpeed', mult: 1.25 }),
+      n('antenne2', 'Antenne II', 'antenne', 2, 2, 3, { fil_cuivre: 80, acier: 30 }, ['antenne'], 'Les drones du robot vont 2 fois plus loin qu’au départ.', { kind: 'droneRange', mult: 2 }),
+      n('chenilles2', 'Chenilles II', 'chenilles', 3, 1, 3, { engrenage: 30, acier: 20 }, ['chenilles'], 'Le robot roule 1,5 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 1.5 }),
+      n('antenne3', 'Antenne III', 'antenne', 3, 2, 5, { circuit: 30, cable: 30 }, ['antenne2'], 'Les drones du robot vont 2,5 fois plus loin qu’au départ.', { kind: 'droneRange', mult: 2.5 }),
+      n('chenilles3', 'Chenilles III', 'chenilles', 4, 1, 5, { moteur: 10, engrenage: 40 }, ['chenilles2'], 'Le robot roule 2 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 2 }),
     ],
   },
   {

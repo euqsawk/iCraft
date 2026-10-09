@@ -548,10 +548,18 @@ export class Game {
     return ALL_NODES.filter((x) => this.nodeState(x) === 'available' && this.canAfford(x)).length;
   }
 
+  /** Chenilles et antennes : vitesse du robot et portée de ses drones (le meilleur niveau débloqué). */
+  robotSpeedMult = 1;
+  droneRangeMult = 1;
+
   private applyUnlocks(): void {
     let speed = 1, slots = RULES.chestSlots;
+    this.robotSpeedMult = 1;
+    this.droneRangeMult = 1;
     for (const id of this.unlocks) {
       const e = NODE[id]?.effect;
+      if (e?.kind === 'robotSpeed') this.robotSpeedMult = Math.max(this.robotSpeedMult, e.mult);
+      if (e?.kind === 'droneRange') this.droneRangeMult = Math.max(this.droneRangeMult, e.mult);
       if (e?.kind === 'beltSpeed') speed = Math.max(speed, e.mult);
       if (e?.kind === 'chestSlots') slots = Math.max(slots, e.slots);
     }
@@ -983,7 +991,7 @@ export class Game {
     if (r.target) {
       const dx = r.target.x - r.x, dy = r.target.y - r.y;
       const d = Math.hypot(dx, dy);
-      const step = RULES.robotSpeed * dt * power;
+      const step = RULES.robotSpeed * this.robotSpeedMult * dt * power;
       r.active = true;
       if (d <= step) {
         r.x = r.target.x; r.y = r.target.y; r.target = null; r.manual = false; r.moving = false;
@@ -1263,7 +1271,7 @@ export class Game {
       const c = this.center(st);
       this.anchor = { x: c.x, y: c.y, build: RULES.stationRange, supply: RULES.stationRange };
     } else {
-      this.anchor = { x: this.robot.x, y: this.robot.y, build: RULES.buildRange, supply: RULES.supplyRange };
+      this.anchor = { x: this.robot.x, y: this.robot.y, build: RULES.buildRange * this.droneRangeMult, supply: RULES.supplyRange * this.droneRangeMult };
     }
   }
 
