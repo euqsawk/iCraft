@@ -50,6 +50,7 @@ button {
   cursor: pointer;
 }
 button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
+.node:focus, .node:focus-visible { outline: none; }
 
 /* ---------- Barre du haut ---------- */
 .top {
@@ -311,7 +312,8 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
 .node.locked .ico { opacity: .35; }
 .node.soon .tile { background: #F4F8F6; border: 2.5px dashed #C9D6CF; }
 .node.soon .ico { opacity: .55; }
-.node.sel .tile { outline: 3px solid var(--coral); outline-offset: 4px; }
+/* Cadre de sélection : un anneau posé exactement autour de la tuile (l'outline de Safari ne suit pas toujours l'arrondi). */
+.node.sel .tile::after { content: ''; position: absolute; inset: -8px; border-radius: 29px; border: 3px solid var(--coral); pointer-events: none; }
 @keyframes avail { 0%, 100% { box-shadow: 0 4px 0 #E0A82E, 0 0 0 0 rgba(255, 200, 87, 0); } 50% { box-shadow: 0 4px 0 #E0A82E, 0 0 0 6px rgba(255, 200, 87, .35); } }
 .node .lbl { padding: 1px 7px; border-radius: 8px; background: var(--ground); font-size: 12px; font-weight: 800; line-height: 16px; white-space: nowrap; }
 .node.locked .lbl, .node.soon .lbl { color: #6B7684; }
@@ -717,3 +719,16 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .topt-hint { padding: 0 6px; font-size: 11px; font-weight: 800; color: var(--ink2); }
 .stop-row .seg { display: flex; gap: 4px; }
 .stop-row .seg .btn { padding: 6px 10px; font-size: 12px; }
+
+/* Page des recettes */
+.recipe-search { width: 100%; box-sizing: border-box; margin: 0 0 10px; padding: 11px 14px; border: none; border-radius: 14px; background: #fff; box-shadow: 0 3px 0 var(--shadow); font: inherit; font-size: 15px; font-weight: 700; color: var(--ink); }
+.recipe-list .card { margin-bottom: 10px; }
+.rc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.rc-head img { width: 30px; height: 30px; }
+.rc-head b { font-size: 15px; }
+.rc-head small, .rc-elec { font-size: 11px; font-weight: 800; color: var(--ink2); }
+.rc-elec { margin-left: auto; padding: 2px 8px; border-radius: 9px; background: #FFF1D6; color: var(--ink); }
+.rc-time { margin-left: auto; font-size: 11px; font-weight: 800; color: var(--ink2); }
+.rc-locked { display: flex; flex-wrap: wrap; gap: 6px; }
+.rc-locked .chip { opacity: .7; }
+.rc-locked .chip img { width: 18px; height: 18px; }

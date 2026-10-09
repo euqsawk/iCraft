@@ -1,12 +1,13 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
 import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
 import { isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
-import { BUILDABLE, machineDef, type MachineDef } from '../data/machines.ts';
+import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import { FLOW_WINDOW, type Line, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
+import { nodeForMachine } from '../data/unlocks.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
 import { TunnelTracer } from '../sim/tunnels.ts';
@@ -923,6 +924,63 @@ export class Hud implements GestureHandlers {
     }).join('');
     const fuel = def.coal ? ' Elle brûle aussi du charbon.' : '';
     return `<p>Entrée → sortie (la recette suit ce qu’on lui apporte).${fuel}</p><div class="recipes">${rows}</div>`;
+  }
+
+  /**
+   * Toutes les recettes qu'on sait faire : les filons découverts (foreuse), puis chaque machine débloquée.
+   * La liste s'allonge avec l'arbre ; les machines encore verrouillées sont rappelées en bas.
+   */
+  openRecipes(): void {
+    this.closePopover();
+    const g = this.game;
+    let query = '';
+    this.openSheet((sheet, close) => {
+      sheet.append(this.sheetHead('Recettes', 'Ce que tes machines savent faire · la liste s’allonge avec l’arbre', close));
+      const search = h('input', 'recipe-search') as HTMLInputElement;
+      search.type = 'search';
+      search.placeholder = 'Chercher un objet (fer, vis, moteur…)';
+      search.value = query;
+      const list = h('div', 'recipe-list');
+      const it = (id: string, n: number) => `<span class="it"><img src="${this.itemIcons.get(id)}" alt="">${n > 1 ? `${n} ` : ''}${esc(item(id).name)}</span>`;
+      const norm = (t: string) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const render = () => {
+        const q = norm(query.trim());
+        const match = (ids: string[]) => !q || ids.some((id) => norm(item(id).name).includes(q));
+        let html = '';
+        // Extraction : les filons qu'on a vus.
+        const raws = [...g.world.discovered].filter((id) => match([id]));
+        if (raws.length) {
+          html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get('foreuse')}" alt=""><b>Foreuse</b><small>sur un filon découvert</small></div><div class="recipes">${raws.map((id) => `<div class="recipe"><span class="it">Filon</span><span class="arrow">→</span>${it(id, 1)}</div>`).join('')}</div></div>`;
+        }
+        const machines = Object.values(MACHINES).filter((m) => m.kind === 'crafter' && !m.base);
+        const locked: MachineDef[] = [];
+        let shown = 0;
+        for (const m of machines) {
+          if (!g.hasMachine(m.id)) { locked.push(m); continue; }
+          const rows = m.recipes.filter((r) => match([...Object.keys(r.in), ...Object.keys(r.out)]));
+          if (!rows.length) continue;
+          shown += rows.length;
+          const elec = g.hasMachine(`${m.id}_elec`) ? '<small class="rc-elec">aussi en électrique</small>' : '';
+          html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get(m.id)}" alt=""><b>${esc(m.name)}</b>${elec}</div><div class="recipes">${rows.map((r) => {
+            const ins = Object.entries(r.in).map(([k, v]) => it(k, v)).join('<span class="arrow">+</span>');
+            const outs = Object.entries(r.out).map(([k, v]) => it(k, v)).join('');
+            return `<div class="recipe">${ins}<span class="arrow">→</span>${outs}<small class="rc-time">${String(r.time).replace('.', ',')} s</small></div>`;
+          }).join('')}</div></div>`;
+        }
+        if (!shown && !raws.length) html += '<div class="card"><p class="muted">Rien ne correspond.</p></div>';
+        if (locked.length && !q) {
+          html += `<div class="card"><p class="muted">Encore à débloquer dans l’arbre</p><div class="rc-locked">${locked.map((m) => {
+            const node = nodeForMachine(m.id);
+            return `<span class="chip"><img src="${this.machineIcons.get(m.id)}" alt="">${esc(m.name)} · ${m.recipes.length} recette${m.recipes.length > 1 ? 's' : ''}${node ? ` · palier ${node.palier}` : ''}</span>`;
+          }).join('')}</div></div>`;
+        }
+        list.innerHTML = html;
+      };
+      search.oninput = () => { query = search.value; render(); };
+      render();
+      sheet.append(search, list);
+    }, true);
+    this.sheetKind = 'building';
   }
 
   /** Jauge de charbon (case carburant). */
@@ -2037,6 +2095,8 @@ export class Hud implements GestureHandlers {
       treeBtn.onclick = () => { close(); this.openTree(); };
       const center = h('button', 'btn', `Recentrer sur ${esc(g.look.name)}`);
       center.onclick = () => { this.r.centerOnRobot(); close(); };
+      const recipesBtn = h('button', 'btn', 'Toutes les recettes');
+      recipesBtn.onclick = () => this.openRecipes();
 
       const saveCard = h('div', 'card');
       saveCard.innerHTML = `<p class="muted">Cette partie · ${playTime(g.played)} de jeu · graine ${esc(g.world.seed)}</p>`;
@@ -2060,7 +2120,7 @@ export class Hud implements GestureHandlers {
       const standalone = (navigator as unknown as { standalone?: boolean }).standalone || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
       help.innerHTML = `<p class="muted"><b>Gestes</b> · Sans outil : glisse pour te déplacer, touche le sol pour envoyer ${esc(g.look.name)}. Avec un outil : un doigt trace ou pose. Deux doigts : déplacer et zoomer.</p>
         ${standalone ? '' : '<p class="muted"><b>Installer</b> · Dans Safari : Partager, puis « Sur l’écran d’accueil ». Le jeu s’ouvre alors en plein écran et ta sauvegarde est mieux protégée.</p>'}`;
-      sheet.append(head, upd, treeBtn, center, saveCard, title, help);
+      sheet.append(head, upd, treeBtn, recipesBtn, center, saveCard, title, help);
     });
   }
 
