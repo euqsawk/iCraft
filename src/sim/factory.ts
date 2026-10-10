@@ -408,8 +408,10 @@ export class Factory {
       const nxt = this.nextOf.get(b);
       const feeds = [b.split, b.split2].some((d) => d !== undefined && this.machineAt(b.x + DX[d], b.y + DY[d]) === m);
       // Ce qui passe là : le dernier objet vu ; sinon (machine bouchée, ancienne partie) ce qui attend sur le tapis ou dans la machine.
-      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: m.seenIn?.[k] ?? b.items[0]?.t, planned: false });
-      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: m.seenOut?.[k] ?? this.picks.get(k)?.[0] ?? b.items[b.items.length - 1]?.t ?? this.likelyOutput(m), planned: false });
+      // Une entrée ou sortie prévue à cet endroit, puis tracée : on garde ce qu'on y avait prévu.
+      const plan = (io: 'in' | 'out') => m.ports?.find((p) => p.io === io && m.x + p.rx === c.x && m.y + p.ry === c.y)?.item;
+      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: m.seenIn?.[k] ?? b.items[0]?.t ?? plan('in'), planned: false });
+      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: m.seenOut?.[k] ?? this.picks.get(k)?.[0] ?? b.items[b.items.length - 1]?.t ?? plan('out') ?? this.likelyOutput(m), planned: false });
     }
     (m.ports ?? []).forEach((p, i) => {
       const x = m.x + p.rx, y = m.y + p.ry;

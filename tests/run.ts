@@ -304,6 +304,18 @@ test('une machine bouchée (ou d’une ancienne partie) connaît encore ses entr
   const got = io.map((c) => `${c.io}:${c.item}`).sort().join();
   assert(got === 'in:fer,out:lingot_fer', `vu : ${got}`);
 });
+test('une sortie prévue puis tracée garde son objet, même sur une machine vide', () => {
+  const g = new Game('TEST-6R');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  g.unlocks.add('assembleur');
+  const a = g.placeMachine('assembleur', 6, 9)!;
+  assert(a, 'assembleur');
+  assert(g.addPort(a, a.x + a.w, a.y, 'out', 'cadre'), 'sortie prévue à droite');
+  const y = a.y + 0.5, x0 = a.x + a.w - 0.5;
+  assert(g.placeBelts(trace(g, [[x0, y], [x0 + 1, y], [x0 + 4, y]]).result()), 'tapis depuis le chevron');
+  const out = g.view.machineIO(a).filter((c) => c.io === 'out');
+  assert(out.length === 1 && !out[0].planned && out[0].item === 'cadre', `sortie : ${JSON.stringify(out)}`);
+});
 test('sans charbon, le four attend', () => {
   const g = new Game('TEST-7');
   g.money = 10000;

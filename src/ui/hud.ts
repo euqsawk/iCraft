@@ -1896,9 +1896,9 @@ export class Hud implements GestureHandlers {
     const def = machineDef(mm.type), n = def.recipes.length;
     if (!n) return -1;
     if (mm.craft) return mm.craft.ri;
-    const io = this.game.view.machineIO(mm).filter((c) => !c.planned && c.item);
+    const io = this.game.view.machineIO(mm).filter((c) => !!c.item);
     const ins = new Set([...Object.values(mm.seenIn ?? {}), ...io.filter((c) => c.io === 'in').map((c) => c.item!), ...Object.keys(mm.inBuf).filter((t) => mm.inBuf[t] > 0)]);
-    const outs = new Set([...Object.keys(mm.outBuf).filter((t) => mm.outBuf[t] > 0), ...Object.values(mm.seenOut ?? {})]);
+    const outs = new Set([...Object.keys(mm.outBuf).filter((t) => mm.outBuf[t] > 0), ...Object.values(mm.seenOut ?? {}), ...io.filter((c) => c.io === 'out').map((c) => c.item!)]);
     const byOut = def.recipes.findIndex((r) => Object.keys(r.out).some((k) => outs.has(k)));
     if (byOut >= 0) return byOut;
     const byIn = def.recipes.findIndex((r) => Object.keys(r.in).every((k) => ins.has(k)));
