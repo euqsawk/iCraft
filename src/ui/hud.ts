@@ -667,15 +667,24 @@ export class Hud implements GestureHandlers {
     if (m?.type === 'noyau') { this.closePopover(); this.openNoyau(); return; }
     if (m?.built && m.type === 'comptoir') { this.closePopover(); this.openOrders(); return; }
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
-    if (m?.built && machineDef(m.type).kind === 'storage') { this.openChest(m); return; }
-    if (m?.built && m.type === 'revente') { this.openSell(m); return; }
-    if (m?.built && ['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger', 'rocket', 'filter'].includes(machineDef(m.type).kind)) { this.openMachine(m); return; }
+    const sheet = m ? this.sheetOf(m) : null;
+    if (sheet) { sheet(); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
     if (this.game.inAtelier) return;
     this.game.sendRobot(w.x, w.y);
+  }
+
+  /** La grande fenêtre d'un bâtiment construit, s'il en a une (sinon, la petite bulle). */
+  private sheetOf(m: Machine): (() => void) | null {
+    if (!m.built) return null;
+    const kind = machineDef(m.type).kind;
+    if (kind === 'storage') return () => this.openChest(m);
+    if (m.type === 'revente') return () => this.openSell(m);
+    if (['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger', 'rocket', 'filter'].includes(kind)) return () => this.openMachine(m);
+    return null;
   }
 
   /** Position de pose d'une machine : un peu au-dessus du doigt, pour la voir. */
@@ -1050,6 +1059,8 @@ export class Hud implements GestureHandlers {
     if (sel?.kind === 'machine') {
       const m = f.machines.get(sel.id);
       if (!m) { this.closePopover(); return; }
+      // Choisi pendant le chantier, puis construit : il a maintenant sa grande fenêtre, l'ancienne bulle s'en va.
+      if (this.sheetOf(m)) { this.closePopover(); return; }
       const def = machineDef(m.type);
       let title = def.name, text = '';
       if (!m.built) {
