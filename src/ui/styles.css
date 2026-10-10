@@ -706,11 +706,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mc-rate b { font-size: 15px; font-weight: 900; }
 .mc-rate small { font-size: 10.5px; font-weight: 800; color: var(--ink2); }
-.mc-rate .mc-max { margin-left: auto; font-size: 10px; }
-.mc-bar { position: absolute; left: 8px; right: 8px; bottom: 4px; height: 3px; border-radius: 2px; background: rgba(46, 58, 75, .08); }
-.mc-bar > span { display: block; height: 100%; border-radius: 2px; transition: width .4s; }
-.mchip.in .mc-bar > span { background: var(--coral); }
-.mchip.out .mc-bar > span { background: var(--green); }
+.mc-rate .mc-tag { margin-left: auto; font-size: 10px; }
 .mc-x {
   position: absolute; right: -8px; top: -8px; width: 24px; height: 24px; border-radius: 12px; background: #fff; box-shadow: 0 2px 0 var(--shadow);
   font-size: 15px; font-weight: 900; line-height: 1; display: flex; align-items: center; justify-content: center; color: var(--ink2);

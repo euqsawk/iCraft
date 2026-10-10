@@ -4,7 +4,7 @@ import { FLUIDS, isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/ite
 import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import { FLOW_WINDOW, ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
+import { ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
 import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { PRIO_ICONS } from './prioIcons.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
@@ -1952,7 +1952,6 @@ export class Hud implements GestureHandlers {
     const box = h('div', 'mdiag');
     const inner = h('div', 'mdiag-in');
     box.append(inner);
-    const real = f.flowOf(mm);
     const ri = this.ratesRecipe(mm), rec = ri >= 0 ? def.recipes[ri] : null;
     const maxIn: Record<string, number> = {}, maxOut: Record<string, number> = {};
     if (rec) {
@@ -1960,11 +1959,13 @@ export class Hud implements GestureHandlers {
       for (const [k, v] of Object.entries(rec.out)) maxOut[k] = v / rec.time;
     }
     if (def.kind === 'drill' && mm.ore) maxOut[mm.ore] = mm.rate ?? 0;
+    // Le combustible : ce qu'elle brûle en travaillant, si elle n'est pas au courant.
+    if (def.coal && !f.powered(mm)) for (const t of ['charbon', 'carburant']) if (maxIn[t] === undefined) maxIn[t] = 1 / (RULES.coalMachineSeconds * (t === 'carburant' ? RULES.carburantMult : 1));
     type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number };
     const io = f.machineIO(mm);
     const entries: Entry[] = io.map((c) => ({ side: c.side, io: c.io, item: c.item, kind: c.planned ? 'planned' : 'belt', port: c.port }));
     const has = (k: string, dir: 'in' | 'out') => entries.some((e) => e.io === dir && e.item === k);
-    for (const k of Object.keys(maxIn)) if (!has(k, 'in')) entries.push({ side: 'left', io: 'in', item: k, kind: 'ghost' });
+    for (const k of Object.keys(maxIn)) if (!has(k, 'in') && !(isFuel(k) && !rec?.in[k])) entries.push({ side: 'left', io: 'in', item: k, kind: 'ghost' });
     for (const k of Object.keys(maxOut)) if (!has(k, 'out')) entries.push({ side: 'right', io: 'out', item: k, kind: 'ghost' });
     // La hauteur suit ce qu'il y a autour : pas de vide en haut ni en bas sans raison.
     const count = (side: Entry['side']) => entries.filter((e) => e.side === side).length;
@@ -2011,21 +2012,12 @@ export class Hud implements GestureHandlers {
         const rot = e.io === 'in' ? out : (out + 180) % 360;
         const chev = h('span', `mdiag-chev ${e.io} ${e.kind}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`);
         place(chev, cx - 10, cy - 10);
-        // La carte de l'entrée ou de la sortie
+        // La carte de l'entrée ou de la sortie : le débit attendu, rien de mesuré.
         const k = e.item;
-        const max = k ? (e.io === 'in' ? maxIn[k] : maxOut[k]) : undefined;
-        const got = k ? (e.io === 'in' ? real.in[k] : real.out[k]) ?? 0 : 0;
-        const name = k ? esc(item(k).name) : e.io === 'in' ? 'Tapis relié' : 'Sortie';
+        const exp = k ? (e.io === 'in' ? maxIn[k] : maxOut[k]) : undefined;
+        const name = k ? esc(item(k).name) : e.io === 'in' ? 'Entrée' : 'Sortie';
         const ico = k ? `<img src="${this.itemIcons.get(k)}" alt="">` : '';
-        let body: string;
-        if (e.kind === 'belt') {
-          body = `<span class="mc-rate"><b>${k ? Hud.rate(got) : '—'}</b><small>/s</small>${max !== undefined ? `<small class="mc-max">max ${Hud.rate(max)}</small>` : ''}</span>
-            ${max ? `<span class="mc-bar"><span style="width:${Math.min(100, (got / max) * 100)}%"></span></span>` : ''}`;
-        } else if (e.kind === 'planned') {
-          body = `<span class="mc-rate"><small>prévue</small>${max !== undefined ? `<small class="mc-max">max ${Hud.rate(max)}</small>` : ''}</span>`;
-        } else {
-          body = `<span class="mc-rate"><b>${max !== undefined ? Hud.rate(max) : '—'}</b><small>/s${e.io === 'out' ? ' max' : ''}</small></span>`;
-        }
+        const body = `<span class="mc-rate"><b>${exp !== undefined ? Hud.rate(exp) : '—'}</b><small>/s</small>${e.kind === 'planned' ? '<small class="mc-tag">prévue</small>' : ''}</span>`;
         const chip = h('div', `mchip ${e.io} ${e.kind}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span>${body}`);
         if (e.kind === 'planned' && e.port !== undefined) {
           const x0 = h('button', 'mc-x', '×');
@@ -2039,7 +2031,6 @@ export class Hud implements GestureHandlers {
       });
     });
     if (entries.some((e) => e.kind === 'ghost')) box.append(h('p', 'mdiag-hint', 'Glisse une entrée ou une sortie sur un côté du bâtiment pour la prévoir : un chevron, sans prendre de case.'));
-    else if (io.length) box.append(h('p', 'mdiag-hint', `Débit mesuré sur les ${FLOW_WINDOW} dernières secondes.`));
     return box;
   }
 
