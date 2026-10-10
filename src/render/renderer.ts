@@ -113,6 +113,9 @@ export class GameRenderer {
   private electricOn = false;
   /** Câbles et machines du réseau, par-dessus le voile, en mode électricité. */
   private powerG = new Graphics();
+  /** La portée des drones du robot, très pâle, sous tout le reste (construction, puis charbon et livraisons). */
+  private droneRangeG = new Graphics();
+  private droneRangeSig = '';
   /** Voile du mode électricité, sur la surface. */
   private modeTint = new Graphics();
   /** Câbles électriques : au sol, sous les tapis et les machines. */
@@ -198,7 +201,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.droneRangeG, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -1384,10 +1387,27 @@ export class GameRenderer {
     cargo.scale.set(k);
   }
 
+  /** Deux disques centrés sur le robot : la portée de construction de ses drones, et celle du charbon et des livraisons. */
+  private updateDroneRange(): void {
+    const g = this.droneRangeG, game = this.game;
+    g.visible = !game.inAtelier;
+    if (!g.visible) return;
+    const build = RULES.buildRange * game.droneRangeMult * CELL, supply = RULES.supplyRange * game.droneRangeMult * CELL;
+    const sig = `${build}|${supply}`;
+    if (sig !== this.droneRangeSig) {
+      this.droneRangeSig = sig;
+      g.clear();
+      g.circle(0, 0, supply).fill({ color: 0x4a8f73, alpha: 0.035 }).stroke({ width: 2, color: 0x4a8f73, alpha: 0.14 });
+      g.circle(0, 0, build).fill({ color: 0x4a8f73, alpha: 0.05 }).stroke({ width: 2, color: 0x4a8f73, alpha: 0.18 });
+    }
+    g.position.set(game.robot.x * CELL, game.robot.y * CELL);
+  }
+
   private updateActors(): void {
     while (this.droneViews.length < this.game.drones.length) this.droneViews.push(this.makeDroneView());
     while (this.droneViews.length > this.game.drones.length) this.droneViews.pop()!.destroy({ children: true });
     const r = this.game.robot, v = this.robotView;
+    this.updateDroneRange();
     v.root.position.set(r.x * CELL, r.y * CELL);
     v.shadow.position.set(r.x * CELL, r.y * CELL);
     v.spin.scale.x = Math.cos(this.time * 18);
