@@ -1440,18 +1440,17 @@ export class GameRenderer {
     cargo.scale.set(k);
   }
 
-  /** Deux disques centrés sur le robot : la portée de construction de ses drones, et celle du charbon et des livraisons. */
+  /** Un disque centré sur le robot : la portée de ses drones (construction, charbon, livraisons). */
   private updateDroneRange(): void {
     const g = this.droneRangeG, game = this.game;
     g.visible = !game.inAtelier;
     if (!g.visible) return;
-    const build = RULES.buildRange * game.droneRangeMult * CELL, supply = RULES.supplyRange * game.droneRangeMult * CELL;
-    const sig = `${build}|${supply}`;
+    const r = RULES.droneRange * game.droneRangeMult * CELL;
+    const sig = `${r}`;
     if (sig !== this.droneRangeSig) {
       this.droneRangeSig = sig;
       g.clear();
-      g.circle(0, 0, supply).fill({ color: 0x4a8f73, alpha: 0.035 }).stroke({ width: 2, color: 0x4a8f73, alpha: 0.14 });
-      g.circle(0, 0, build).fill({ color: 0x4a8f73, alpha: 0.05 }).stroke({ width: 2, color: 0x4a8f73, alpha: 0.18 });
+      g.circle(0, 0, r).fill({ color: 0x4a8f73, alpha: 0.045 }).stroke({ width: 2, color: 0x4a8f73, alpha: 0.16 });
     }
     g.position.set(game.robot.x * CELL, game.robot.y * CELL);
   }

@@ -146,10 +146,8 @@ export const RULES = {
   /** Minage du robot : objets par seconde sur un filon normal. */
   robotMineRate: 0.5,
   maxDrones: 3,
-  /** Portée de construction des drones autour du robot, en cases. */
-  buildRange: 8,
-  /** Portée des drones pour le charbon et les livraisons (coffres, machines), autour du robot. */
-  supplyRange: 16,
+  /** Portée des drones autour du robot, en cases : la même pour construire, recharger et livrer. */
+  droneRange: 16,
   beltBuildTime: 0.18,
   machineBuildTime: 1.1,
   /** Le robot construit lui-même, à courte portée, un peu plus lentement que les drones. */

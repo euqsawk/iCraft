@@ -1741,7 +1741,7 @@ export class Game {
   }
 
   /** Le point autour duquel travaille le drone en cours : le robot, ou sa station. */
-  private anchor = { x: 0, y: 0, build: RULES.buildRange, supply: RULES.supplyRange };
+  private anchor = { x: 0, y: 0, build: RULES.droneRange, supply: RULES.droneRange };
 
   private useAnchor(d: Drone): void {
     const st = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
@@ -1749,7 +1749,7 @@ export class Game {
       const c = this.center(st);
       this.anchor = { x: c.x, y: c.y, build: RULES.stationRange, supply: RULES.stationRange };
     } else {
-      this.anchor = { x: this.robot.x, y: this.robot.y, build: RULES.buildRange * this.droneRangeMult, supply: RULES.supplyRange * this.droneRangeMult };
+      this.anchor = { x: this.robot.x, y: this.robot.y, build: RULES.droneRange * this.droneRangeMult, supply: RULES.droneRange * this.droneRangeMult };
     }
   }
 

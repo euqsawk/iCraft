@@ -380,7 +380,8 @@ test('une machine posée sur un tapis se branche : entrée et sortie', () => {
   run(g, 120);
   fuelAll(g);
   run(g, 60);
-  assert(four.made > 0 && (chest.inBuf.lingot_fer ?? 0) > 0, `four ${four.made}, coffre ${JSON.stringify(chest.inBuf)}`);
+  // Les lingots arrivent au coffre (les drones peuvent ensuite en porter au Noyau).
+  assert(four.made > 0 && (chest.inBuf.lingot_fer ?? 0) + (g.palierDone.lingot_fer ?? 0) > 0, `four ${four.made}, coffre ${JSON.stringify(chest.inBuf)}`);
 });
 
 test('relier une machine au tapis qui la longe, sans nouvelle case', () => {
