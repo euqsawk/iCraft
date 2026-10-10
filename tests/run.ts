@@ -694,33 +694,44 @@ test('les anciens tapis souterrains sont retirés et remboursés au chargement',
   assert(!g2.unlocks.has('souterrain'), 'le déblocage disparaît');
   assert(!('tunnels' in g2.serialize().factory), 'plus sauvegardé');
 });
-test('trieur : posé à la sortie d’un coffre, seuls les objets choisis en sortent', () => {
+test('trieur : posé à la sortie d’un coffre (même avant le tapis), seuls les objets choisis en sortent', () => {
   const g = new Game('TEST-TR');
   g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
-  g.unlocks.add('grand_coffre');
   const chest = g.placeMachine('coffre', 2, 5)!;
-  g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
-  for (const b of g.factory.belts.values()) b.built = true;
   chest.built = true; g.pending = []; g.factory.markBuilt();
-  assert(!g.placeMachine('trieur', 3, 5) && !g.factory.beltAt(3, 5)!.pick, 'à débloquer (Tri)');
-  g.unlocks.add('tri');
-  assert(!g.view.checkMachine('trieur', 6, 5).ok, 'pas au milieu d’un tapis');
-  const m0 = g.money;
-  g.placeMachine('trieur', 3, 5);
-  const b = g.factory.beltAt(3, 5)!;
-  assert(Array.isArray(b.pick) && m0 - g.money === MACHINES.trieur.cost, 'posé');
   g.factory.putInStorage(chest, 'fer', 20);
   g.factory.putInStorage(chest, 'cuivre', 20);
-  run(g, 3);
-  assert(!g.factory.belts.size || [...g.factory.belts.values()].every((x) => x.items.length === 0), 'rien de choisi : rien ne sort');
-  g.setBeltPick(b, ['cuivre']);
+  assert(!g.placeMachine('trieur', 3, 5) && !g.factory.pickAt(3, 5), 'à débloquer (Tri)');
+  g.unlocks.add('tri');
+  assert(!g.view.checkMachine('trieur', 8, 5).ok, 'pas loin d’un bâtiment');
+  assert(!g.view.checkMachine('trieur', 2, 5).ok, 'pas sur le bâtiment');
+  // Posé avant le tapis, sur la case de sortie du coffre.
+  const m0 = g.money;
+  g.placeMachine('trieur', 3, 5);
+  assert(Array.isArray(g.factory.pickAt(3, 5)) && m0 - g.money === MACHINES.trieur.cost, 'posé sans tapis');
+  g.setPick(3, 5, ['cuivre']);
+  g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
   run(g, 4);
   const on = [...g.factory.belts.values()].flatMap((x) => x.items.map((i) => i.t));
   assert(on.length > 0 && on.every((t) => t === 'cuivre') && chest.inBuf.fer === 20, `seul le cuivre sort : ${on.join(',')}`);
+  // Rien de choisi : rien ne sort.
+  g.setPick(3, 5, []);
+  for (const b of g.factory.belts.values()) b.items = [];
+  run(g, 2);
+  assert([...g.factory.belts.values()].every((x) => x.items.length === 0), 'rien de choisi : rien ne sort');
+  g.setPick(3, 5, ['cuivre']);
   const g2 = new Game('TEST-TR', JSON.parse(JSON.stringify(g.serialize())));
-  assert(JSON.stringify(g2.factory.beltAt(3, 5)!.pick) === '["cuivre"]', 'sauvegardé');
+  assert(JSON.stringify(g2.factory.pickAt(3, 5)) === '["cuivre"]', 'sauvegardé');
   const m1 = g.money;
-  assert(g.removeAt(3, 5) && !b.pick && g.factory.beltAt(3, 5) && g.money - m1 === MACHINES.trieur.cost, 'la gomme retire le trieur avant le tapis');
+  assert(g.removeAt(3, 5) && !g.factory.pickAt(3, 5) && g.factory.beltAt(3, 5) && g.money - m1 === MACHINES.trieur.cost, 'la gomme retire le trieur avant le tapis');
+  // Un bâtiment posé dessus le remplace (remboursé).
+  g.placeMachine('trieur', 2, 6);
+  assert(!!g.factory.pickAt(2, 6), 'sous le coffre');
+  const m2 = g.money;
+  g.placeMachine('coffre', 2, 6);
+  assert(!g.factory.pickAt(2, 6) && g.money - m2 === MACHINES.trieur.cost - MACHINES.coffre.cost, 'recouvert : remboursé');
 });
 
 test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis remplissent les départs', () => {

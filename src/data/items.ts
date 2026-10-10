@@ -52,8 +52,8 @@ const MADE: ItemDef[] = [
   // 2 · Pièces simples
   { id: 'plaque_fer', name: 'Plaque de fer', plural: 'plaques de fer', color: 0x8a99ad, shape: 'plate', tier: 2, value: 5 },
   { id: 'vis', name: 'Vis', plural: 'vis', color: 0x8a99ad, shape: 'screw', tier: 2, value: 5 },
-  { id: 'fil_cuivre', name: 'Fil de cuivre', plural: 'bobines de fil de cuivre', color: 0xd9824a, shape: 'coil', tier: 2, value: 5 },
-  { id: 'fil_or', name: "Fil d'or", plural: "bobines de fil d'or", color: 0xd4a72c, shape: 'coil', tier: 2, value: 26 },
+  { id: 'fil_cuivre', name: 'Fil de cuivre', plural: 'fils de cuivre', color: 0xd9824a, shape: 'coil', tier: 2, value: 5 },
+  { id: 'fil_or', name: "Fil d'or", plural: "fils d'or", color: 0xd4a72c, shape: 'coil', tier: 2, value: 26 },
   { id: 'acier', name: 'Acier', plural: "lingots d'acier", color: 0x5f6b7a, shape: 'ingot', tier: 2, value: 7 },
   { id: 'tole_alu', name: "Tôle d'alu", plural: "tôles d'alu", color: 0xb8c4cc, shape: 'plate', tier: 2, value: 11 },
   { id: 'beton', name: 'Béton', plural: 'blocs de béton', color: 0x9c9a92, shape: 'block', tier: 2, value: 7 },

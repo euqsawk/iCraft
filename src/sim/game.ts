@@ -934,6 +934,7 @@ export class Game {
     // Posée sur un tapis : les cases de tapis dessous disparaissent (remboursées). Le tapis qui arrive
     // devient l'entrée de la machine, celui qui repart devient sa sortie.
     if (check.belts) this.earn(this.clearBeltsUnder(def.w, def.h, x, y));
+    this.clearPicksUnder(def.w, def.h, x, y);
     const m = this.view.addMachine(type, x, y, false);
     if (def.kind === 'atelier') this.view.makeInner(m, this.atelierSize);
     this.finishPlacement(m);
@@ -980,7 +981,7 @@ export class Game {
     const k = key(b.x, b.y);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
     return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0)
-      + (b.meter ? MACHINES.compteur.cost : 0) + (b.pick ? MACHINES.trieur.cost : 0);
+      + (b.meter ? MACHINES.compteur.cost : 0);
   }
 
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
@@ -989,18 +990,23 @@ export class Game {
     const check = this.view.checkMachine('trieur', x, y);
     if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return false; }
     if (!this.spend(MACHINES.trieur.cost)) return false;
-    const b = this.view.beltAt(x, y)!;
-    b.pick = [];
+    this.view.picks.set(key(x, y), []);
     this.emit({ type: 'factory' });
     this.emit({ type: 'picker', x, y });
     return true;
   }
 
   /** Ce qu'un trieur laisse sortir. */
-  setBeltPick(b: Belt, items: string[]): void {
-    if (!b.pick) return;
-    b.pick = [...new Set(items)];
+  setPick(x: number, y: number, items: string[]): void {
+    if (!this.view.picks.has(key(x, y))) return;
+    this.view.picks.set(key(x, y), [...new Set(items)]);
     this.emit({ type: 'factory' });
+  }
+
+  /** Les trieurs que recouvre un bâtiment partent (remboursés). */
+  private clearPicksUnder(w: number, h: number, x: number, y: number): void {
+    const n = this.view.clearPicksUnder(w, h, x, y);
+    if (n) this.earn(n * MACHINES.trieur.cost);
   }
 
   /** Pose un compteur de débit sur un tapis (tout de suite). */
@@ -1040,7 +1046,7 @@ export class Game {
     }
     for (const m of machines) if (this.view.machines.has(m.id) && this.removeMachine(m)) n++;
     for (const c of cables) if (this.view.removeCable(c.x, c.y)) { this.earn(RULES.cableCost); n++; }
-    for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) if (this.view.removePipe(x, y)) { this.earn(RULES.pipeCost); n++; }
+    for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) { if (this.view.removePipe(x, y)) { this.earn(RULES.pipeCost); n++; } if (this.view.picks.delete(key(x, y))) { this.earn(MACHINES.trieur.cost); n++; } }
     if (n) this.emit({ type: 'factory' });
     return n;
   }
@@ -1058,18 +1064,17 @@ export class Game {
       this.emit({ type: 'factory' });
       return true;
     }
+    // Un trieur sur la case (avec ou sans tapis) : il part d'abord (remboursé).
+    if (this.view.picks.delete(key(x, y))) {
+      this.earn(MACHINES.trieur.cost);
+      this.emit({ type: 'factory' });
+      return true;
+    }
     const b = this.view.beltAt(x, y);
     // Un compteur sur le tapis : il part d'abord (remboursé), le tapis au coup suivant.
     if (b?.meter) {
       delete b.meter;
       this.earn(MACHINES.compteur.cost);
-      this.emit({ type: 'factory' });
-      return true;
-    }
-    // Un trieur aussi : il part avant le tapis.
-    if (b?.pick) {
-      delete b.pick;
-      this.earn(MACHINES.trieur.cost);
       this.emit({ type: 'factory' });
       return true;
     }
@@ -1351,6 +1356,7 @@ export class Game {
     const check = this.view.checkMachine(m.type, x, y, m, true);
     if (check.ok && check.belts) this.earn(this.clearBeltsUnder(m.w, m.h, x, y));
     const ok = this.view.moveMachine(m, x, y);
+    if (ok) this.clearPicksUnder(m.w, m.h, x, y);
     if (!ok) this.emit({ type: 'toast', text: 'Impossible ici', tone: 'warn' });
     else { if (!this.inAtelier) this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
     return ok;

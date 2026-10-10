@@ -46,6 +46,8 @@ function partialPolyline(pts: { x: number; y: number }[], frac: number): { x: nu
   return out;
 }
 
+/** Pixels de sol par case : assez pour des bords de biomes arrondis. */
+const GROUND_RES = 4;
 const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 
 export type Preview =
@@ -337,12 +339,54 @@ export class GameRenderer {
     return new Texture({ source, frame: { x: 1, y: 1, width: CHUNK, height: CHUNK } as never });
   }
 
+  /**
+   * Le sol d'un chunk : GROUND_RES pixels par case, pour des bords de biomes nets et arrondis (et non des marches floues
+   * où deux couleurs semblent se chevaucher). Le biome n'est recalculé finement que près des bords.
+   */
+  private groundTexture(cx: number, cy: number): Texture {
+    const w = this.game.world, S = GROUND_RES, n = CHUNK + 2, px = n * S;
+    const x0 = cx * CHUNK - 1, y0 = cy * CHUNK - 1;
+    // Une valeur par case (bordure comprise), comme le jeu la voit.
+    const cells: string[] = new Array(n * n);
+    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) cells[j * n + i] = w.biomeAt(x0 + i, y0 + j);
+    const same = (i: number, j: number): boolean => {
+      const b = cells[j * n + i];
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const a = i + di, c = j + dj;
+        if (a < 0 || c < 0 || a >= n || c >= n) continue;
+        if (cells[c * n + a] !== b) return false;
+      }
+      return true;
+    };
+    const c = document.createElement('canvas');
+    c.width = px; c.height = px;
+    const ctx = c.getContext('2d')!;
+    const img = ctx.createImageData(px, px);
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const flat = same(i, j);
+        for (let sj = 0; sj < S; sj++) {
+          for (let si = 0; si < S; si++) {
+            // Au centre d'une case, le biome fin vaut celui du jeu ; entre deux cases il suit le relief du bruit.
+            const b = flat ? cells[j * n + i] : w.biomeAt(x0 + i + (si + 0.5) / S - 0.5, y0 + j + (sj + 0.5) / S - 0.5);
+            const color = BIOME_COLORS[b as keyof typeof BIOME_COLORS];
+            const o = ((j * S + sj) * px + i * S + si) * 4;
+            img.data[o] = (color >> 16) & 255; img.data[o + 1] = (color >> 8) & 255; img.data[o + 2] = color & 255; img.data[o + 3] = 255;
+          }
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const source = new CanvasSource({ resource: asCanvas(c), scaleMode: 'linear' });
+    return new Texture({ source, frame: { x: S, y: S, width: CHUNK * S, height: CHUNK * S } as never });
+  }
+
   private createChunk(cx: number, cy: number): ChunkView {
     const w = this.game.world;
-    const groundTex = this.chunkTexture(cx, cy, (x, y) => [BIOME_COLORS[w.biomeAt(x, y)], 1]);
+    const groundTex = this.groundTexture(cx, cy);
     const ground = new Sprite(groundTex);
     ground.position.set(cx * CHUNK * CELL, cy * CHUNK * CELL);
-    ground.scale.set(CELL);
+    ground.scale.set(CELL / GROUND_RES);
     this.groundLayer.addChild(ground);
 
     const filons = new Graphics();
@@ -437,20 +481,29 @@ export class GameRenderer {
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
     this.pickLayer.removeChildren().forEach((c) => c.destroy());
     // Trieurs : un portillon en travers du tapis, et l'objet choisi (ou un « ? » s'il n'y a encore rien de choisi).
-    for (const b of this.game.view.belts.values()) {
-      if (!b.pick) continue;
-      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
-      const px = -DY[b.dir], py = DX[b.dir];
+    const fv = this.game.view;
+    for (const [k, pick] of fv.picks) {
+      const [x, y] = unkey(k);
+      const b = fv.beltAt(x, y);
+      // Sans tapis (encore) : le portillon se met en travers de la sortie du bâtiment voisin, sur un petit socle.
+      let dir = b?.dir ?? 0;
+      if (!b) {
+        const owner = fv.pickOwner(x, y);
+        for (let d = 0; d < 4; d++) if (owner && fv.machineAt(x - DX[d], y - DY[d]) === owner) { dir = d as typeof dir; break; }
+      }
+      const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
+      const px = -DY[dir], py = DX[dir];
       const gate = new Graphics();
+      if (!b) gate.roundRect(cx - 11, cy - 11, 22, 22, 7).fill({ color: 0xffffff, alpha: 0.75 }).stroke({ width: 1.5, color: PALETTE.ink, alpha: 0.35 });
       gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 6, color: PALETTE.ink, cap: 'round' });
       gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 2.5, color: PALETTE.coral, cap: 'round' });
       const bx = cx, by = cy - 13;
-      const n = b.pick.length;
+      const n = pick.length;
       const w = n > 1 ? 26 : 17;
       gate.roundRect(bx - w / 2, by - 8.5, w, 17, 8.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
       this.pickLayer.addChild(gate);
       if (n) {
-        const sp = new Sprite(this.itemTextures.get(b.pick[0])!);
+        const sp = new Sprite(this.itemTextures.get(pick[0])!);
         sp.anchor.set(0.5); sp.scale.set(0.55); sp.position.set(n > 1 ? bx - 5 : bx, by);
         this.pickLayer.addChild(sp);
         if (n > 1) {

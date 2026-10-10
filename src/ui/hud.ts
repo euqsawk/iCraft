@@ -262,7 +262,12 @@ export class Hud implements GestureHandlers {
   /** Tuiles des nœuds de l'arbre (pour les feuilles du Noyau et du passage de palier). */
   private nodeTiles(nodes: UnlockNode[]): string {
     if (!nodes.length) return '';
-    return `<div class="lv-ready">${nodes.map((x) => `<div><span class="lv-tile${x.effect.kind === 'soon' ? ' soon' : ''}">${NODE_ICONS[x.icon] ?? ''}</span><small>${esc(x.name)}</small></div>`).join('')}</div>`;
+    // Comme dans l'arbre : ce qu'on ne peut pas encore débloquer reste caché.
+    return `<div class="lv-ready">${nodes.map((x) => {
+      const st = this.game.nodeState(x);
+      const hide = st === 'locked' || st === 'soon';
+      return `<div><span class="lv-tile${hide ? ' mystery' : ''}">${hide ? MYSTERY : NODE_ICONS[x.icon] ?? ''}</span><small>${hide ? '???' : esc(x.name)}</small></div>`;
+    }).join('')}</div>`;
   }
 
   /** Passage de palier : une partie de l'arbre s'ouvre. */
@@ -313,7 +318,7 @@ export class Hud implements GestureHandlers {
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
-      case 'picker': { const b = this.game.view.beltAt(e.x, e.y); if (b) setTimeout(() => this.openPickPicker(b), 120); break; }
+      case 'picker': setTimeout(() => this.openPickPicker(e.x, e.y), 120); break;
       case 'sold': this.toast(`Le gros drone a revendu ${e.count} objet${e.count > 1 ? 's' : ''} : +${fmt(e.money)} pièces`, 'good'); break;
       case 'drones': this.toast(`${this.game.droneCount} drones travaillent avec ton robot`, 'good'); break;
       default: break;
@@ -672,6 +677,8 @@ export class Hud implements GestureHandlers {
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
+    // Un trieur posé avant son tapis : on rouvre son choix.
+    if (f.pickAt(cx, cy)) { this.openPickPicker(cx, cy); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
     if (this.game.inAtelier) return;
     this.game.sendRobot(w.x, w.y);
@@ -1135,16 +1142,17 @@ export class Hud implements GestureHandlers {
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
       const sortBtn = isSplit && this.game.isUnlocked('tri') ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : 'Trier un objet'}</button></div>` : '';
       // Un trieur sur ce tapis (à la sortie d'une machine ou d'un coffre).
-      const pb = chain.find((c) => c.pick);
-      const owner = pb ? f.outputOwner(pb) : null;
+      const pb = chain.find((c) => f.pickAt(c.x, c.y));
+      const pk0 = pb ? f.pickAt(pb.x, pb.y)! : null;
+      const owner = pb ? f.pickOwner(pb.x, pb.y) : null;
       const pickFrom = !owner ? '' : f.isStop(owner) ? ` des arrivées ${owner.type === 'gare' ? 'de la gare' : 'du dépôt'}` : ` de ${esc(machineDef(owner.type).name.toLowerCase())}`;
-      const pickWhat = pb?.pick?.length ? `seul${pb.pick.length > 1 ? 's' : ''} ${pb.pick.map((k) => esc(item(k).name.toLowerCase())).join(', ')} sort${pb.pick.length > 1 ? 'ent' : ''}` : 'rien ne sort encore (choisis les objets)';
+      const pickWhat = pk0?.length ? `seul${pk0.length > 1 ? 's' : ''} ${pk0.map((k) => esc(item(k).name.toLowerCase())).join(', ')} sort${pk0.length > 1 ? 'ent' : ''}` : 'rien ne sort encore (choisis les objets)';
       const pickInfo = pb ? `<p><b>Trieur</b> : ${pickWhat}${pickFrom} sur ce tapis. La gomme le retire avant le tapis.</p>` : '';
-      const pickBtn = pb ? `<div class="row"><button class="btn" data-act="pick">${pb.pick!.length ? `<img class="btn-ico" src="${this.itemIcons.get(pb.pick![0])}" alt="">` : ''}Choisir ce qui sort</button></div>` : '';
+      const pickBtn = pk0 ? `<div class="row"><button class="btn" data-act="pick">${pk0.length ? `<img class="btn-ico" src="${this.itemIcons.get(pk0[0])}" alt="">` : ''}Choisir ce qui sort</button></div>` : '';
       const actions = `${pickBtn}${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
       if (!this.setPopover(`b${sel.x},${sel.y}`, info + pickInfo + linkInfo, actions)) return;
       const pk = p.querySelector<HTMLButtonElement>('[data-act="pick"]');
-      if (pk && pb) pk.onclick = () => this.openPickPicker(pb);
+      if (pk && pb) pk.onclick = () => this.openPickPicker(pb.x, pb.y);
       const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
       if (so) so.onclick = () => this.openSortPicker(b);
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
@@ -2239,20 +2247,22 @@ export class Hud implements GestureHandlers {
   /** Met à jour la bulle. Renvoie vrai si les boutons ont été recréés (il faut les rebrancher). */
   /** Tri : choisir l'objet qui part dans la dérivation d'un séparateur. */
   /** Le trieur d'un tapis : les objets qui ont le droit de sortir de la machine ou du coffre (plusieurs possibles). */
-  private openPickPicker(b: Belt): void {
+  private openPickPicker(x: number, y: number): void {
     this.closePopover();
     const g = this.game;
     this.openSheet((sheet, close) => {
-      if (!b.pick || g.view.beltAt(b.x, b.y) !== b) { close(); return; }
-      const owner = g.view.outputOwner(b);
+      const cur = g.view.pickAt(x, y);
+      if (!cur) { close(); return; }
+      const owner = g.view.pickOwner(x, y);
       const from = owner ? (g.view.isStop(owner) ? `des arrivées ${owner.type === 'gare' ? 'de la gare' : 'du dépôt'}` : `de ${machineDef(owner.type).name.toLowerCase()}`) : 'de la machine';
-      sheet.append(this.sheetHead('Trieur', `Ce qui sort ${from} sur ce tapis · touche les objets (plusieurs possibles)`, close));
+      const onto = g.view.beltAt(x, y) ? 'sur ce tapis' : 'sur le tapis que tu poseras ici';
+      sheet.append(this.sheetHead('Trieur', `Ce qui sort ${from} ${onto} · touche les objets (plusieurs possibles)`, close));
       // D'abord ce qu'elle contient en ce moment, puis ce qu'on fabrique déjà, puis le reste.
       const here = owner ? Object.keys(machineDef(owner.type).kind === 'storage' ? g.view.outOf(owner) : owner.outBuf) : [];
       const known = Object.keys(g.factory.stats.made);
       const order = [...new Set([...here, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
       const card = h('div', 'card');
-      const picked = new Set(b.pick);
+      const picked = new Set(cur);
       const status = h('p', 'muted small', '');
       const say = () => { status.textContent = picked.size ? `${picked.size} objet${picked.size > 1 ? 's' : ''} choisi${picked.size > 1 ? 's' : ''} : le reste attend dans ${owner && machineDef(owner.type).kind === 'storage' ? 'le coffre' : 'la machine'} (ou sort par un autre tapis).` : 'Rien de choisi : rien ne sort par ce tapis.'; };
       say();
@@ -2261,7 +2271,7 @@ export class Hud implements GestureHandlers {
         const c = h('button', `sort-cell${picked.has(id) ? ' on' : ''}${here.includes(id) ? ' here' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
         c.onclick = () => {
           if (picked.has(id)) picked.delete(id); else picked.add(id);
-          g.setBeltPick(b, [...picked]);
+          g.setPick(x, y, [...picked]);
           c.classList.toggle('on', picked.has(id));
           say();
         };

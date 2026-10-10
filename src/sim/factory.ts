@@ -42,8 +42,6 @@ export interface Belt {
   splitJump?: number;
   /** Compteur posé sur cette case : les objets qui en sortent (date et matière), pour le débit. */
   meter?: { ev: { t: number; k: string }[]; since: number };
-  /** Trieur posé à la sortie d'une machine ou d'un coffre : seuls ces objets en sortent sur ce tapis. */
-  pick?: string[];
 }
 
 /** Longueur parcourue sur une case de tapis, en cases (plus longue sur un pont). */
@@ -335,6 +333,34 @@ export class Factory {
 
   // ---------- Compteurs de débit ----------
 
+  /** Trieurs, par case : seuls ces objets sortent de la machine voisine sur le tapis de cette case (posé avant ou après). */
+  readonly picks = new Map<number, string[]>();
+
+  /** Ce que laisse sortir le trieur de cette case, s'il y en a un. */
+  pickAt(x: number, y: number): string[] | undefined {
+    return this.picks.get(key(x, y));
+  }
+
+  /** La machine dont un trieur posé sur cette case trie la sortie : celle d'où part le tapis, sinon une voisine qui sort quelque chose. */
+  pickOwner(x: number, y: number): Machine | null {
+    const b = this.beltAt(x, y);
+    if (b) return this.outputOwner(b);
+    for (let d = 0; d < 4; d++) {
+      const m = this.machineAt(x + DX[d], y + DY[d]);
+      if (!m) continue;
+      const k = machineDef(m.type).kind;
+      if (k === 'storage' || k === 'crafter' || k === 'drill' || k === 'atelier') return m;
+    }
+    return null;
+  }
+
+  /** Retire les trieurs des cases qu'un bâtiment va recouvrir ; renvoie combien. */
+  clearPicksUnder(w: number, h: number, x: number, y: number): number {
+    let n = 0;
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (this.picks.delete(key(x + i, y + j))) n++;
+    return n;
+  }
+
   /** La machine (ou le coffre) qui dépose sur ce tapis, s'il part d'elle. */
   outputOwner(b: Belt): Machine | null {
     this.refresh();
@@ -441,11 +467,12 @@ export class Factory {
       if (b.meter) return { ok: false, reason: 'Ce tapis a déjà un compteur' };
       return { ok: true };
     }
-    // Un trieur se pose sur la première case d'un tapis qui part d'une machine ou d'un coffre.
+    // Un trieur se pose juste à la sortie d'une machine ou d'un coffre : sur une case libre (le tapis viendra après)
+    // ou sur la première case d'un tapis qui en part.
     if (def.kind === 'picker') {
-      const b = this.beltAt(x, y);
-      if (!b || !this.outputOwner(b)) return { ok: false, reason: 'Pose-le sur un tapis qui part d’un coffre ou d’une machine' };
-      if (b.pick) return { ok: false, reason: 'Ce tapis a déjà un trieur' };
+      if (this.cellMachine.has(key(x, y))) return { ok: false, reason: 'Pose-le à côté du bâtiment, pas dessus' };
+      if (this.picks.has(key(x, y))) return { ok: false, reason: 'Il y a déjà un trieur ici' };
+      if (!this.pickOwner(x, y)) return { ok: false, reason: 'Pose-le juste à la sortie d’un coffre, d’une gare ou d’une machine' };
       return { ok: true };
     }
     const oreCount = new Map<string, { n: number; rate: number }>();
@@ -1715,7 +1742,8 @@ export class Factory {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
       // Un trieur sur ce tapis : seuls les objets choisis sortent par là.
-      const allowed = b.pick ? all.filter((k) => b.pick!.includes(k)) : all;
+      const pick = this.picks.get(key(b.x, b.y));
+      const allowed = pick ? all.filter((k) => pick.includes(k)) : all;
       const kinds = sends ? allowed.filter((k) => sends(b, k)) : allowed;
       if (!kinds.length) continue;
       const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
@@ -1750,7 +1778,8 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', b.pick ?? 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '']),
+      picks: [...this.picks].map(([k, v]) => [k, [...v]] as [number, string[]]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1765,6 +1794,8 @@ export class Factory {
     for (const k of s.cables ?? []) this.cables.add(k);
     this.pipes.clear();
     for (const k of s.pipes ?? []) this.pipes.add(k);
+    this.picks.clear();
+    for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) this.picks.set(k, v.filter((t) => typeof t === 'string'));
     for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
@@ -1774,7 +1805,8 @@ export class Factory {
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       if (meter) this.addMeter(b);
-      if (Array.isArray(pick)) b.pick = pick.filter((t) => typeof t === 'string');
+      // Parties d'avant : le trieur était rangé sur le tapis.
+      if (Array.isArray(pick)) this.picks.set(key(x, y), pick.filter((t) => typeof t === 'string'));
       // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
       if (feed !== undefined && feed >= 0) {
         b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
@@ -1815,6 +1847,8 @@ export interface FactorySave {
   cables?: number[];
   pipes?: number[];
   lines?: Line[];
+  /** Trieurs : [case, objets]. */
+  picks?: [number, string[]][];
   /** Anciennes parties : tapis souterrains (retirés du jeu, remboursés au chargement). */
   tunnels?: { cells: number[] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?][];
