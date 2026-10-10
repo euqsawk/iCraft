@@ -107,7 +107,11 @@ export interface Machine {
   size?: number;
 }
 
-export interface MachinePort { rx: number; ry: number; io: 'in' | 'out'; item?: string }
+/**
+ * Une entrée ou une sortie sur un côté d'une machine. En auto (sans `lock`), l'objet n'est qu'une étiquette
+ * (ce qu'on prévoit d'y faire passer) ; filtrée (`lock`), seul cet objet passe par là.
+ */
+export interface MachinePort { rx: number; ry: number; io: 'in' | 'out'; item?: string; lock?: boolean }
 
 /** L'intérieur d'un atelier : pas de filons, tout est découvert. */
 const ROOM_WORLD = { patchAt: () => null, isRevealed: () => true } as unknown as World;
@@ -342,33 +346,11 @@ export class Factory {
 
   // ---------- Compteurs de débit ----------
 
-  /** Trieurs, par case : seuls ces objets sortent de la machine voisine sur le tapis de cette case (posé avant ou après). */
-  readonly picks = new Map<number, string[]>();
-
-  /** Ce que laisse sortir le trieur de cette case, s'il y en a un. */
-  pickAt(x: number, y: number): string[] | undefined {
-    return this.picks.get(key(x, y));
+  /** Le filtre d'une entrée ou d'une sortie à l'endroit de ce tapis : seul cet objet passe par là (sinon tout, en auto). */
+  portFilter(m: Machine, b: { x: number; y: number }, io: 'in' | 'out'): string | undefined {
+    return m.ports?.find((p) => p.io === io && p.lock && p.item && m.x + p.rx === b.x && m.y + p.ry === b.y)?.item;
   }
 
-  /** La machine dont un trieur posé sur cette case trie la sortie : celle d'où part le tapis, sinon une voisine qui sort quelque chose. */
-  pickOwner(x: number, y: number): Machine | null {
-    const b = this.beltAt(x, y);
-    if (b) return this.outputOwner(b);
-    for (let d = 0; d < 4; d++) {
-      const m = this.machineAt(x + DX[d], y + DY[d]);
-      if (!m) continue;
-      const k = machineDef(m.type).kind;
-      if (k === 'storage' || k === 'crafter' || k === 'drill' || k === 'atelier') return m;
-    }
-    return null;
-  }
-
-  /** Retire les trieurs des cases qu'un bâtiment va recouvrir ; renvoie combien. */
-  clearPicksUnder(w: number, h: number, x: number, y: number): number {
-    let n = 0;
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (this.picks.delete(key(x + i, y + j))) n++;
-    return n;
-  }
 
   /** Les cases autour d'une machine, sur ses côtés (sans les coins) : là où une entrée ou une sortie peut se brancher. */
   perimeter(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; d: Dir }[] {
@@ -385,6 +367,11 @@ export class Factory {
    * Les entrées et sorties d'une machine, autour d'elle : tapis branchés (avec le dernier objet passé par là)
    * et entrées ou sorties prévues (un chevron, pas encore de tapis).
    */
+  private portIndex(m: Machine, x: number, y: number, io: 'in' | 'out'): number | undefined {
+    const i = m.ports?.findIndex((p) => p.io === io && m.x + p.rx === x && m.y + p.ry === y) ?? -1;
+    return i >= 0 ? i : undefined;
+  }
+
   /** Ce que la machine sort sans doute : ce qui attend dans sa sortie, sinon sa recette en cours ou la dernière. */
   likelyOutput(m: Machine): string | undefined {
     const ready = Object.keys(m.outBuf).find((t) => m.outBuf[t] > 0);
@@ -397,9 +384,9 @@ export class Factory {
     return ri >= 0 ? Object.keys(def.recipes[ri].out)[0] : undefined;
   }
 
-  machineIO(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number }[] {
+  machineIO(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number; lock?: boolean }[] {
     this.refresh();
-    const res: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number }[] = [];
+    const res: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number; lock?: boolean }[] = [];
     const outs = new Set(this.outputs.get(m) ?? []);
     for (const c of this.perimeter(m)) {
       const b = this.beltAt(c.x, c.y);
@@ -409,15 +396,16 @@ export class Factory {
       const feeds = [b.split, b.split2].some((d) => d !== undefined && this.machineAt(b.x + DX[d], b.y + DY[d]) === m);
       // Ce qui passe là : le dernier objet vu ; sinon (machine bouchée, ancienne partie) ce qui attend sur le tapis ou dans la machine.
       // Une entrée ou sortie prévue à cet endroit, puis tracée : on garde ce qu'on y avait prévu.
-      const plan = (io: 'in' | 'out') => m.ports?.find((p) => p.io === io && m.x + p.rx === c.x && m.y + p.ry === c.y)?.item;
-      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: m.seenIn?.[k] ?? b.items[0]?.t ?? plan('in'), planned: false });
-      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: m.seenOut?.[k] ?? this.picks.get(k)?.[0] ?? b.items[b.items.length - 1]?.t ?? plan('out') ?? this.likelyOutput(m), planned: false });
+      const portAt = (io: 'in' | 'out') => m.ports?.find((p) => p.io === io && m.x + p.rx === c.x && m.y + p.ry === c.y);
+      const plan = (io: 'in' | 'out') => portAt(io)?.item;
+      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: (portAt('in')?.lock ? plan('in') : undefined) ?? m.seenIn?.[k] ?? b.items[0]?.t ?? plan('in'), planned: false, lock: portAt('in')?.lock, port: this.portIndex(m, c.x, c.y, 'in') });
+      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: (portAt('out')?.lock ? plan('out') : undefined) ?? m.seenOut?.[k] ?? plan('out') ?? b.items[b.items.length - 1]?.t ?? this.likelyOutput(m), planned: false, lock: portAt('out')?.lock, port: this.portIndex(m, c.x, c.y, 'out') });
     }
     (m.ports ?? []).forEach((p, i) => {
       const x = m.x + p.rx, y = m.y + p.ry;
       if (res.some((r) => r.x === x && r.y === y && r.io === p.io)) return;
       const c = this.perimeter(m).find((q) => q.x === x && q.y === y);
-      if (c) res.push({ x, y, side: c.side, io: p.io, item: p.item, planned: true, port: i });
+      if (c) res.push({ x, y, side: c.side, io: p.io, item: p.item, planned: true, port: i, lock: p.lock });
     });
     return res;
   }
@@ -526,14 +514,6 @@ export class Factory {
       const b = this.beltAt(x, y);
       if (!b) return { ok: false, reason: 'Pose-le sur un tapis' };
       if (b.meter) return { ok: false, reason: 'Ce tapis a déjà un compteur' };
-      return { ok: true };
-    }
-    // Un trieur se pose juste à la sortie d'une machine ou d'un coffre : sur une case libre (le tapis viendra après)
-    // ou sur la première case d'un tapis qui en part.
-    if (def.kind === 'picker') {
-      if (this.cellMachine.has(key(x, y))) return { ok: false, reason: 'Pose-le à côté du bâtiment, pas dessus' };
-      if (this.picks.has(key(x, y))) return { ok: false, reason: 'Il y a déjà un trieur ici' };
-      if (!this.pickOwner(x, y)) return { ok: false, reason: 'Pose-le juste à la sortie d’un coffre, d’une gare ou d’une machine' };
       return { ok: true };
     }
     const oreCount = new Map<string, { n: number; rate: number }>();
@@ -1519,7 +1499,7 @@ export class Factory {
             } else {
               it.p = 1;
             }
-          } else if (nxt.kind === 'machine' && this.canAccept(nxt.machine, it.t)) {
+          } else if (nxt.kind === 'machine' && this.canAccept(nxt.machine, it.t) && (this.portFilter(nxt.machine, b, 'in') ?? it.t) === it.t) {
             items.shift(); i--;
             if (b.meter) this.meterHit(b, it.t);
             (nxt.machine.seenIn ??= {})[key(b.x, b.y)] = it.t;
@@ -1803,9 +1783,9 @@ export class Factory {
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
-      // Un trieur sur ce tapis : seuls les objets choisis sortent par là.
-      const pick = this.picks.get(key(b.x, b.y));
-      const allowed = pick ? all.filter((k) => pick.includes(k)) : all;
+      // Une sortie prévue avec un objet : seul cet objet sort par là.
+      const only = this.portFilter(m, b, 'out');
+      const allowed = only ? all.filter((k) => k === only) : all;
       const kinds = sends ? allowed.filter((k) => sends(b, k)) : allowed;
       if (!kinds.length) continue;
       // Même bouchée, la sortie sait ce qu'elle attend de faire passer.
@@ -1844,7 +1824,6 @@ export class Factory {
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '']),
-      picks: [...this.picks].map(([k, v]) => [k, [...v]] as [number, string[]]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1861,8 +1840,9 @@ export class Factory {
     for (const k of s.cables ?? []) this.cables.add(k);
     this.pipes.clear();
     for (const k of s.pipes ?? []) this.pipes.add(k);
-    this.picks.clear();
-    for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) this.picks.set(k, v.filter((t) => typeof t === 'string'));
+    // Parties d'avant : les trieurs (retirés) deviennent des sorties prévues sur leur bâtiment, et sont remboursés.
+    const oldPicks = new Map<number, string[]>();
+    for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) oldPicks.set(k, v.filter((t) => typeof t === 'string'));
     for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
@@ -1873,7 +1853,7 @@ export class Factory {
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       if (meter) this.addMeter(b);
       // Parties d'avant : le trieur était rangé sur le tapis.
-      if (Array.isArray(pick)) this.picks.set(key(x, y), pick.filter((t) => typeof t === 'string'));
+      if (Array.isArray(pick)) oldPicks.set(key(x, y), pick.filter((t) => typeof t === 'string'));
       // Liaisons de côté : 10 + masque des sens (une ancienne sauvegarde : un seul sens, de 0 à 3).
       if (feed !== undefined && feed >= 0) {
         b.feeds = feed >= 10 ? ([0, 1, 2, 3] as Dir[]).filter((d) => (feed - 10) & (1 << d)) : [feed as Dir];
@@ -1909,6 +1889,20 @@ export class Factory {
     // Les tapis souterrains n'existent plus : une ancienne partie récupère leur prix (4 pièces par case de trajet).
     this.legacyRefund = 0;
     for (const st of s.tunnels ?? []) this.legacyRefund += (st.cells.length + 1) * 4;
+    for (const [k, items] of oldPicks) {
+      this.legacyRefund += 20;
+      const [x, y] = unkey(k);
+      const b = this.beltAt(x, y);
+      let owner: Machine | null = b ? this.outputOwner(b) : null;
+      for (let d = 0; d < 4 && !owner; d++) {
+        const m = this.machineAt(x + DX[d], y + DY[d]);
+        if (m && ['storage', 'station', 'crafter', 'drill', 'atelier'].includes(machineDef(m.type).kind)) owner = m;
+      }
+      if (!owner || !this.perimeter(owner).some((c) => c.x === x && c.y === y)) continue;
+      const rx = x - owner.x, ry = y - owner.y;
+      if (owner.ports?.some((p) => p.rx === rx && p.ry === ry)) continue;
+      (owner.ports ??= []).push({ rx, ry, io: 'out', ...(items[0] ? { item: items[0], lock: true } : {}) });
+    }
     this.dirty = true;
   }
 }

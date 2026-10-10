@@ -670,7 +670,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .plan-row b { flex: 1; text-align: left; font-size: 14px; font-weight: 900; }
 .plan-row small { font-size: 12px; font-weight: 800; color: var(--ink2); white-space: nowrap; }
 
-.mdiag { background: #E8F1EC; border-radius: 22px; padding: 12px 6px 10px; display: flex; flex-direction: column; gap: 6px; }
+.mdiag { position: relative; background: #E8F1EC; border-radius: 22px; padding: 12px 6px 10px; display: flex; flex-direction: column; gap: 6px; }
 .mdiag-in { position: relative; width: 340px; margin: 0 auto; flex: none; }
 @media (max-width: 379px) { .mdiag-in { zoom: .9; } }
 @media (max-width: 349px) { .mdiag-in { zoom: .82; } }
@@ -706,7 +706,6 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .mc-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mc-rate b { font-size: 15px; font-weight: 900; }
 .mc-rate small { font-size: 10.5px; font-weight: 800; color: var(--ink2); }
-.mc-rate .mc-tag { margin-left: auto; font-size: 10px; }
 .mc-x {
   position: absolute; right: -8px; top: -8px; width: 24px; height: 24px; border-radius: 12px; background: #fff; box-shadow: 0 2px 0 var(--shadow);
   font-size: 15px; font-weight: 900; line-height: 1; display: flex; align-items: center; justify-content: center; color: var(--ink2);
@@ -906,3 +905,16 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .tree-pal.done { background: var(--green, #2E6B51); color: #fff; }
 .tree-pal.now { background: var(--coral); color: #fff; }
 .tree-pal.later { background: #E3ECE7; color: #4A5868; }
+
+/* Le petit menu d'une entrée ou d'une sortie : auto ou un seul objet */
+.conn-menu { top: calc(100% - 10px); left: 6px; right: 6px; z-index: 4; max-height: 46vh; }
+.plan-row .plan-check { margin-left: auto; flex: none; }
+.plan-row.danger { color: var(--coral-dark); }
+.plan-row.danger svg { width: 18px; height: 18px; }
+.plan-row .plan-auto { flex: none; }
+.mc-tag { margin-left: auto; font-size: 10px; font-weight: 900; color: var(--ink2); display: inline-flex; align-items: center; gap: 2px; }
+.mc-tag.auto { color: #8AA197; }
+.mc-tag.lock { color: #fff; background: var(--ink); padding: 1px 5px 1px 4px; border-radius: 6px; }
+.mchip.locked { box-shadow: 0 3px 0 var(--shadow), inset 0 0 0 2px var(--ink); }
+.mchip.open { box-shadow: 0 0 0 3px var(--yellow), 0 3px 0 var(--shadow); }
+.mchip.belt { cursor: pointer; }

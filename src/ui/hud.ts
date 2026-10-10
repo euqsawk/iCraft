@@ -64,6 +64,16 @@ const GIFT_TEXT: Record<string, { title: string; lines: string[]; open: string }
   },
 };
 
+/** Petit entonnoir : une entrée ou une sortie filtrée. */
+const FUNNEL = '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M1 1.5 H9 L6 5.2 V8.5 L4 9.2 V5.2 Z"/></svg>';
+const CHECK_SM = '<svg class="plan-check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2E6B51" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 L6.5 12 L13 4.5"/></svg>';
+/** Un menu qui s'ouvre sous un élément : il s'arrête au bas de l'écran (et défile). */
+function fitMenu(el: HTMLElement): void {
+  requestAnimationFrame(() => {
+    const top = el.getBoundingClientRect().top;
+    el.style.maxHeight = `${Math.max(150, window.innerHeight - top - 12)}px`;
+  });
+}
 const fmt = (n: number) => Math.floor(n).toLocaleString('fr-FR').replace(/ | /g, ' ');
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
@@ -318,7 +328,6 @@ export class Hud implements GestureHandlers {
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
-      case 'picker': setTimeout(() => this.openPickPicker(e.x, e.y), 120); break;
       case 'sold': this.toast(`Le gros drone a revendu ${e.count} objet${e.count > 1 ? 's' : ''} : +${fmt(e.money)} pièces`, 'good'); break;
       case 'drones': this.toast(`${this.game.droneCount} drones travaillent avec ton robot`, 'good'); break;
       default: break;
@@ -677,8 +686,6 @@ export class Hud implements GestureHandlers {
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     const b = f.beltAt(cx, cy);
     if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
-    // Un trieur posé avant son tapis : on rouvre son choix.
-    if (f.pickAt(cx, cy)) { this.openPickPicker(cx, cy); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
     if (this.game.inAtelier) return;
     this.game.sendRobot(w.x, w.y);
@@ -1140,19 +1147,9 @@ export class Hud implements GestureHandlers {
         ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} et ${esc(machineDef(fed2.type).name.toLowerCase())} de part et d’autre, et continue tout droit : un objet sur trois pour chacun.</p>`
         : fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre. Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.</p>` : '';
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
-      const sortBtn = isSplit && this.game.isUnlocked('tri') ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : 'Trier un objet'}</button></div>` : '';
-      // Un trieur sur ce tapis (à la sortie d'une machine ou d'un coffre).
-      const pb = chain.find((c) => f.pickAt(c.x, c.y));
-      const pk0 = pb ? f.pickAt(pb.x, pb.y)! : null;
-      const owner = pb ? f.pickOwner(pb.x, pb.y) : null;
-      const pickFrom = !owner ? '' : f.isStop(owner) ? ` des arrivées ${owner.type === 'gare' ? 'de la gare' : 'du dépôt'}` : ` de ${esc(machineDef(owner.type).name.toLowerCase())}`;
-      const pickWhat = pk0?.length ? `seul${pk0.length > 1 ? 's' : ''} ${pk0.map((k) => esc(item(k).name.toLowerCase())).join(', ')} sort${pk0.length > 1 ? 'ent' : ''}` : 'rien ne sort encore (choisis les objets)';
-      const pickInfo = pb ? `<p><b>Trieur</b> : ${pickWhat}${pickFrom} sur ce tapis. La gomme le retire avant le tapis.</p>` : '';
-      const pickBtn = pk0 ? `<div class="row"><button class="btn" data-act="pick">${pk0.length ? `<img class="btn-ico" src="${this.itemIcons.get(pk0[0])}" alt="">` : ''}Choisir ce qui sort</button></div>` : '';
-      const actions = `${pickBtn}${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
-      if (!this.setPopover(`b${sel.x},${sel.y}`, info + pickInfo + linkInfo, actions)) return;
-      const pk = p.querySelector<HTMLButtonElement>('[data-act="pick"]');
-      if (pk && pb) pk.onclick = () => this.openPickPicker(pb.x, pb.y);
+      const sortBtn = isSplit ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : this.game.isUnlocked('tri') ? 'Trier un objet' : 'Voir le séparateur'}</button></div>` : '';
+      const actions = `${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
+      if (!this.setPopover(`b${sel.x},${sel.y}`, info + linkInfo, actions)) return;
       const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
       if (so) so.onclick = () => this.openSortPicker(b);
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
@@ -1286,7 +1283,7 @@ export class Hud implements GestureHandlers {
   private craftSel: string | null = null;
   private craftQty = 1;
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
-  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | 'stop' | '' = '';
+  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | 'stop' | 'splitter' | '' = '';
   private machineId = -1;
   private chestId = -1;
   private liveTimer = 0;
@@ -1651,7 +1648,7 @@ export class Hud implements GestureHandlers {
   openMachine(m: Machine): void {
     this.closePopover();
     this.invSel = null;
-    if (this.machineId !== m.id) this.planOpen = false;
+    if (this.machineId !== m.id) { this.planOpen = false; this.connOpen = null; }
     this.machineId = m.id;
     this.openSheet((sheet, close) => {
       const g = this.game;
@@ -1876,6 +1873,8 @@ export class Hud implements GestureHandlers {
 
   /** La liste déroulante ouverte (recette prévue) ; refermée en changeant de machine. */
   private planOpen = false;
+  /** L'entrée ou la sortie dont le petit menu (auto ou filtre) est ouvert. */
+  private connOpen: { x: number; y: number; io: 'in' | 'out' } | null = null;
   /** Une entrée ou une sortie est en train d'être glissée vers la carte (la fenêtre attend). */
   private portDragging = false;
 
@@ -1956,11 +1955,13 @@ export class Hud implements GestureHandlers {
   }
 
   /**
-   * La machine au milieu, ses entrées et sorties autour, là où elles se branchent, avec leurs débits.
-   * Ce qui manque encore (d'après la recette) attend en pointillés : on le glisse sur un côté du bâtiment.
+   * La machine au milieu, ses entrées et sorties autour, là où elles se branchent, avec leurs débits attendus.
+   * Tout marche en auto ; toucher une entrée ou une sortie permet de la filtrer (un seul objet passe), la glisser
+   * de la déplacer ou de l'échanger avec une autre. Ce qui manque encore (d'après la recette) attend en pointillés.
    */
   private machineDiagram(mm: Machine): HTMLElement {
     const g = this.game, f = g.view, def = machineDef(mm.type);
+    const store = def.kind === 'storage' || f.isStop(mm);
     const W = 340, M = 80, CW = 118, CH = 52;
     const box = h('div', 'mdiag');
     const inner = h('div', 'mdiag-in');
@@ -1974,12 +1975,16 @@ export class Hud implements GestureHandlers {
     if (def.kind === 'drill' && mm.ore) maxOut[mm.ore] = mm.rate ?? 0;
     // Le combustible : ce qu'elle brûle en travaillant, si elle n'est pas au courant.
     if (def.coal && !f.powered(mm)) for (const t of ['charbon', 'carburant']) if (maxIn[t] === undefined) maxIn[t] = 1 / (RULES.coalMachineSeconds * (t === 'carburant' ? RULES.carburantMult : 1));
-    type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number };
+    type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number; x?: number; y?: number; lock?: boolean };
     const io = f.machineIO(mm);
-    const entries: Entry[] = io.map((c) => ({ side: c.side, io: c.io, item: c.item, kind: c.planned ? 'planned' : 'belt', port: c.port }));
+    const entries: Entry[] = io.map((c) => ({ side: c.side, io: c.io, item: c.item, kind: c.planned ? 'planned' : 'belt', port: c.port, x: c.x, y: c.y, lock: c.lock }));
+    // Dans l'ordre du bord : de haut en bas sur les côtés, de gauche à droite en haut et en bas.
+    entries.sort((p, q) => (p.side === 'left' || p.side === 'right' ? (p.y ?? 0) - (q.y ?? 0) : (p.x ?? 0) - (q.x ?? 0)));
     const has = (k: string, dir: 'in' | 'out') => entries.some((e) => e.io === dir && e.item === k);
     for (const k of Object.keys(maxIn)) if (!has(k, 'in') && !(isFuel(k) && !rec?.in[k])) entries.push({ side: 'left', io: 'in', item: k, kind: 'ghost' });
     for (const k of Object.keys(maxOut)) if (!has(k, 'out')) entries.push({ side: 'right', io: 'out', item: k, kind: 'ghost' });
+    // Un coffre, une gare : une sortie à prévoir (on choisit ensuite ce qui en sort).
+    if (store && !entries.some((e) => e.io === 'out' && e.kind !== 'belt')) entries.push({ side: 'right', io: 'out', kind: 'ghost' });
     // La hauteur suit ce qu'il y a autour : pas de vide en haut ni en bas sans raison.
     const count = (side: Entry['side']) => entries.filter((e) => e.side === side).length;
     const stack = (n: number) => n * CH + Math.max(0, n - 1) * 6;
@@ -1994,6 +1999,7 @@ export class Hud implements GestureHandlers {
     mEl.style.left = `${mx}px`; mEl.style.top = `${my}px`;
     inner.append(mEl);
     const place = (el: HTMLElement, x: number, y: number) => { el.style.left = `${x}px`; el.style.top = `${y}px`; inner.append(el); };
+    const open = this.connOpen;
     (['left', 'right', 'top', 'bottom'] as const).forEach((side) => {
       const list = entries.filter((e) => e.side === side);
       list.forEach((e, i) => {
@@ -2025,45 +2031,117 @@ export class Hud implements GestureHandlers {
         const rot = e.io === 'in' ? out : (out + 180) % 360;
         const chev = h('span', `mdiag-chev ${e.io} ${e.kind}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`);
         place(chev, cx - 10, cy - 10);
-        // La carte de l'entrée ou de la sortie : le débit attendu, rien de mesuré.
+        // La carte : l'objet, son débit attendu, et « filtré » s'il est seul à passer là.
         const k = e.item;
         const exp = k ? (e.io === 'in' ? maxIn[k] : maxOut[k]) : undefined;
-        const name = k ? esc(item(k).name) : e.io === 'in' ? 'Entrée' : 'Sortie';
+        const name = k ? esc(item(k).name) : e.kind === 'ghost' ? (e.io === 'in' ? 'Entrée' : 'Nouvelle sortie') : e.io === 'in' ? 'Tout ce qui arrive' : 'Tout ce qui est prêt';
         const ico = k ? `<img src="${this.itemIcons.get(k)}" alt="">` : '';
-        const body = `<span class="mc-rate"><b>${exp !== undefined ? Hud.rate(exp) : '—'}</b><small>/s</small>${e.kind === 'planned' ? '<small class="mc-tag">prévue</small>' : ''}</span>`;
-        const chip = h('div', `mchip ${e.io} ${e.kind}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span>${body}`);
+        const tag = e.lock ? `<small class="mc-tag lock">${FUNNEL}filtrée</small>` : e.kind === 'planned' ? '<small class="mc-tag">prévue</small>' : e.kind === 'belt' ? '<small class="mc-tag auto">auto</small>' : '';
+        const rate = exp !== undefined ? `<b>${Hud.rate(exp)}</b><small>/s</small>` : e.kind === 'ghost' && !k ? '<small>à glisser</small>' : store ? '' : '<b>—</b>';
+        const isOpen = !!open && e.kind !== 'ghost' && open.x === e.x && open.y === e.y && open.io === e.io;
+        const chip = h('div', `mchip ${e.io} ${e.kind}${e.lock ? ' locked' : ''}${isOpen ? ' open' : ''}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span><span class="mc-rate">${rate}${tag}</span>`);
         if (e.kind === 'planned' && e.port !== undefined) {
           const x0 = h('button', 'mc-x', '×');
           x0.setAttribute('aria-label', 'Retirer');
           const pi = e.port;
-          x0.onclick = (ev) => { ev.stopPropagation(); g.removePort(mm, pi); this.refreshSheet(); };
+          x0.onclick = (ev) => { ev.stopPropagation(); g.removePort(mm, pi); this.connOpen = null; this.refreshSheet(true); };
           chip.append(x0);
         }
-        if (e.kind !== 'belt') this.bindPortDrag(chip, mm, e.io, k);
+        const from = e.kind === 'ghost' ? undefined : { x: e.x!, y: e.y! };
+        this.bindPortDrag(chip, mm, e.io, k, from, () => {
+          if (!from) { this.toast('Glisse-la sur un côté du bâtiment', 'info'); return; }
+          this.connOpen = isOpen ? null : { x: from.x, y: from.y, io: e.io };
+          this.refreshSheet(true);
+        });
         place(chip, x, y);
       });
     });
-    if (entries.some((e) => e.kind === 'ghost')) box.append(h('p', 'mdiag-hint', 'Glisse une entrée ou une sortie sur un côté du bâtiment pour la prévoir : un chevron, sans prendre de case.'));
+    if (open) {
+      const e = entries.find((q) => q.kind !== 'ghost' && q.x === open.x && q.y === open.y && q.io === open.io);
+      if (e) box.append(this.connMenu(mm, e, rec ? Object.keys(e.io === 'in' ? rec.in : rec.out) : []));
+      else this.connOpen = null;
+    }
+    const hint = entries.some((e) => e.kind === 'ghost')
+      ? 'Glisse ce qui est en pointillés sur un côté du bâtiment pour le prévoir. Touche une entrée ou une sortie pour la filtrer.'
+      : io.length ? 'Touche une entrée ou une sortie pour la filtrer (ou la remettre en auto) ; glisse-la pour la déplacer ou l’échanger.' : '';
+    if (hint) box.append(h('p', 'mdiag-hint', hint));
     return box;
   }
 
-  /** Glisser une entrée ou une sortie de la fenêtre jusqu'à un côté du bâtiment, sur la carte. */
-  private bindPortDrag(el: HTMLElement, mm: Machine, io: 'in' | 'out', itemId?: string): void {
+  /** Ce qui peut passer par une entrée ou une sortie, pour la filtrer : d'abord ce qui sert ici, puis ce qui passe déjà. */
+  private connCandidates(mm: Machine, io: 'in' | 'out', first: string[]): string[] {
+    const g = this.game, f = g.view, def = machineDef(mm.type);
+    const list: string[] = [...first];
+    if (def.kind === 'crafter') for (const r of def.recipes) list.push(...Object.keys(io === 'in' ? r.in : r.out));
+    if (def.kind === 'drill' && mm.ore && io === 'out') list.push(mm.ore);
+    if (def.coal && io === 'in') list.push('charbon', 'carburant');
+    if (def.kind === 'storage' || f.isStop(mm)) {
+      const buf = io === 'out' ? f.outOf(mm) : mm.inBuf;
+      list.push(...Object.keys(buf).filter((t) => buf[t] > 0), ...Object.keys(g.factory.stats.made));
+    }
+    list.push(...Object.values(io === 'in' ? mm.seenIn ?? {} : mm.seenOut ?? {}));
+    return [...new Set(list)].filter((t) => !FLUIDS.has(t) && ITEM_LIST.some((x) => x.id === t));
+  }
+
+  /** Le petit menu d'une entrée ou d'une sortie : auto (tout passe) ou un seul objet. */
+  private connMenu(mm: Machine, e: { io: 'in' | 'out'; item?: string; lock?: boolean; x?: number; y?: number; side: string; kind: string; port?: number }, first: string[]): HTMLElement {
+    const g = this.game;
+    const menu = h('div', 'plan-list conn-menu');
+    const sideName = { left: 'à gauche', right: 'à droite', top: 'en haut', bottom: 'en bas' }[e.side] ?? '';
+    menu.append(h('p', 'plan-info', `<b>${e.io === 'in' ? 'Entrée' : 'Sortie'} ${sideName}</b> · en auto, tout passe ; choisis un objet pour que lui seul ${e.io === 'in' ? 'entre' : 'sorte'} par là${e.io === 'out' ? ' (le reste sort ailleurs ou attend)' : ' (le reste attend sur le tapis)'}.`));
+    const set = (t: string | null) => { g.setPortFilter(mm, e.x!, e.y!, e.io, t); this.connOpen = null; this.refreshSheet(true); };
+    const auto = h('button', `plan-row${!e.lock ? ' on' : ''}`, `<span class="plan-auto">Auto</span><b>${e.io === 'in' ? 'Tout ce qui arrive' : 'Tout ce qui est prêt'}</b>${!e.lock ? CHECK_SM : ''}`);
+    auto.onclick = () => set(null);
+    menu.append(auto);
+    for (const t of this.connCandidates(mm, e.io, first)) {
+      const on = !!e.lock && e.item === t;
+      const row = h('button', `plan-row${on ? ' on' : ''}`, `<img class="plan-out" src="${this.itemIcons.get(t)}" alt=""><b>Seulement ${esc(item(t).name.toLowerCase())}</b>${on ? CHECK_SM : ''}`);
+      row.onclick = () => set(t);
+      menu.append(row);
+    }
+    if (e.kind === 'planned' && e.port !== undefined) {
+      const rm = h('button', 'plan-row danger', `${ICONS.trash}<b>Retirer cette ${e.io === 'in' ? 'entrée' : 'sortie'} prévue</b>`);
+      const pi = e.port;
+      rm.onclick = () => { g.removePort(mm, pi); this.connOpen = null; this.refreshSheet(true); };
+      menu.append(rm);
+    }
+    // Toucher ailleurs referme le menu.
+    const outside = (ev: PointerEvent) => {
+      if (!menu.isConnected) { window.removeEventListener('pointerdown', outside, true); return; }
+      const t = ev.target as HTMLElement;
+      if (menu.contains(t) || t.closest('.mchip.open')) return;
+      window.removeEventListener('pointerdown', outside, true);
+      if (t.closest('.mchip')) return; // une autre carte : elle ouvre son propre menu
+      ev.stopPropagation(); ev.preventDefault();
+      this.connOpen = null;
+      this.refreshSheet(true);
+    };
+    setTimeout(() => window.addEventListener('pointerdown', outside, true), 0);
+    fitMenu(menu);
+    return menu;
+  }
+
+  /**
+   * Glisser une entrée ou une sortie jusqu'à un côté du bâtiment, sur la carte : une nouvelle (en pointillés)
+   * devient prévue ; une déjà là est déplacée, et échangée avec ce qui était à l'endroit où on la lâche.
+   * Un simple toucher appelle `tap`.
+   */
+  private bindPortDrag(el: HTMLElement, mm: Machine, io: 'in' | 'out', itemId: string | undefined, from: { x: number; y: number } | undefined, tap: () => void): void {
     el.addEventListener('pointerdown', (e) => {
       if ((e.target as HTMLElement).closest('.mc-x')) return;
       const sx = e.clientX, sy = e.clientY;
       let started = false, ghost: HTMLElement | null = null;
       let slot: { x: number; y: number } | null = null;
-      try { el.setPointerCapture(e.pointerId); } catch { /* rien */ }
       const begin = () => {
         started = true;
         this.portDragging = true;
+        this.connOpen = null;
         if (this.overlay) this.overlay.style.visibility = 'hidden';
         ghost = el.cloneNode(true) as HTMLElement;
         ghost.classList.add('mchip-drag');
         this.root.append(ghost);
         this.r.focusOn(mm.x + mm.w / 2, mm.y + mm.h / 2, Math.max(this.r.camera.zoom, 1.6), 0.35);
-        this.showBubble(window.innerWidth / 2, Math.min(window.innerHeight * 0.36, 300), 'Lâche-la sur un côté du bâtiment', false);
+        this.showBubble(window.innerWidth / 2, Math.min(window.innerHeight * 0.36, 300), from ? 'Lâche-la sur un autre côté : elle s’échange avec ce qui y est' : 'Lâche-la sur un côté du bâtiment', false);
       };
       const move = (ev: PointerEvent) => {
         if (!started) { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return; begin(); }
@@ -2075,14 +2153,18 @@ export class Hud implements GestureHandlers {
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
         window.removeEventListener('pointercancel', end);
-        if (!started) return;
+        if (!started) { tap(); return; }
         ghost?.remove();
         this.r.preview = null;
         this.bubble.classList.add('hidden');
         this.portDragging = false;
-        if (slot && this.game.addPort(mm, slot.x, slot.y, io, itemId)) this.toast(io === 'in' ? 'Entrée prévue : trace un tapis jusqu’au chevron' : 'Sortie prévue : trace un tapis depuis le chevron', 'good');
+        if (slot) {
+          const g = this.game;
+          const ok = from ? g.movePort(mm, from, slot, io, itemId) : g.addPort(mm, slot.x, slot.y, io, itemId);
+          if (ok) this.toast(from ? 'Déplacée' : g.view.beltAt(slot.x, slot.y) ? 'Filtre posé sur ce tapis' : io === 'in' ? 'Entrée prévue : trace un tapis jusqu’au chevron' : 'Sortie prévue : trace un tapis depuis le chevron', 'good');
+        }
         if (this.overlay) this.overlay.style.visibility = '';
-        this.refreshSheet();
+        this.refreshSheet(true);
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
@@ -2372,6 +2454,8 @@ export class Hud implements GestureHandlers {
       sheet.append(this.sheetHead(machineDef(chest.type).name, stop
         ? `Deux coffres de ${cap} objets : ce qui arrive par ${g.stationKind(chest) === 'train' ? 'train' : 'camion'}, et ce qui part`
         : `${fmt(total)} / ${cap} objets · les tapis le remplissent et le vident, les drones s’y servent`, close));
+      // Ses entrées et sorties : tout passe en auto, on peut filtrer une sortie (ce qui en sort).
+      sheet.append(this.machineDiagram(chest));
       const c1 = h('div', 'card');
       if (stop) {
         // Arrivées : ce que ramènent les véhicules, qui ressort sur les tapis (et où les drones se servent).
@@ -2466,68 +2550,103 @@ export class Hud implements GestureHandlers {
 
   /** Met à jour la bulle. Renvoie vrai si les boutons ont été recréés (il faut les rebrancher). */
   /** Tri : choisir l'objet qui part dans la dérivation d'un séparateur. */
-  /** Le trieur d'un tapis : les objets qui ont le droit de sortir de la machine ou du coffre (plusieurs possibles). */
-  private openPickPicker(x: number, y: number): void {
+  /**
+   * Un séparateur, dessiné comme une machine : ce qui arrive à gauche, tout droit à droite, la dérivation sur son côté.
+   * En auto, un objet sur deux de chaque côté ; avec Tri, on choisit l'objet qui seul part dans la dérivation.
+   */
+  private openSortPicker(belt: Belt): void {
     this.closePopover();
     const g = this.game;
+    const at = { x: belt.x, y: belt.y };
     this.openSheet((sheet, close) => {
-      const cur = g.view.pickAt(x, y);
-      if (!cur) { close(); return; }
-      const owner = g.view.pickOwner(x, y);
-      const from = owner ? (g.view.isStop(owner) ? `des arrivées ${owner.type === 'gare' ? 'de la gare' : 'du dépôt'}` : `de ${machineDef(owner.type).name.toLowerCase()}`) : 'de la machine';
-      const onto = g.view.beltAt(x, y) ? 'sur ce tapis' : 'sur le tapis que tu poseras ici';
-      sheet.append(this.sheetHead('Trieur', `Ce qui sort ${from} ${onto} · touche les objets (plusieurs possibles)`, close));
-      // D'abord ce qu'elle contient en ce moment, puis ce qu'on fabrique déjà, puis le reste.
-      const here = owner ? Object.keys(machineDef(owner.type).kind === 'storage' ? g.view.outOf(owner) : owner.outBuf) : [];
-      const known = Object.keys(g.factory.stats.made);
-      const order = [...new Set([...here, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
-      const card = h('div', 'card');
-      const picked = new Set(cur);
-      const status = h('p', 'muted small', '');
-      const say = () => { status.textContent = picked.size ? `${picked.size} objet${picked.size > 1 ? 's' : ''} choisi${picked.size > 1 ? 's' : ''} : le reste attend dans ${owner && machineDef(owner.type).kind === 'storage' ? 'le coffre' : 'la machine'} (ou sort par un autre tapis).` : 'Rien de choisi : rien ne sort par ce tapis.'; };
-      say();
-      const grid = h('div', 'sort-grid');
-      for (const id of order) {
-        const c = h('button', `sort-cell${picked.has(id) ? ' on' : ''}${here.includes(id) ? ' here' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
-        c.onclick = () => {
-          if (picked.has(id)) picked.delete(id); else picked.add(id);
-          g.setPick(x, y, [...picked]);
-          c.classList.toggle('on', picked.has(id));
-          say();
+      const f = g.view;
+      const b = f.beltAt(at.x, at.y);
+      if (!b || b.split === undefined) { close(); return; }
+      const tri = g.isUnlocked('tri');
+      sheet.classList.add('mach-sheet');
+      sheet.append(this.sheetHead('Séparateur', b.filter ? `Trie : seul ${esc(item(b.filter).name.toLowerCase())} part dans la dérivation` : 'Auto : un objet sur deux de chaque côté', close));
+      // Ce qui arrive : les objets sur la chaîne de tapis (le plus fréquent d'abord).
+      const count = new Map<string, number>();
+      for (const c of f.chainOf(b)) for (const it of c.items) count.set(it.t, (count.get(it.t) ?? 0) + 1);
+      const seen = [...count.entries()].sort((p, q) => q[1] - p[1]).map(([t]) => t);
+      const W = 340, H = 214, M = 80, CW = 118, CH = 52;
+      const box = h('div', 'mdiag');
+      const inner = h('div', 'mdiag-in');
+      inner.style.height = `${H}px`;
+      box.append(inner);
+      const rel = (b.split - b.dir + 4) % 4;
+      const down = rel === 1;
+      const mx = (W - M) / 2, my = down ? 20 : H - M - 20;
+      const place = (el: HTMLElement, x: number, y: number) => { el.style.left = `${x}px`; el.style.top = `${y}px`; inner.append(el); };
+      // La case du séparateur : un tapis qui se divise.
+      const fork = `<svg width="80" height="80" viewBox="0 0 80 80" aria-hidden="true"><rect x="2" y="2" width="76" height="76" rx="18" fill="#fff"/><rect x="2" y="2" width="76" height="76" rx="18" fill="none" stroke="#BCD2C6" stroke-width="3"/>
+        <path d="M14 40 H66" stroke="#2E3A4B" stroke-width="6" stroke-linecap="round"/><path d="M58 32 L66 40 L58 48" fill="none" stroke="#2E3A4B" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M40 40 V${down ? 66 : 14}" stroke="${b.filter ? '#2E6B51' : '#2E3A4B'}" stroke-width="6" stroke-linecap="round"/><path d="M32 ${down ? 58 : 22} L40 ${down ? 66 : 14} L48 ${down ? 58 : 22}" fill="none" stroke="${b.filter ? '#2E6B51' : '#2E3A4B'}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const mEl = h('div', 'mdiag-m', fork);
+      place(mEl, mx, my);
+      const midY = my + M / 2;
+      // Les fils et les chevrons
+      const wire = (cls: string, x: number, y: number, w: number, hgt: number) => { const el = h('div', `mdiag-wire ${cls}`); el.style.width = `${w}px`; el.style.height = `${hgt}px`; place(el, x, y); };
+      wire('in belt h', CW, midY - 2, mx - CW, 4);
+      wire('out belt h', mx + M, midY - 2, W - CW - mx - M, 4);
+      const dy0 = down ? my + M : CH + 2, dy1 = down ? H - CH - 2 : my;
+      wire(`out ${b.filter ? 'belt' : 'belt'} v`, W / 2 - 2, dy0, 4, dy1 - dy0);
+      const chev = (cls: string, x: number, y: number, rot: number) => place(h('span', `mdiag-chev ${cls}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`), x - 10, y - 10);
+      chev('in belt', mx, midY, 0);
+      chev('out belt', mx + M, midY, 0);
+      chev('out belt', W / 2, down ? my + M : my, down ? 90 : 270);
+      // Les cartes
+      const icons = seen.slice(0, 3).map((t) => `<img src="${this.itemIcons.get(t)}" alt="">`).join('');
+      const cIn = h('div', 'mchip in belt', `<span class="mc-name">${icons || ''}<span class="mc-t">${seen.length === 1 ? esc(item(seen[0]).name) : seen.length ? `${seen.length} sortes` : 'Rien encore'}</span></span><span class="mc-rate"><small>arrive</small></span>`);
+      place(cIn, 0, midY - CH / 2);
+      const straight = b.filter ? 'Tout le reste' : 'Un sur deux';
+      const cStraight = h('div', 'mchip out belt', `<span class="mc-name"><span class="mc-t">Tout droit</span></span><span class="mc-rate"><b>${b.filter ? '' : '½'}</b><small>${straight.toLowerCase()}</small></span>`);
+      place(cStraight, W - CW, midY - CH / 2);
+      const cSide = h('div', `mchip out belt${b.filter ? ' locked' : ''}${this.planOpen ? ' open' : ''}`, b.filter
+        ? `<span class="mc-name"><img src="${this.itemIcons.get(b.filter)}" alt=""><span class="mc-t">${esc(item(b.filter).name)}</span></span><span class="mc-rate"><small>seulement</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
+        : `<span class="mc-name"><span class="mc-t">Dérivation</span></span><span class="mc-rate"><b>½</b><small>un sur deux</small><small class="mc-tag auto">auto</small></span>`);
+      place(cSide, W / 2 - CW / 2, down ? H - CH - 2 : 2);
+      cSide.onclick = () => {
+        if (!tri) { this.toast('Débloque Tri dans l’arbre (Logistique) pour choisir ce qui part ici', 'info'); return; }
+        this.planOpen = !this.planOpen; this.refreshSheet(true);
+      };
+      if (this.planOpen && tri) {
+        const list = h('div', 'plan-list conn-menu');
+        list.append(h('p', 'plan-info', '<b>Dérivation</b> · en auto, un objet sur deux part de chaque côté ; choisis un objet pour que lui seul parte ici (tout le reste continue tout droit).'));
+        const set = (t: string | null) => { g.setBeltFilter(b, t); this.planOpen = false; this.refreshSheet(true); };
+        const auto = h('button', `plan-row${!b.filter ? ' on' : ''}`, `<span class="plan-auto">Auto</span><b>Un objet sur deux</b>${!b.filter ? CHECK_SM : ''}`);
+        auto.onclick = () => set(null);
+        list.append(auto);
+        const order = [...new Set([...seen, ...Object.keys(g.factory.stats.made), ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
+        for (const t of order) {
+          const on = b.filter === t;
+          const row = h('button', `plan-row${on ? ' on' : ''}${seen.includes(t) ? ' here' : ''}`, `<img class="plan-out" src="${this.itemIcons.get(t)}" alt=""><b>Seulement ${esc(item(t).name.toLowerCase())}</b>${seen.includes(t) ? '<small>sur le tapis</small>' : ''}${on ? CHECK_SM : ''}`);
+          row.onclick = () => set(t);
+          list.append(row);
+        }
+        box.append(list);
+        fitMenu(list);
+        const outside = (ev: PointerEvent) => {
+          if (!list.isConnected) { window.removeEventListener('pointerdown', outside, true); return; }
+          const t = ev.target as HTMLElement;
+          if (list.contains(t) || t.closest('.mchip.open')) return;
+          window.removeEventListener('pointerdown', outside, true);
+          ev.stopPropagation(); ev.preventDefault();
+          this.planOpen = false; this.refreshSheet(true);
         };
-        grid.append(c);
+        setTimeout(() => window.addEventListener('pointerdown', outside, true), 0);
       }
-      card.append(status, grid);
-      sheet.append(card);
+      box.append(h('p', 'mdiag-hint', tri ? 'Touche la dérivation pour choisir ce qui y part.' : 'En auto, un objet sur deux de chaque côté. Avec Tri (arbre, Logistique), tu choisis ce qui part dans la dérivation.'));
+      sheet.append(box);
+      const acts = h('div', 'row');
+      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer le tapis`);
+      del.onclick = () => { g.removeChain(b); close(); };
       const ok = h('button', 'btn primary', 'Terminé');
       ok.onclick = close;
-      sheet.append(ok);
-    });
-  }
-
-  private openSortPicker(b: Belt): void {
-    this.closePopover();
-    const g = this.game;
-    this.openSheet((sheet, close) => {
-      sheet.append(this.sheetHead('Trier', 'Choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', close));
-      // D'abord ce qui passe sur ce tapis et ce qu'on fabrique déjà, puis le reste.
-      const onBelt = new Set<string>();
-      for (const c of g.view.chainOf(b)) for (const it of c.items) onBelt.add(it.t);
-      const known = Object.keys(g.factory.stats.made);
-      const order = [...new Set([...onBelt, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => id !== 'eau');
-      const card = h('div', 'card');
-      const grid = h('div', 'sort-grid');
-      const none = h('button', `sort-cell${!b.filter ? ' on' : ''}`, '<span class="sc-none">½</span><small>Un sur deux</small>');
-      none.onclick = () => { g.setBeltFilter(b, null); close(); };
-      grid.append(none);
-      for (const id of order) {
-        const c = h('button', `sort-cell${b.filter === id ? ' on' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
-        c.onclick = () => { g.setBeltFilter(b, id); close(); };
-        grid.append(c);
-      }
-      card.append(grid);
-      sheet.append(card);
-    });
+      acts.append(del, ok);
+      sheet.append(acts);
+    }, true);
+    this.sheetKind = 'splitter';
   }
 
   /** Statistiques : ce que l'usine fabrique, par minute, et depuis le début. */
@@ -2649,7 +2768,7 @@ export class Hud implements GestureHandlers {
     const sheet = back.firstElementChild as HTMLElement;
     // Pas pendant qu'on la tire vers le bas : le doigt perdrait son élément (et la fin du geste).
     // Ni pendant que la liste des recettes est ouverte : elle perdrait son défilement à chaque mise à jour.
-    if (sheet.dataset.dragging || this.portDragging || (this.planOpen && this.sheetKind === 'machine' && !force)) { this.sheetDirty = true; return; }
+    if (sheet.dataset.dragging || this.portDragging || ((this.planOpen || this.connOpen) && (this.sheetKind === 'machine' || this.sheetKind === 'chest' || this.sheetKind === 'splitter') && !force)) { this.sheetDirty = true; return; }
     const top = sheet.scrollTop;
     sheet.innerHTML = '';
     build(sheet, () => this.closeSheet());
@@ -2659,6 +2778,7 @@ export class Hud implements GestureHandlers {
   private closeSheet(): void {
     this.r.rangeOf = null;
     this.planOpen = false;
+    this.connOpen = null;
     this.overlay?.remove();
     this.overlay = null;
     this.sheetBuild = null;

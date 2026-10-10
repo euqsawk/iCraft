@@ -482,41 +482,28 @@ export class GameRenderer {
     this.drawPipes();
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
     this.pickLayer.removeChildren().forEach((c) => c.destroy());
-    // Trieurs : un portillon en travers du tapis, et l'objet choisi (ou un « ? » s'il n'y a encore rien de choisi).
+    // Entrées et sorties filtrées : un portillon en travers du tapis, et l'objet qui seul passe par là.
     const fv = this.game.view;
-    for (const [k, pick] of fv.picks) {
-      const [x, y] = unkey(k);
+    for (const m of fv.machines.values()) for (const port of m.ports ?? []) {
+      if (!port.lock || !port.item) continue;
+      const x = m.x + port.rx, y = m.y + port.ry;
+      const per = fv.perimeter(m).find((c) => c.x === x && c.y === y);
+      if (!per) continue;
       const b = fv.beltAt(x, y);
-      // Sans tapis (encore) : le portillon se met en travers de la sortie du bâtiment voisin, sur un petit socle.
-      let dir = b?.dir ?? 0;
-      if (!b) {
-        const owner = fv.pickOwner(x, y);
-        for (let d = 0; d < 4; d++) if (owner && fv.machineAt(x - DX[d], y - DY[d]) === owner) { dir = d as typeof dir; break; }
-      }
+      const dir = b?.dir ?? per.d;
       const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
       const px = -DY[dir], py = DX[dir];
       const gate = new Graphics();
-      if (!b) gate.roundRect(cx - 11, cy - 11, 22, 22, 7).fill({ color: 0xffffff, alpha: 0.75 }).stroke({ width: 1.5, color: PALETTE.ink, alpha: 0.35 });
       gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 6, color: PALETTE.ink, cap: 'round' });
-      gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 2.5, color: PALETTE.coral, cap: 'round' });
+      gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 2.5, color: port.io === 'in' ? PALETTE.coral : 0x2e6b51, cap: 'round' });
       const bx = cx, by = cy - 13;
-      const n = pick.length;
-      const w = n > 1 ? 26 : 17;
-      gate.roundRect(bx - w / 2, by - 8.5, w, 17, 8.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
+      gate.roundRect(bx - 8.5, by - 8.5, 17, 17, 8.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
       this.pickLayer.addChild(gate);
-      if (n) {
-        const sp = new Sprite(this.itemTextures.get(pick[0])!);
-        sp.anchor.set(0.5); sp.scale.set(0.55); sp.position.set(n > 1 ? bx - 5 : bx, by);
+      const tex = this.itemTextures.get(port.item);
+      if (tex) {
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5); sp.scale.set(0.55); sp.position.set(bx, by);
         this.pickLayer.addChild(sp);
-        if (n > 1) {
-          const t = new Text({ text: `+${n - 1}`, style: { fontFamily: FONT, fontSize: 8.5, fontWeight: '900', fill: PALETTE.ink }, resolution: 3 });
-          t.anchor.set(0.5); t.position.set(bx + 6.5, by + 0.5);
-          this.pickLayer.addChild(t);
-        }
-      } else {
-        const t = new Text({ text: '?', style: { fontFamily: FONT, fontSize: 11, fontWeight: '900', fill: PALETTE.coral }, resolution: 3 });
-        t.anchor.set(0.5); t.position.set(bx, by + 0.5);
-        this.pickLayer.addChild(t);
       }
     }
     for (const b of this.game.view.belts.values()) {

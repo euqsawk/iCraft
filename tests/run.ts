@@ -13,6 +13,7 @@ import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
 import { ROCKET_NEEDS } from '../src/sim/factory.ts';
 import { patchCells } from '../src/world/world.ts';
+import { key } from '../src/sim/geom.ts';
 
 let failed = 0, passed = 0;
 function test(name: string, fn: () => void): void {
@@ -752,44 +753,79 @@ test('les anciens tapis souterrains sont retirés et remboursés au chargement',
   assert(!g2.unlocks.has('souterrain'), 'le déblocage disparaît');
   assert(!('tunnels' in g2.serialize().factory), 'plus sauvegardé');
 });
-test('trieur : posé à la sortie d’un coffre (même avant le tapis), seuls les objets choisis en sortent', () => {
+test('sortie filtrée : choisie sur le côté d’un coffre (même avant le tapis), seul cet objet en sort', () => {
   const g = new Game('TEST-TR');
   g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
   const chest = g.placeMachine('coffre', 2, 5)!;
   chest.built = true; g.pending = []; g.factory.markBuilt();
   g.factory.putInStorage(chest, 'fer', 20);
   g.factory.putInStorage(chest, 'cuivre', 20);
-  assert(!g.placeMachine('trieur', 3, 5) && !g.factory.pickAt(3, 5), 'à débloquer (Tri)');
-  g.unlocks.add('tri');
-  assert(!g.view.checkMachine('trieur', 8, 5).ok, 'pas loin d’un bâtiment');
-  assert(!g.view.checkMachine('trieur', 2, 5).ok, 'pas sur le bâtiment');
-  // Posé avant le tapis, sur la case de sortie du coffre.
-  const m0 = g.money;
-  g.placeMachine('trieur', 3, 5);
-  assert(Array.isArray(g.factory.pickAt(3, 5)) && m0 - g.money === MACHINES.trieur.cost, 'posé sans tapis');
-  g.setPick(3, 5, ['cuivre']);
+  assert(!g.setPortFilter(chest, 5, 5, 'out', 'cuivre'), 'pas loin du bâtiment');
+  assert(g.setPortFilter(chest, 3, 5, 'out', 'cuivre') && chest.ports?.[0].lock, 'filtre posé avant le tapis');
   g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
   for (const b of g.factory.belts.values()) b.built = true;
   g.pending = []; g.factory.markBuilt();
   run(g, 4);
   const on = [...g.factory.belts.values()].flatMap((x) => x.items.map((i) => i.t));
   assert(on.length > 0 && on.every((t) => t === 'cuivre') && chest.inBuf.fer === 20, `seul le cuivre sort : ${on.join(',')}`);
-  // Rien de choisi : rien ne sort.
-  g.setPick(3, 5, []);
-  for (const b of g.factory.belts.values()) b.items = [];
-  run(g, 2);
-  assert([...g.factory.belts.values()].every((x) => x.items.length === 0), 'rien de choisi : rien ne sort');
-  g.setPick(3, 5, ['cuivre']);
+  const io = g.view.machineIO(chest).find((c) => c.io === 'out')!;
+  assert(io.item === 'cuivre' && io.lock && !io.planned, `vu comme filtré : ${JSON.stringify(io)}`);
   const g2 = new Game('TEST-TR', JSON.parse(JSON.stringify(g.serialize())));
-  assert(JSON.stringify(g2.factory.pickAt(3, 5)) === '["cuivre"]', 'sauvegardé');
-  const m1 = g.money;
-  assert(g.removeAt(3, 5) && !g.factory.pickAt(3, 5) && g.factory.beltAt(3, 5) && g.money - m1 === MACHINES.trieur.cost, 'la gomme retire le trieur avant le tapis');
-  // Un bâtiment posé dessus le remplace (remboursé).
-  g.placeMachine('trieur', 2, 6);
-  assert(!!g.factory.pickAt(2, 6), 'sous le coffre');
-  const m2 = g.money;
-  g.placeMachine('coffre', 2, 6);
-  assert(!g.factory.pickAt(2, 6) && g.money - m2 === MACHINES.trieur.cost - MACHINES.coffre.cost, 'recouvert : remboursé');
+  const c2 = g2.factory.machineAt(2, 5)!;
+  assert(c2.ports?.[0].lock && c2.ports[0].item === 'cuivre', 'sauvegardé');
+  // Retour en auto : tout sort.
+  g.setPortFilter(chest, 3, 5, 'out', null);
+  assert(!chest.ports, 'en auto sur un tapis, plus rien à retenir');
+  for (const b of g.factory.belts.values()) b.items = [];
+  run(g, 6);
+  const all = new Set([...g.factory.belts.values()].flatMap((x) => x.items.map((i) => i.t)));
+  assert(all.has('fer'), `en auto, le fer sort aussi : ${[...all].join(',')}`);
+});
+
+test('entrée filtrée : seul l’objet choisi entre, le reste attend sur le tapis', () => {
+  const g = new Game('TEST-TRI');
+  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
+  const src = g.placeMachine('coffre', 2, 5)!;
+  const dst = g.placeMachine('coffre', 9, 5)!;
+  g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
+  for (const b of g.factory.belts.values()) b.built = true;
+  src.built = true; dst.built = true; g.pending = []; g.factory.markBuilt();
+  g.factory.putInStorage(src, 'fer', 30);
+  assert(g.setPortFilter(dst, 8, 5, 'in', 'cuivre'), 'filtre sur l’entrée');
+  run(g, 6);
+  assert(!dst.inBuf.fer && g.factory.beltAt(8, 5)!.items.length > 0, `rien n’entre : ${JSON.stringify(dst.inBuf)}`);
+  g.setPortFilter(dst, 8, 5, 'in', null);
+  run(g, 3);
+  assert((dst.inBuf.fer ?? 0) > 0, 'en auto, le fer entre');
+});
+
+test('glisser une entrée sur une autre les échange (et les filtre)', () => {
+  const g = new Game('TEST-6S');
+  buildIronLine(g);
+  run(g, 150);
+  fuelAll(g);
+  run(g, 30);
+  const four = [...g.factory.machines.values()].find((m) => m.type === 'four')!;
+  const ins = g.view.machineIO(four).filter((c) => c.io === 'in');
+  const fer = ins.find((c) => c.item === 'fer')!, coal = ins.find((c) => c.item === 'charbon')!;
+  assert(fer && coal, `entrées : ${JSON.stringify(ins)}`);
+  assert(g.movePort(four, fer, coal, 'in', 'fer'), 'déplacée');
+  const after = g.view.machineIO(four).filter((c) => c.io === 'in');
+  const at = (c: { x: number; y: number }) => after.find((q) => q.x === c.x && q.y === c.y)!;
+  assert(at(coal).item === 'fer' && at(coal).lock && at(fer).item === 'charbon' && at(fer).lock, `après : ${JSON.stringify(after)}`);
+});
+
+test('ancienne partie : un trieur devient une sortie filtrée, et il est remboursé', () => {
+  const g = new Game('TEST-TRO');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  g.placeMachine('coffre', 2, 5);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  s.factory.picks = [[key(3, 5), ['cuivre']]];
+  const m0 = s.money;
+  const g2 = new Game(s.seed, s);
+  const c = g2.factory.machineAt(2, 5)!;
+  assert(c.ports?.length === 1 && c.ports[0].io === 'out' && c.ports[0].item === 'cuivre' && c.ports[0].lock, `port : ${JSON.stringify(c.ports)}`);
+  assert(g2.money - m0 === 20, `remboursé : ${g2.money - m0}`);
 });
 
 test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis remplissent les départs', () => {

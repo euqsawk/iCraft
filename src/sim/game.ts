@@ -140,8 +140,7 @@ export type GameEvent =
   | { type: 'inventory' }
   | { type: 'crafted'; item: string; n: number }
   | { type: 'gift'; building: GiftType; id: number; again?: boolean }
-  | { type: 'unlock'; id: string }
-  | { type: 'picker'; x: number; y: number };
+  | { type: 'unlock'; id: string };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
 export interface OfflineReport {
@@ -900,11 +899,6 @@ export class Game {
   placeMachine(type: string, x: number, y: number): Machine | null {
     const def = machineDef(type);
     if (def.kind === 'meter') { this.placeMeter(x, y); return null; }
-    if (def.kind === 'picker') {
-      if (!this.hasMachine(type)) { this.emit({ type: 'toast', text: `${def.name} : à débloquer dans l’arbre`, tone: 'warn' }); return null; }
-      this.placePicker(x, y);
-      return null;
-    }
     if (def.gift) {
       this.emit({ type: 'toast', text: `${def.name} : le Noyau te l’offre bientôt`, tone: 'info' });
       return null;
@@ -934,7 +928,6 @@ export class Game {
     // Posée sur un tapis : les cases de tapis dessous disparaissent (remboursées). Le tapis qui arrive
     // devient l'entrée de la machine, celui qui repart devient sa sortie.
     if (check.belts) this.earn(this.clearBeltsUnder(def.w, def.h, x, y));
-    this.clearPicksUnder(def.w, def.h, x, y);
     const m = this.view.addMachine(type, x, y, false);
     if (def.kind === 'atelier') this.view.makeInner(m, this.atelierSize);
     this.finishPlacement(m);
@@ -985,24 +978,6 @@ export class Game {
   }
 
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
-  /** Pose un trieur à la sortie d'une machine ou d'un coffre ; au départ rien ne sort, on choisit les objets. */
-  placePicker(x: number, y: number): boolean {
-    const check = this.view.checkMachine('trieur', x, y);
-    if (!check.ok) { this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' }); return false; }
-    if (!this.spend(MACHINES.trieur.cost)) return false;
-    this.view.picks.set(key(x, y), []);
-    this.emit({ type: 'factory' });
-    this.emit({ type: 'picker', x, y });
-    return true;
-  }
-
-  /** Ce qu'un trieur laisse sortir. */
-  setPick(x: number, y: number, items: string[]): void {
-    if (!this.view.picks.has(key(x, y))) return;
-    this.view.picks.set(key(x, y), [...new Set(items)]);
-    this.emit({ type: 'factory' });
-  }
-
   /** Recette prévue d'une machine (pour les débits attendus) ; undefined = rien de prévu. La machine reste en auto. */
   setPlan(m: Machine, ri: number | undefined): void {
     if (ri === undefined) delete m.plan; else m.plan = ri;
@@ -1019,7 +994,64 @@ export class Game {
     if (i >= 0) ports.splice(i, 1);
     // Le même objet n'est prévu qu'à un endroit : on le déplace.
     if (item) { const j = ports.findIndex((p) => p.io === io && p.item === item); if (j >= 0) ports.splice(j, 1); }
-    ports.push({ rx, ry, io, ...(item ? { item } : {}) });
+    // Sur un tapis déjà là, l'objet glissé devient le filtre de ce tapis.
+    ports.push({ rx, ry, io, ...(item ? { item } : {}), ...(item && this.view.beltAt(x, y) ? { lock: true } : {}) });
+    const k = key(x, y);
+    if (m.seenIn) delete m.seenIn[k];
+    if (m.seenOut) delete m.seenOut[k];
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /**
+   * Filtre une entrée ou une sortie (seul cet objet passe par là), ou la remet en auto (null).
+   * L'endroit est une case dehors, sur un côté ; une entrée ou sortie prévue y est créée s'il le faut.
+   */
+  setPortFilter(m: Machine, x: number, y: number, io: 'in' | 'out', item: string | null): boolean {
+    if (!this.view.perimeter(m).some((c) => c.x === x && c.y === y)) return false;
+    const rx = x - m.x, ry = y - m.y;
+    const ports = (m.ports ??= []);
+    let p = ports.find((q) => q.rx === rx && q.ry === ry);
+    if (item) {
+      if (!p) { p = { rx, ry, io }; ports.push(p); }
+      p.io = io; p.item = item; p.lock = true;
+    } else if (p) {
+      delete p.lock;
+      // Sur un tapis, l'auto n'a pas besoin d'étiquette : ce qui passe vraiment s'affiche.
+      if (this.view.beltAt(x, y)) ports.splice(ports.indexOf(p), 1);
+    }
+    if (!ports.length) delete m.ports;
+    const k = key(x, y);
+    if (m.seenIn) delete m.seenIn[k];
+    if (m.seenOut) delete m.seenOut[k];
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /**
+   * Déplace ce qui est prévu (ou filtré) sur un côté vers un autre endroit du bord ;
+   * ce qui s'y trouvait prend la place laissée : on échange deux entrées d'un geste.
+   */
+  movePort(m: Machine, from: { x: number; y: number }, to: { x: number; y: number }, io: 'in' | 'out', item?: string): boolean {
+    const per = this.view.perimeter(m);
+    if (!per.some((c) => c.x === to.x && c.y === to.y) || (from.x === to.x && from.y === to.y)) return false;
+    const ports = (m.ports ??= []);
+    const at = (c: { x: number; y: number }) => ports.find((q) => m.x + q.rx === c.x && m.y + q.ry === c.y);
+    const src = at(from), dst = at(to);
+    // Ce qu'on emporte : la sortie prévue, sinon ce qu'affiche le tapis.
+    // Lâché sur un tapis, l'objet y devient un filtre : c'est ce qui fait de l'échange un vrai échange.
+    const belt = (c: { x: number; y: number }) => !!this.view.beltAt(c.x, c.y);
+    const moving = { io: src?.io ?? io, item: src?.item ?? item, lock: src?.lock || belt(to) };
+    // Ce qui était là où on lâche : ce qui y est prévu, sinon l'objet que montre le tapis (même sens).
+    const shown = this.view.machineIO(m).find((c) => c.x === to.x && c.y === to.y && c.io === moving.io && !c.planned);
+    const back = dst ? { io: dst.io, item: dst.item, lock: dst.lock || (!!dst.item && belt(from)) } : shown?.item ? { io: moving.io, item: shown.item, lock: belt(from) } : null;
+    for (const p of [src, dst]) if (p) ports.splice(ports.indexOf(p), 1);
+    const put = (c: { x: number; y: number }, v: { io: 'in' | 'out'; item?: string; lock?: boolean }) =>
+      ports.push({ rx: c.x - m.x, ry: c.y - m.y, io: v.io, ...(v.item ? { item: v.item } : {}), ...(v.lock && v.item ? { lock: true } : {}) });
+    put(to, moving);
+    if (back) put(from, back);
+    if (!ports.length) delete m.ports;
+    for (const c of [from, to]) { const k = key(c.x, c.y); if (m.seenIn) delete m.seenIn[k]; if (m.seenOut) delete m.seenOut[k]; }
     this.emit({ type: 'factory' });
     return true;
   }
@@ -1031,11 +1063,7 @@ export class Game {
     this.emit({ type: 'factory' });
   }
 
-  /** Les trieurs que recouvre un bâtiment partent (remboursés). */
-  private clearPicksUnder(w: number, h: number, x: number, y: number): void {
-    const n = this.view.clearPicksUnder(w, h, x, y);
-    if (n) this.earn(n * MACHINES.trieur.cost);
-  }
+
 
   /** Pose un compteur de débit sur un tapis (tout de suite). */
   placeMeter(x: number, y: number): boolean {
@@ -1074,7 +1102,7 @@ export class Game {
     }
     for (const m of machines) if (this.view.machines.has(m.id) && this.removeMachine(m)) n++;
     for (const c of cables) if (this.view.removeCable(c.x, c.y)) { this.earn(RULES.cableCost); n++; }
-    for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) { if (this.view.removePipe(x, y)) { this.earn(RULES.pipeCost); n++; } if (this.view.picks.delete(key(x, y))) { this.earn(MACHINES.trieur.cost); n++; } }
+    for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) { if (this.view.removePipe(x, y)) { this.earn(RULES.pipeCost); n++; } }
     if (n) this.emit({ type: 'factory' });
     return n;
   }
@@ -1089,12 +1117,6 @@ export class Game {
       } else {
         this.earn(this.refundBelt(over.belt));
       }
-      this.emit({ type: 'factory' });
-      return true;
-    }
-    // Un trieur sur la case (avec ou sans tapis) : il part d'abord (remboursé).
-    if (this.view.picks.delete(key(x, y))) {
-      this.earn(MACHINES.trieur.cost);
       this.emit({ type: 'factory' });
       return true;
     }
@@ -1384,7 +1406,6 @@ export class Game {
     const check = this.view.checkMachine(m.type, x, y, m, true);
     if (check.ok && check.belts) this.earn(this.clearBeltsUnder(m.w, m.h, x, y));
     const ok = this.view.moveMachine(m, x, y);
-    if (ok) this.clearPicksUnder(m.w, m.h, x, y);
     if (!ok) this.emit({ type: 'toast', text: 'Impossible ici', tone: 'warn' });
     else { if (!this.inAtelier) this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
     return ok;
