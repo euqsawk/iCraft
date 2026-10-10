@@ -391,7 +391,7 @@ export class Game {
     let nextId = save.nextId;
     const inner: FactorySave = {
       nextId,
-      cables: [], lines: [], tunnels: [],
+      cables: [], lines: [],
       belts: save.belts.filter(([x, y]) => inSel(x, y)).map((b) => { const c = [...b] as typeof b; c[0] = b[0] + ox; c[1] = b[1] + oy; c[4] = 1; return c; }),
       machines: save.machines.filter((m) => ids.has(m.id)).map((m) => {
         const live = f.machines.get(m.id)!;
@@ -448,7 +448,6 @@ export class Game {
     let coal = 0;
     for (const m of machines) {
       coal += m.fuel;
-      for (const t of f.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
       for (const l of f.linesOf(m)) this.earn(this.linePrice(l));
       for (const o of f.machines.values()) if (o.links?.includes(m.id)) o.links = o.links.filter((id) => id !== m.id);
       f.removeMachine(m);
@@ -1209,43 +1208,6 @@ export class Game {
     this.emit({ type: 'factory' });
   }
 
-  /** Prix d'un tapis souterrain : par case de trajet. */
-  tunnelPrice(cells: number): number {
-    return (cells + 1) * RULES.tunnelCost;
-  }
-
-  /** Une machine peut-elle envoyer quelque chose sous terre (coffre, foreuse, machine qui fabrique) ? */
-  canSendUnder(m: Machine): boolean {
-    const k = machineDef(m.type).kind;
-    return k === 'storage' || k === 'crafter' || k === 'drill';
-  }
-
-  /** Relie deux machines par un tapis souterrain (posé tout de suite). */
-  placeTunnel(from: Machine, to: Machine, cells: { x: number; y: number }[]): boolean {
-    if (!this.isUnlocked('souterrain')) {
-      this.emit({ type: 'toast', text: 'Tapis souterrains : à débloquer dans l’arbre (Logistique, palier 5)', tone: 'warn' });
-      return false;
-    }
-    if (from === to || !this.canSendUnder(from)) return false;
-    if (this.factory.tunnelsOf(from).some((t) => t.from === from.id && t.to === to.id)) {
-      this.emit({ type: 'toast', text: 'Ces deux-là sont déjà reliés sous terre', tone: 'info' });
-      return false;
-    }
-    if (!this.spend(this.tunnelPrice(cells.length))) return false;
-    this.factory.addTunnel(from, to, cells);
-    this.emit({ type: 'factory' });
-    this.emit({ type: 'toast', text: `${machineDef(from.type).name} → ${machineDef(to.type).name.toLowerCase()} : relié sous terre`, tone: 'good' });
-    return true;
-  }
-
-  /** Retire un tapis souterrain (remboursé ; ce qui était en route est perdu). */
-  removeTunnel(id: number): void {
-    const t = this.factory.removeTunnel(id);
-    if (!t) return;
-    this.earn(this.tunnelPrice(t.cells.length));
-    this.emit({ type: 'factory' });
-  }
-
   /** Pose des câbles (tout de suite, sans chantier) sur les cases révélées ; les cases déjà câblées sont gratuites. */
   placeCables(cells: { x: number; y: number }[]): boolean {
     if (!this.isUnlocked('generateur')) {
@@ -1284,8 +1246,6 @@ export class Game {
       this.emit({ type: 'toast', text: `${def.name} : un cadeau du Noyau. On peut le déplacer, pas le supprimer.`, tone: 'info' });
       return false;
     }
-    // Ses tapis souterrains partent avec elle (remboursés).
-    for (const t of this.view.tunnelsOf(m)) this.earn(this.tunnelPrice(t.cells.length));
     for (const l of this.view.linesOf(m)) this.earn(this.linePrice(l));
     this.view.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
@@ -2249,6 +2209,8 @@ export class Game {
     this.robot.x = s.robot.x; this.robot.y = s.robot.y;
     this.world.loadFog(s.fog);
     this.factory.load(s.factory);
+    // Ce qui a été retiré du jeu (tapis souterrains) est remboursé.
+    this.money += this.factory.legacyRefund;
     if (s.stats) { this.factory.stats.made = { ...s.stats.made }; this.factory.stats.used = { ...s.stats.used }; }
     for (const id of s.achievements ?? []) this.achievements.add(id);
     this.rockets = s.rockets ?? 0;
@@ -2284,6 +2246,8 @@ export class Game {
       const fromTree = [...this.unlocks].filter((id) => NODE[id]?.effect.kind === 'drone').length;
       this.extraDrones = Math.max(0, (s.drones ?? RULES.startDrones) - RULES.startDrones - fromTree);
     }
+    // Les déblocages retirés du jeu (tapis souterrains) disparaissent de la partie.
+    for (const id of [...this.unlocks]) if (!NODE[id]) this.unlocks.delete(id);
     this.applyUnlocks();
     this.rebuildDrones();
     if (s.crew) {

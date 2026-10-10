@@ -7,11 +7,10 @@ import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
 import { PICKUP_TIME } from '../sim/game.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
-import { span, type Belt, type Line, type Machine, type Tunnel } from '../sim/factory.ts';
+import { span, type Belt, type Line, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
 import { DX, DY, unkey } from '../sim/geom.ts';
 import type { CableTracer } from '../sim/cables.ts';
-import type { TunnelTracer } from '../sim/tunnels.ts';
 import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
@@ -53,7 +52,6 @@ export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
   | { kind: 'cable'; tracer: CableTracer }
   | { kind: 'pipe'; tracer: CableTracer }
-  | { kind: 'tunnel'; tracer: TunnelTracer }
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
   | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number; module?: boolean }
@@ -104,9 +102,6 @@ export class GameRenderer {
   private routeG = new Graphics();
   private routeSig = '';
   private vehicleViews = new Map<string, { root: Container; parts: Container[]; cargo: Sprite; kind: string }>();
-  /** Vue du sous-sol (outil Sous-sol) : la surface pâlit, on voit les tapis souterrains et ce qu'ils transportent. */
-  underground = false;
-  private undergroundOn = false;
   /** Mode électricité (outil Câble) : la surface pâlit, on voit les câbles sous les blocs et les machines alimentées. */
   electric = false;
   /** Câbles visibles hors du mode électricité (gomme) ; sinon ils restent cachés. */
@@ -118,13 +113,8 @@ export class GameRenderer {
   private electricOn = false;
   /** Câbles et machines du réseau, par-dessus le voile, en mode électricité. */
   private powerG = new Graphics();
-  private undergroundTint = new Graphics();
-  private tunnelG = new Graphics();
-  private tunnelItems = new Container();
-  private tunnelPool: Sprite[] = [];
-  /** En surface : une petite trappe là où un tapis souterrain sort d'une machine ou y entre. */
-  private tunnelMarks = new Graphics();
-  private tunnelSig = '';
+  /** Voile du mode électricité, sur la surface. */
+  private modeTint = new Graphics();
   /** Câbles électriques : au sol, sous les tapis et les machines. */
   private cableG = new Graphics();
   private cableT = 0;
@@ -208,7 +198,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.tunnelMarks, this.undergroundTint, this.powerG, this.tunnelG, this.tunnelItems, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -776,121 +766,24 @@ export class GameRenderer {
     }
   }
 
-  /** Le trajet d'un tapis souterrain : du centre de la machine de départ à celui de l'arrivée, par ses cases. */
-  private tunnelPath(t: Tunnel): { x: number; y: number }[] | null {
-    const f = this.game.view;
-    const a = f.machines.get(t.from), b = f.machines.get(t.to);
-    if (!a || !b) return null;
-    const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
-    return [c(a), ...t.cells.map((k) => { const [x, y] = unkey(k); return { x: (x + 0.5) * CELL, y: (y + 0.5) * CELL }; }), c(b)];
-  }
-
-  /** Surface pâlie ou normale, tapis souterrains et trappes. */
-  private updateUnderground(): void {
-    const on = this.underground;
-    const elec = this.electric && !on;
+  /** Surface normale, ou pâlie sous un voile bleu nuit en mode électricité. */
+  private updateModeView(): void {
+    const elec = this.electric;
     this.cableG.visible = this.showCables && !elec;
-    const f = this.game.view;
-    if (on !== this.undergroundOn || elec !== this.electricOn) {
-      this.undergroundOn = on;
+    if (elec !== this.electricOn) {
       this.electricOn = elec;
-      const a = on ? 0.22 : elec ? 0.3 : 1;
+      const a = elec ? 0.3 : 1;
       for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
-      this.actorLayer.alpha = on || elec ? 0.45 : 1;
-      this.undergroundTint.visible = on || elec;
+      this.actorLayer.alpha = elec ? 0.45 : 1;
+      this.modeTint.visible = elec;
       this.powerG.visible = elec;
       this.cableG.visible = this.showCables && !elec;
       this.drawCables();
-      this.tunnelG.visible = on;
-      this.tunnelItems.visible = on;
-      this.tunnelMarks.visible = !on;
-      this.tunnelSig = '';
-    }
-    // Redessin quand les tapis souterrains (ou les machines qu'ils relient) changent.
-    let sig = on ? 'u' : 's';
-    for (const t of f.tunnels.values()) {
-      const a = f.machines.get(t.from), b = f.machines.get(t.to);
-      sig += `|${t.id}:${a?.x},${a?.y}:${b?.x},${b?.y}`;
-    }
-    if (sig !== this.tunnelSig) {
-      this.tunnelSig = sig;
-      this.drawTunnels();
     }
     if (elec) {
-      // Mode électricité : un voile bleu nuit.
       const b = this.camera.bounds(CELL * 2);
-      this.undergroundTint.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill({ color: 0x1f2a3d, alpha: 0.42 });
+      this.modeTint.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill({ color: 0x1f2a3d, alpha: 0.42 });
     }
-    if (on) {
-      // Un voile couleur de terre sur la surface.
-      const b = this.camera.bounds(CELL * 2);
-      this.undergroundTint.clear().rect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0).fill({ color: 0x3d2f24, alpha: 0.38 });
-      this.drawTunnelItems();
-    }
-  }
-
-  private drawTunnels(): void {
-    const g = this.tunnelG, mk = this.tunnelMarks, f = this.game.view;
-    g.clear(); mk.clear();
-    for (const t of f.tunnels.values()) {
-      const pts = this.tunnelPath(t);
-      if (!pts) continue;
-      if (this.undergroundOn) {
-        const line = () => { g.moveTo(pts[0].x, pts[0].y); for (const p of pts.slice(1)) g.lineTo(p.x, p.y); };
-        line(); g.stroke({ width: 17, color: 0x2b211a, alpha: 0.9, cap: 'round', join: 'round' });
-        line(); g.stroke({ width: 12, color: 0x9a7556, cap: 'round', join: 'round' });
-        dashedPolyline(g, pts, 5, 6);
-        g.stroke({ width: 2, color: 0xe8d6bd, cap: 'round' });
-        // Les deux bouts : départ (cercle plein) et arrivée (anneau).
-        const s = pts[0], e = pts[pts.length - 1];
-        g.circle(s.x, s.y, 7).fill(0x2b211a).circle(s.x, s.y, 3.5).fill(0xe8d6bd);
-        g.circle(e.x, e.y, 7).fill(0x2b211a).circle(e.x, e.y, 4).stroke({ width: 2, color: 0xe8d6bd });
-      }
-      // En surface : une trappe sur le bord de la machine, là où le tapis plonge et là où il remonte.
-      if (t.cells.length) {
-        const ends: [number, number, number][] = [[t.cells[0], t.from, 1], [t.cells[t.cells.length - 1], t.to, -1]];
-        for (const [k, mid, sign] of ends) {
-          const m = f.machines.get(mid);
-          if (!m) continue;
-          const [x, y] = unkey(k);
-          for (let d = 0; d < 4; d++) {
-            if (f.machineAt(x + DX[d], y + DY[d]) !== m) continue;
-            const ex = (x + 0.5 + DX[d] * 0.5) * CELL, ey = (y + 0.5 + DY[d] * 0.5) * CELL;
-            mk.roundRect(ex - 6, ey - 6, 12, 12, 3).fill(0x6b5240).stroke({ width: 1.6, color: PALETTE.ink });
-            // Flèche : vers le bas au départ, vers le haut à l'arrivée.
-            mk.moveTo(ex - 3, ey - 1.5 * sign).lineTo(ex, ey + 1.5 * sign).lineTo(ex + 3, ey - 1.5 * sign).stroke({ width: 1.8, color: 0xffffff, cap: 'round', join: 'round' });
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  /** Les objets en route sous terre (seulement dans la vue du sous-sol). */
-  private drawTunnelItems(): void {
-    const f = this.game.view;
-    let used = 0;
-    for (const t of f.tunnels.values()) {
-      if (!t.items.length) continue;
-      const pts = this.tunnelPath(t);
-      if (!pts) continue;
-      const seg: number[] = [];
-      let total = 0;
-      for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); seg.push(d); total += d; }
-      const L = f.tunnelLength(t);
-      for (const it of t.items) {
-        let dist = Math.min(1, it.p / L) * total, i = 0;
-        while (i < seg.length - 1 && dist > seg[i]) { dist -= seg[i]; i++; }
-        const k = seg[i] ? Math.min(1, dist / seg[i]) : 0;
-        let s = this.tunnelPool[used];
-        if (!s) { s = new Sprite(); s.anchor.set(0.5); this.tunnelItems.addChild(s); this.tunnelPool.push(s); }
-        s.texture = this.itemTextures.get(it.t)!;
-        s.position.set(pts[i].x + (pts[i + 1].x - pts[i].x) * k, pts[i].y + (pts[i + 1].y - pts[i].y) * k);
-        s.visible = true;
-        used++;
-      }
-    }
-    for (let i = used; i < this.tunnelPool.length; i++) this.tunnelPool[i].visible = false;
   }
 
   /**
@@ -1702,24 +1595,7 @@ export class GameRenderer {
     const g = this.overlay;
     g.clear();
     const pv = this.preview;
-    if (pv?.kind === 'tunnel') {
-      const t = pv.tracer;
-      if (t.source) {
-        const c = (m: Machine) => ({ x: (m.x + m.w / 2) * CELL, y: (m.y + m.h / 2) * CELL });
-        const pts = [c(t.source), ...t.cells.map((p) => ({ x: (p.x + 0.5) * CELL, y: (p.y + 0.5) * CELL })), ...(t.target ? [c(t.target)] : [])];
-        if (t.target) {
-          const m = t.target;
-          g.roundRect(m.x * CELL + 1, m.y * CELL + 1, m.w * CELL - 2, m.h * CELL - 2, m.w === 1 ? 8 : 15).fill({ color: 0x6cc7a0, alpha: 0.45 }).stroke({ width: 3, color: PALETTE.green });
-        }
-        if (pts.length > 1) {
-          g.moveTo(pts[0].x, pts[0].y);
-          for (const p of pts.slice(1)) g.lineTo(p.x, p.y);
-          g.stroke({ width: 14, color: 0x9a7556, alpha: 0.95, cap: 'round', join: 'round' });
-          dashedPolyline(g, pts, 5, 5);
-          g.stroke({ width: 2.5, color: t.blocked ? PALETTE.coral : 0xffffff, cap: 'round' });
-        }
-      }
-    } else if (pv?.kind === 'cable') {
+    if (pv?.kind === 'cable') {
       const cells = pv.tracer.cells;
       if (cells.length) {
         // La portée du câble tracé, et les machines qu'il alimentera (cerclées de jaune).
@@ -2103,7 +1979,6 @@ export class GameRenderer {
     this.beltsDirty = true;
     this.cableCount = -1;
     this.routeSig = '';
-    this.tunnelSig = '';
     this.selection = null;
     this.preview = null;
     for (const l of [this.groundLayer, this.filonLayer, this.fogLayer, this.actorLayer, this.groundShadows, this.routeG]) l.visible = !inside;
@@ -2339,11 +2214,11 @@ export class GameRenderer {
     this.cableT += dt;
     if (cablesChanged || ((this.cableCount > 0 || this.electricOn) && this.cableT > 0.5)) this.drawCables();
     this.view = cam.bounds(CELL * 3);
-    this.updateUnderground();
+    this.updateModeView();
     this.updateRoutes();
     this.meterT += dt;
     if (this.meterT > 0.5) { this.meterT = 0; this.updateMeterLabels(); }
-    this.meterLabels.visible = cam.zoom > 0.55 && !this.underground;
+    this.meterLabels.visible = cam.zoom > 0.55;
     const span = CHUNK * CELL;
     for (const c of this.beltChunks.values()) {
       const vis = this.inView((c.x + 0.5) * span, (c.y + 0.5) * span, span / 2 + CELL);

@@ -9,8 +9,6 @@ export const ICONS = {
   cable: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 L5 12 H10 L9 20 L17 9 H12 Z"/></svg>',
   machine: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><rect x="4" y="4" width="14" height="14" rx="4"/></svg>',
   transport: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="11" height="8" rx="2"/><path d="M13 9 H17 L20 12 V15 H13 Z"/><circle cx="6" cy="17" r="2"/><circle cx="16" cy="17" r="2"/></svg>',
-  // Sous-sol : la ligne du sol, et un tapis qui passe dessous.
-  sousSol: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 8 H20"/><path d="M5 4 V12 Q5 15 8 15 H14 Q17 15 17 12 V4" stroke-dasharray="2.6 2.4"/><path d="M3 19 H19" opacity=".5"/></svg>',
   // Train : une locomotive de profil.
   train: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="12" height="10" rx="2"/><path d="M15 9 H19 V15 H15"/><path d="M6 5 V3 H9"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="15" cy="17.5" r="1.8"/><path d="M2 20.5 H20"/></svg>',
   module: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="2" y="2" width="18" height="18" rx="5" stroke-dasharray="4 3"/><rect x="7" y="7" width="8" height="8" rx="2"/></svg>',

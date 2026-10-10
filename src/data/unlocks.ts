@@ -10,7 +10,6 @@ export type UnlockEffect =
   /** Le séparateur peut trier : un seul type d'objet part dans la dérivation. */
   | { kind: 'sorter' }
   | { kind: 'bridge' }
-  | { kind: 'tunnel' }
   | { kind: 'vehicle'; id: 'camion' | 'train' }
   | { kind: 'beltSpeed'; mult: number }
   | { kind: 'chestSlots'; slots: number }
@@ -90,7 +89,6 @@ export const BRANCHES: Branch[] = [
       n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Le Dépôt : pose-en deux, remplis-les par tapis comme un coffre, puis relie-les depuis la fenêtre d’un dépôt. Un camion fait les allers-retours (20 objets à la fois) ; on peut ajouter des camions et un troisième arrêt.', m('depot')),
       n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Le Trieur, posé sur un tapis qui part d’un coffre, d’une gare ou d’une machine, ne laisse sortir que les objets choisis. Et le séparateur peut trier : un seul objet part dans la dérivation.', { kind: 'sorter' }),
       n('entrepot', 'Entrepôt', 'entrepot', 4, 0, 6, { cadre: 20, acier: 100 }, ['tri'], 'Un grand bâtiment de 3 × 3 qui garde 900 objets et les range par sorte (il montre ce qu’il garde le plus).', m('entrepot')),
-      n('souterrain', 'Tapis souterrains', 'souterrain', 3, 1, 5, { acier: 60, engrenage: 40 }, ['express'], 'Outil Sous-sol : depuis un coffre ou une machine, trace un tapis sous le sol jusqu’à un autre coffre ou une machine. Il passe sous tout.', { kind: 'tunnel' }),
       n('train', 'Trains', 'train', 3, 2, 5, { moteur: 40 }, ['camion'], 'La Gare : comme le dépôt, mais pour un train, plus rapide, qui emporte 80 objets à la fois. Pour aller chercher l’or et l’uranium au loin.', m('gare')),
     ],
   },

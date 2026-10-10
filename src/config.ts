@@ -109,8 +109,6 @@ export const RULES = {
   /** Écart entre deux véhicules dans la file d'attente d'un dépôt (en cases). */
   truckGap: 1.8,
   trainGap: 4,
-  /** Tapis souterrain : prix par case de trajet. */
-  tunnelCost: 4,
   genCoalSeconds: 10,
   /** Pont : un tapis passe par-dessus d'autres tapis, sur 4 cases au plus ; prix en plus des cases. */
   bridgeSpan: 4,

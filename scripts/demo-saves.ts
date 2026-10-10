@@ -31,7 +31,7 @@ const DEMOS: Demo[] = [
   },
   {
     id: 'p5', title: 'Palier 5 · logistique', seed: 'DEMO-LOGISTIQUE', palier: 5, money: 60000,
-    about: 'En plus : un camion ramène le fer d’un filon riche éloigné jusqu’à un four et une presse, et le calcaire est broyé en ciment. Tapis souterrains et trains débloqués.',
+    about: 'En plus : un camion ramène le fer d’un filon riche éloigné jusqu’à un four et une presse, et le calcaire est broyé en ciment. Trains débloqués.',
     items: { charbon: 400, carburant: 400, acier: 400, engrenage: 400, cable: 400, moteur: 150, circuit: 150, processeur: 80, plaque_fer: 300, beton: 200 },
   },
   {

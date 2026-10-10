@@ -2,7 +2,6 @@
 import { Game } from '../src/sim/game.ts';
 import { BeltTracer, type TraceCell } from '../src/sim/tracer.ts';
 import { CableTracer } from '../src/sim/cables.ts';
-import { TunnelTracer } from '../src/sim/tunnels.ts';
 import { World } from '../src/world/world.ts';
 import { producibleItems, generateChoices } from '../src/sim/orders.ts';
 import { item, ITEM_LIST } from '../src/data/items.ts';
@@ -684,41 +683,17 @@ test('sans charbon, le robot ralentit et le drone se pose sur lui', () => {
 });
 
 
-test('tapis souterrain : d’un coffre à un four, sous un tapis et une machine', () => {
+test('les anciens tapis souterrains sont retirés et remboursés au chargement', () => {
   const g = new Game('TEST-U1');
-  g.money = 100000; g.world.reveal(10, 8, 20); g.drones[0].cargo = null;
-  const chest = g.placeMachine('coffre', 3, 8)!;
-  const four = g.placeMachine('four', 14, 8)!;
-  const mid = g.placeMachine('four', 8, 7)!;
-  g.placeBelts([...Array(7)].map((_, i) => ({ x: 6, y: 4 + i, dir: 1, inDir: 1 })) as TraceCell[]);
-  for (const m of g.factory.machines.values()) m.built = true;
-  for (const b of g.factory.belts.values()) b.built = true;
-  g.pending = []; g.factory.markBuilt();
-  // Tracé au doigt : du coffre vers la droite (sous le tapis), la presse arrête le tracé.
-  const t = new TunnelTracer(g.factory, g.world, 3.5, 8.5);
-  for (let i = 1; i <= 24; i++) t.move(3.5 + i * 0.25, 8.5);
-  assert(t.target === mid && t.cells.length === 4, `arrêt sur la machine du milieu : ${t.cells.length} cases, ${t.target?.type}`);
-  // En contournant par le bas jusqu'au four.
-  const t2 = new TunnelTracer(g.factory, g.world, 3.5, 8.5);
-  for (const [x, y] of [[4.5, 8.5], [5.5, 8.5], [6.5, 8.5], [7.5, 8.5], [7.5, 9.5], [7.5, 10.5], [8.5, 10.5], [10.5, 10.5], [12.5, 10.5], [13.5, 10.5], [13.5, 9.5], [14.5, 9.5]]) t2.move(x, y);
-  assert(t2.target === four && !t2.blocked, `arrivée au four : ${t2.target?.type} ${JSON.stringify(t2.cells)}`);
-  assert(!g.placeTunnel(chest, four, t2.cells), 'à débloquer');
-  g.unlocks.add('souterrain');
-  const m0 = g.money;
-  assert(g.placeTunnel(chest, four, t2.cells) && m0 - g.money === g.tunnelPrice(t2.cells.length), 'posé');
-  g.factory.putInStorage(chest, 'fer', 5);
-  g.factory.putInStorage(chest, 'cuivre', 3);
-  four.fuel = 10;
-  run(g, 30);
-  assert((four.outBuf.lingot_fer ?? 0) + (four.inBuf.fer ?? 0) + (four.craft ? 1 : 0) >= 4 && !chest.inBuf.fer, `fer arrivé : ${JSON.stringify(four)}`);
-  // Sauvegarde, puis suppression d'une machine : le tunnel part avec, remboursé.
-  const g2 = new Game('TEST-U1', JSON.parse(JSON.stringify(g.serialize())));
-  assert(g2.factory.tunnels.size === 1, 'rechargé');
-  const m1 = g.money;
-  g.removeMachine(four);
-  assert(g.factory.tunnels.size === 0 && g.money - m1 === MACHINES.four.cost + g.tunnelPrice(t2.cells.length), 'retiré avec la machine');
+  g.money = 1000;
+  const save = JSON.parse(JSON.stringify(g.serialize()));
+  save.factory.tunnels = [{ id: 1, from: 1, to: 2, cells: [1, 2, 3], items: [['fer', 0.5]] }];
+  save.unlocks = [...save.unlocks, 'souterrain'];
+  const g2 = new Game('TEST-U1', save);
+  assert(g2.money === 1000 + 4 * 4, `remboursé : ${g2.money}`);
+  assert(!g2.unlocks.has('souterrain'), 'le déblocage disparaît');
+  assert(!('tunnels' in g2.serialize().factory), 'plus sauvegardé');
 });
-
 test('trieur : posé à la sortie d’un coffre, seuls les objets choisis en sortent', () => {
   const g = new Game('TEST-TR');
   g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;

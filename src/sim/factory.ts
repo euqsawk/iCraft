@@ -111,17 +111,6 @@ export const ROCKET_NEEDS: Record<string, number> = { structure_fusee: 20, moteu
 /** Objets qu'un atelier garde à l'entrée, en attendant que l'intérieur les prenne. */
 const ATELIER_BUFFER = 40;
 
-/** Un tapis souterrain : d'une machine (ou d'un coffre) à une autre, par un trajet sous le sol. */
-export interface Tunnel {
-  id: number;
-  from: number;
-  to: number;
-  /** Cases du trajet sous terre (entre les deux machines), dans l'ordre. */
-  cells: number[];
-  /** Objets en route : p de 0 (départ) à la longueur du trajet (arrivée), en cases. */
-  items: { t: string; p: number }[];
-}
-
 export type VehicleKind = 'camion' | 'train';
 
 /** Un arrêt d'une ligne : un dépôt (camions) ou une gare (trains), où l'on charge ou décharge. */
@@ -215,9 +204,8 @@ export class Factory {
   /** Lignes de camions et de trains. */
   readonly lines = new Map<number, Line>();
   private nextLine = 1;
-  /** Tapis souterrains (sous tout le reste). */
-  readonly tunnels = new Map<number, Tunnel>();
-  private nextTunnel = 1;
+  /** Pièces à rendre au chargement d'une ancienne partie (ce qui a été retiré du jeu). */
+  legacyRefund = 0;
   /** Câbles électriques (une couche à part : ils passent sous les tapis et les machines). */
   readonly cables = new Set<number>();
   private cellMachine = new Map<number, Machine>();
@@ -561,7 +549,6 @@ export class Factory {
   removeMachine(m: Machine): void {
     this.unindexMachine(m);
     this.machines.delete(m.id);
-    for (const t of [...this.tunnels.values()]) if (t.from === m.id || t.to === m.id) this.tunnels.delete(t.id);
     for (const l of [...this.lines.values()]) if (l.stops.some((st) => st.id === m.id)) this.lines.delete(l.id);
     this.dirty = true;
   }
@@ -751,67 +738,6 @@ export class Factory {
         else if (v.t >= RULES.vehicleWait) leave = c > 0 || othersGive;
         if (leave) { v.moving = true; v.t = 0; v.loading = false; docked.delete(here.id); }
         else if (c === 0 && !othersGive) v.t = Math.min(v.t, RULES.vehicleWait);
-      }
-    }
-  }
-
-  // ---------- Tapis souterrains ----------
-
-  /** Longueur d'un trajet souterrain, en cases (une de plus que ses cases : on sort de la machine). */
-  tunnelLength(t: Tunnel): number {
-    return t.cells.length + 1;
-  }
-
-  addTunnel(from: Machine, to: Machine, cells: { x: number; y: number }[], id?: number): Tunnel {
-    const t: Tunnel = { id: id ?? this.nextTunnel++, from: from.id, to: to.id, cells: cells.map((c) => key(c.x, c.y)), items: [] };
-    this.nextTunnel = Math.max(this.nextTunnel, t.id + 1);
-    this.tunnels.set(t.id, t);
-    return t;
-  }
-
-  removeTunnel(id: number): Tunnel | null {
-    const t = this.tunnels.get(id);
-    if (!t) return null;
-    this.tunnels.delete(id);
-    return t;
-  }
-
-  /** Les tapis souterrains qui partent de cette machine ou y arrivent. */
-  tunnelsOf(m: Machine): Tunnel[] {
-    return [...this.tunnels.values()].filter((t) => t.from === m.id || t.to === m.id);
-  }
-
-  /** Une machine pousse ce qu'elle produit (ou ce que garde un coffre) dans ses tapis souterrains. */
-  private pushTunnels(m: Machine, buf: Record<string, number>): void {
-    for (const t of this.tunnels.values()) {
-      if (t.from !== m.id) continue;
-      const to = this.machines.get(t.to);
-      if (!to || !to.built) continue;
-      const rear = t.items[t.items.length - 1];
-      if (rear && rear.p < RULES.beltGap) continue;
-      // Ce que la machine d'arrivée accepte (en comptant ce qui est déjà en route).
-      const k = Object.keys(buf).find((x) => buf[x] > 0 && this.canAccept(to, x) && t.items.filter((i) => i.t === x).length < 4);
-      if (!k) continue;
-      buf[k]--;
-      if (buf[k] === 0 && buf === m.inBuf) delete buf[k];
-      t.items.push({ t: k, p: 0 });
-    }
-  }
-
-  private tickTunnels(dt: number): void {
-    const speed = RULES.beltSpeed * this.speedMult * dt, gap = RULES.beltGap;
-    for (const t of this.tunnels.values()) {
-      const L = this.tunnelLength(t);
-      const to = this.machines.get(t.to);
-      for (let i = 0; i < t.items.length; i++) {
-        const it = t.items[i];
-        const limit = i === 0 ? L : t.items[i - 1].p - gap;
-        if (it.p < limit) it.p = Math.min(it.p + speed, limit);
-      }
-      const first = t.items[0];
-      if (first && first.p >= L && to?.built && this.canAccept(to, first.t)) {
-        t.items.shift();
-        this.give(to, first.t);
       }
     }
   }
@@ -1544,10 +1470,8 @@ export class Factory {
         const out = def.kind === 'storage' ? this.outOf(m) : m.outBuf;
         this.pushOutputs(m, out);
         if (m.links?.length) this.pushLinks(m, out, dt);
-        if (this.tunnels.size) this.pushTunnels(m, out);
       }
     }
-    if (this.tunnels.size) this.tickTunnels(dt);
     if (this.lines.size) this.tickLines(dt);
   }
 
@@ -1826,7 +1750,6 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
-      tunnels: [...this.tunnels.values()].map((t) => ({ id: t.id, from: t.from, to: t.to, cells: [...t.cells], items: t.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000] as [string, number]) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', b.pick ?? 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
@@ -1880,14 +1803,9 @@ export class Factory {
       this.lines.set(sl.id, { id: sl.id, kind: sl.kind, stops: sl.stops.map((st) => ({ ...st })), vehicles: sl.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) });
       this.nextLine = Math.max(this.nextLine, sl.id + 1);
     }
-    this.tunnels.clear();
-    this.nextTunnel = 1;
-    for (const st of s.tunnels ?? []) {
-      if (!this.machines.has(st.from) || !this.machines.has(st.to)) continue;
-      const t: Tunnel = { id: st.id, from: st.from, to: st.to, cells: [...st.cells], items: st.items.map(([t2, p]) => ({ t: t2, p })) };
-      this.tunnels.set(t.id, t);
-      this.nextTunnel = Math.max(this.nextTunnel, t.id + 1);
-    }
+    // Les tapis souterrains n'existent plus : une ancienne partie récupère leur prix (4 pièces par case de trajet).
+    this.legacyRefund = 0;
+    for (const st of s.tunnels ?? []) this.legacyRefund += (st.cells.length + 1) * 4;
     this.dirty = true;
   }
 }
@@ -1897,7 +1815,8 @@ export interface FactorySave {
   cables?: number[];
   pipes?: number[];
   lines?: Line[];
-  tunnels?: { id: number; from: number; to: number; cells: number[]; items: [string, number][] }[];
+  /** Anciennes parties : tapis souterrains (retirés du jeu, remboursés au chargement). */
+  tunnels?: { cells: number[] }[];
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
