@@ -64,16 +64,12 @@ const GIFT_TEXT: Record<string, { title: string; lines: string[]; open: string }
   },
 };
 
+/** Une ligne d'une grande liste de choix. */
+interface PickOpt { id: string | null; label: string; sub?: string; icon?: string; badge?: string; on?: boolean; group?: string; danger?: boolean }
+
 /** Petit entonnoir : une entrée ou une sortie filtrée. */
 const FUNNEL = '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M1 1.5 H9 L6 5.2 V8.5 L4 9.2 V5.2 Z"/></svg>';
 const CHECK_SM = '<svg class="plan-check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2E6B51" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 L6.5 12 L13 4.5"/></svg>';
-/** Un menu qui s'ouvre sous un élément : il s'arrête au bas de l'écran (et défile). */
-function fitMenu(el: HTMLElement): void {
-  requestAnimationFrame(() => {
-    const top = el.getBoundingClientRect().top;
-    el.style.maxHeight = `${Math.max(150, window.innerHeight - top - 12)}px`;
-  });
-}
 const fmt = (n: number) => Math.floor(n).toLocaleString('fr-FR').replace(/ | /g, ' ');
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
@@ -1521,23 +1517,21 @@ export class Hud implements GestureHandlers {
   /** Scanner : choisir une matière, des flèches montrent les 3 filons les plus proches pendant 10 s. */
   private scanCard(close: () => void): HTMLElement {
     const g = this.game;
-    const card = h('div', 'card');
-    card.innerHTML = `<p class="muted">Scanner · trouve les 3 filons les plus proches, même sous le brouillard</p>`;
-    const grid = h('div', 'scan-grid');
-    for (const id of RAW_IDS) {
-      const b = h('button', 'scan-opt', `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()))}</small>`);
-      b.onclick = () => {
+    const short = (id: string) => item(id).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase());
+    const btn = h('button', 'card scan-btn', `<span class="scan-ico">${RAW_IDS.slice(0, 3).map((id) => `<img src="${this.itemIcons.get(id)}" alt="">`).join('')}</span><span class="pl"><b>Scanner</b><small>Trouve les 3 filons les plus proches, même sous le brouillard</small></span><i>›</i>`);
+    btn.onclick = () => {
+      const opts: PickOpt[] = RAW_IDS.map((id) => ({ id, label: short(id), icon: this.itemIcons.get(id) }));
+      this.openPicker('Scanner', 'Choisis une matière : des flèches montrent ses 3 filons les plus proches pendant 10 secondes.', opts, (id) => {
+        if (!id) return;
         const found = g.scan(id, 3);
         if (!found.length) { this.toast(`Aucun filon de ${item(id).name.toLowerCase()} à portée du scanner`, 'warn'); return; }
         close();
         this.r.startScan(id, found);
         this.r.centerOnRobot();
         this.toast(`Scanner : ${found.length} filon${found.length > 1 ? 's' : ''} de ${item(id).name.toLowerCase()} · le plus proche à ${Math.round(found[0].d)} cases`, 'good');
-      };
-      grid.append(b);
-    }
-    card.append(grid);
-    return card;
+      });
+    };
+    return btn;
   }
 
   /** Fabrication à la main : ce qui est en cours, puis ce qu'on peut faire avec l'inventaire. */
@@ -1648,7 +1642,6 @@ export class Hud implements GestureHandlers {
   openMachine(m: Machine): void {
     this.closePopover();
     this.invSel = null;
-    if (this.machineId !== m.id) { this.planOpen = false; this.connOpen = null; }
     this.machineId = m.id;
     this.openSheet((sheet, close) => {
       const g = this.game;
@@ -1871,10 +1864,6 @@ export class Hud implements GestureHandlers {
     this.sheetKind = 'machine';
   }
 
-  /** La liste déroulante ouverte (recette prévue) ; refermée en changeant de machine. */
-  private planOpen = false;
-  /** L'entrée ou la sortie dont le petit menu (auto ou filtre) est ouvert. */
-  private connOpen: { x: number; y: number; io: 'in' | 'out' } | null = null;
   /** Une entrée ou une sortie est en train d'être glissée vers la carte (la fenêtre attend). */
   private portDragging = false;
 
@@ -1910,7 +1899,7 @@ export class Hud implements GestureHandlers {
     return x < 0.005 ? '0' : x >= 10 ? x.toFixed(1).replace('.', ',') : x.toFixed(2).replace('.', ',').replace(/0$/, '');
   }
 
-  /** « Auto · fait des engrenages » ; ouverte, la liste des recettes pour prévoir les débits. */
+  /** « Auto · fait des engrenages » ; touchée, la grande liste des recettes pour prévoir les débits. */
   private planSelect(mm: Machine): HTMLElement {
     const g = this.game, def = machineDef(mm.type);
     const wrap = h('div', 'plan');
@@ -1921,36 +1910,21 @@ export class Hud implements GestureHandlers {
     if (mm.plan !== undefined) text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(mm.plan))}" alt=""> ${esc(item(outOf(mm.plan)).name.toLowerCase())}</small>`;
     else if (auto >= 0) text = `<b>fait des <img src="${this.itemIcons.get(outOf(auto))}" alt=""> ${esc(item(outOf(auto)).plural)}</b>`;
     else text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(shown))}" alt=""> ${esc(item(outOf(shown)).name.toLowerCase())}</small>`;
-    const btn = h('button', `plan-btn${this.planOpen ? ' open' : ''}`, `<span class="plan-auto">Auto</span><span class="plan-txt">${this.planOpen ? '<b>Prévoir les débits pour…</b>' : text}</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${this.planOpen ? 'M3 10 L8 5 L13 10' : 'M3 6 L8 11 L13 6'}"/></svg>`);
-    btn.setAttribute('aria-expanded', String(this.planOpen));
-    btn.onclick = () => { this.planOpen = !this.planOpen; this.refreshSheet(true); };
-    wrap.append(btn);
-    if (this.planOpen) {
-      const list = h('div', 'plan-list');
-      list.append(h('p', 'plan-info', 'La machine reste en auto : elle fabrique selon ce qu’on lui apporte. Choisir une recette sert seulement à prévoir ses débits ici.'));
-      const clear = h('button', `plan-row${mm.plan === undefined ? ' on' : ''}`, `<span class="plan-ins"></span><b>Selon ce qui arrive</b><small></small>`);
-      clear.onclick = () => { g.setPlan(mm, undefined); this.planOpen = false; this.refreshSheet(true); };
-      list.append(clear);
+    const btn = h('button', 'plan-btn', `<span class="plan-auto">Auto</span><span class="plan-txt">${text}</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6 L8 11 L13 6"/></svg>`);
+    btn.onclick = () => {
+      const opts: PickOpt[] = [{ id: null, label: 'Selon ce qui arrive', sub: 'La machine choisit sa recette d’après ce qu’on lui apporte', badge: '<span class="plan-auto">Auto</span>', on: mm.plan === undefined }];
       def.recipes.forEach((r, i) => {
         if (!r || !Object.keys(r.out).length) return;
         const o = Object.keys(r.out)[0];
-        const ins = Object.keys(r.in).map((k) => `<img src="${this.itemIcons.get(k)}" alt="">`).join('');
-        const row = h('button', `plan-row${mm.plan === i ? ' on' : ''}`, `<span class="plan-ins">${ins}</span><img class="plan-out" src="${this.itemIcons.get(o)}" alt=""><b>${esc(item(o).name)}</b><small>${Hud.rate(r.out[o] / r.time)} /s</small>`);
-        row.onclick = () => { g.setPlan(mm, i); this.planOpen = false; this.refreshSheet(true); };
-        list.append(row);
+        const ins = Object.entries(r.in).map(([k, n]) => `<img src="${this.itemIcons.get(k)}" alt="">${n > 1 ? `${n} ` : ''}${esc(item(k).name.toLowerCase())}`).join(' + ');
+        opts.push({ id: String(i), label: item(o).name, sub: `<span class="pick-ins">${ins}</span> · ${Hud.rate(r.out[o] / r.time)} /s`, icon: this.itemIcons.get(o), on: mm.plan === i, group: 'Prévoir les débits pour' });
       });
-      wrap.append(list);
-      // Toucher ailleurs dans la fenêtre referme la liste (sans rien faire d'autre).
-      const outside = (ev: PointerEvent) => {
-        if (!wrap.isConnected) { window.removeEventListener('pointerdown', outside, true); return; }
-        if (wrap.contains(ev.target as Node)) return;
-        window.removeEventListener('pointerdown', outside, true);
-        ev.stopPropagation(); ev.preventDefault();
-        this.planOpen = false;
-        this.refreshSheet(true);
-      };
-      setTimeout(() => window.addEventListener('pointerdown', outside, true), 0);
-    }
+      this.openPicker(machineDef(mm.type).name, 'La machine reste en auto : elle fabrique selon ce qu’on lui apporte. Choisir une recette sert seulement à prévoir ses débits.', opts, (id) => {
+        g.setPlan(mm, id === null ? undefined : Number(id));
+        this.refreshSheet();
+      });
+    };
+    wrap.append(btn);
     return wrap;
   }
 
@@ -1999,7 +1973,6 @@ export class Hud implements GestureHandlers {
     mEl.style.left = `${mx}px`; mEl.style.top = `${my}px`;
     inner.append(mEl);
     const place = (el: HTMLElement, x: number, y: number) => { el.style.left = `${x}px`; el.style.top = `${y}px`; inner.append(el); };
-    const open = this.connOpen;
     (['left', 'right', 'top', 'bottom'] as const).forEach((side) => {
       const list = entries.filter((e) => e.side === side);
       list.forEach((e, i) => {
@@ -2038,29 +2011,22 @@ export class Hud implements GestureHandlers {
         const ico = k ? `<img src="${this.itemIcons.get(k)}" alt="">` : '';
         const tag = e.lock ? `<small class="mc-tag lock">${FUNNEL}filtrée</small>` : e.kind === 'planned' ? '<small class="mc-tag">prévue</small>' : e.kind === 'belt' ? '<small class="mc-tag auto">auto</small>' : '';
         const rate = exp !== undefined ? `<b>${Hud.rate(exp)}</b><small>/s</small>` : e.kind === 'ghost' && !k ? '<small>à glisser</small>' : store ? '' : '<b>—</b>';
-        const isOpen = !!open && e.kind !== 'ghost' && open.x === e.x && open.y === e.y && open.io === e.io;
-        const chip = h('div', `mchip ${e.io} ${e.kind}${e.lock ? ' locked' : ''}${isOpen ? ' open' : ''}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span><span class="mc-rate">${rate}${tag}</span>`);
+        const chip = h('div', `mchip ${e.io} ${e.kind}${e.lock ? ' locked' : ''}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span><span class="mc-rate">${rate}${tag}</span>`);
         if (e.kind === 'planned' && e.port !== undefined) {
           const x0 = h('button', 'mc-x', '×');
           x0.setAttribute('aria-label', 'Retirer');
           const pi = e.port;
-          x0.onclick = (ev) => { ev.stopPropagation(); g.removePort(mm, pi); this.connOpen = null; this.refreshSheet(true); };
+          x0.onclick = (ev) => { ev.stopPropagation(); g.removePort(mm, pi); this.refreshSheet(); };
           chip.append(x0);
         }
         const from = e.kind === 'ghost' ? undefined : { x: e.x!, y: e.y! };
         this.bindPortDrag(chip, mm, e.io, k, from, () => {
           if (!from) { this.toast('Glisse-la sur un côté du bâtiment', 'info'); return; }
-          this.connOpen = isOpen ? null : { x: from.x, y: from.y, io: e.io };
-          this.refreshSheet(true);
+          this.openConnPicker(mm, e, rec ? Object.keys(e.io === 'in' ? rec.in : rec.out) : []);
         });
         place(chip, x, y);
       });
     });
-    if (open) {
-      const e = entries.find((q) => q.kind !== 'ghost' && q.x === open.x && q.y === open.y && q.io === open.io);
-      if (e) box.append(this.connMenu(mm, e, rec ? Object.keys(e.io === 'in' ? rec.in : rec.out) : []));
-      else this.connOpen = null;
-    }
     const hint = entries.some((e) => e.kind === 'ghost')
       ? 'Glisse ce qui est en pointillés sur un côté du bâtiment pour le prévoir. Touche une entrée ou une sortie pour la filtrer.'
       : io.length ? 'Touche une entrée ou une sortie pour la filtrer (ou la remettre en auto) ; glisse-la pour la déplacer ou l’échanger.' : '';
@@ -2083,42 +2049,23 @@ export class Hud implements GestureHandlers {
     return [...new Set(list)].filter((t) => !FLUIDS.has(t) && ITEM_LIST.some((x) => x.id === t));
   }
 
-  /** Le petit menu d'une entrée ou d'une sortie : auto (tout passe) ou un seul objet. */
-  private connMenu(mm: Machine, e: { io: 'in' | 'out'; item?: string; lock?: boolean; x?: number; y?: number; side: string; kind: string; port?: number }, first: string[]): HTMLElement {
+  /** Filtrer une entrée ou une sortie : auto (tout passe) ou un seul objet, dans la grande liste. */
+  private openConnPicker(mm: Machine, e: { io: 'in' | 'out'; item?: string; lock?: boolean; x?: number; y?: number; side: string; kind: string; port?: number }, first: string[]): void {
     const g = this.game;
-    const menu = h('div', 'plan-list conn-menu');
     const sideName = { left: 'à gauche', right: 'à droite', top: 'en haut', bottom: 'en bas' }[e.side] ?? '';
-    menu.append(h('p', 'plan-info', `<b>${e.io === 'in' ? 'Entrée' : 'Sortie'} ${sideName}</b> · en auto, tout passe ; choisis un objet pour que lui seul ${e.io === 'in' ? 'entre' : 'sorte'} par là${e.io === 'out' ? ' (le reste sort ailleurs ou attend)' : ' (le reste attend sur le tapis)'}.`));
-    const set = (t: string | null) => { g.setPortFilter(mm, e.x!, e.y!, e.io, t); this.connOpen = null; this.refreshSheet(true); };
-    const auto = h('button', `plan-row${!e.lock ? ' on' : ''}`, `<span class="plan-auto">Auto</span><b>${e.io === 'in' ? 'Tout ce qui arrive' : 'Tout ce qui est prêt'}</b>${!e.lock ? CHECK_SM : ''}`);
-    auto.onclick = () => set(null);
-    menu.append(auto);
+    const opts: PickOpt[] = [{ id: null, label: e.io === 'in' ? 'Tout ce qui arrive' : 'Tout ce qui est prêt', sub: 'Rien n’est filtré', badge: '<span class="plan-auto">Auto</span>', on: !e.lock }];
+    const useful = new Set(first);
     for (const t of this.connCandidates(mm, e.io, first)) {
-      const on = !!e.lock && e.item === t;
-      const row = h('button', `plan-row${on ? ' on' : ''}`, `<img class="plan-out" src="${this.itemIcons.get(t)}" alt=""><b>Seulement ${esc(item(t).name.toLowerCase())}</b>${on ? CHECK_SM : ''}`);
-      row.onclick = () => set(t);
-      menu.append(row);
+      opts.push({ id: t, label: `Seulement ${item(t).name.toLowerCase()}`, icon: this.itemIcons.get(t), on: !!e.lock && e.item === t, group: useful.has(t) ? 'Ce qui sert ici' : 'Autres objets' });
     }
-    if (e.kind === 'planned' && e.port !== undefined) {
-      const rm = h('button', 'plan-row danger', `${ICONS.trash}<b>Retirer cette ${e.io === 'in' ? 'entrée' : 'sortie'} prévue</b>`);
-      const pi = e.port;
-      rm.onclick = () => { g.removePort(mm, pi); this.connOpen = null; this.refreshSheet(true); };
-      menu.append(rm);
-    }
-    // Toucher ailleurs referme le menu.
-    const outside = (ev: PointerEvent) => {
-      if (!menu.isConnected) { window.removeEventListener('pointerdown', outside, true); return; }
-      const t = ev.target as HTMLElement;
-      if (menu.contains(t) || t.closest('.mchip.open')) return;
-      window.removeEventListener('pointerdown', outside, true);
-      if (t.closest('.mchip')) return; // une autre carte : elle ouvre son propre menu
-      ev.stopPropagation(); ev.preventDefault();
-      this.connOpen = null;
-      this.refreshSheet(true);
-    };
-    setTimeout(() => window.addEventListener('pointerdown', outside, true), 0);
-    fitMenu(menu);
-    return menu;
+    // Les groupes dans l'ordre : ce qui sert d'abord.
+    opts.sort((p, q) => (p.id === null ? -1 : q.id === null ? 1 : Number(p.group !== 'Ce qui sert ici') - Number(q.group !== 'Ce qui sert ici')));
+    if (e.kind === 'planned' && e.port !== undefined) opts.push({ id: '__remove', label: `Retirer cette ${e.io === 'in' ? 'entrée' : 'sortie'} prévue`, badge: `<span class="pick-ico">${ICONS.trash}</span>`, danger: true });
+    this.openPicker(`${e.io === 'in' ? 'Entrée' : 'Sortie'} ${sideName}`, `En auto, tout passe. Choisis un objet pour que lui seul ${e.io === 'in' ? 'entre par là (le reste attend sur le tapis)' : 'sorte par là (le reste sort ailleurs ou attend)'}.`, opts, (id) => {
+      if (id === '__remove') { if (e.port !== undefined) g.removePort(mm, e.port); }
+      else g.setPortFilter(mm, e.x!, e.y!, e.io, id);
+      this.refreshSheet();
+    });
   }
 
   /**
@@ -2135,7 +2082,6 @@ export class Hud implements GestureHandlers {
       const begin = () => {
         started = true;
         this.portDragging = true;
-        this.connOpen = null;
         if (this.overlay) this.overlay.style.visibility = 'hidden';
         ghost = el.cloneNode(true) as HTMLElement;
         ghost.classList.add('mchip-drag');
@@ -2164,7 +2110,7 @@ export class Hud implements GestureHandlers {
           if (ok) this.toast(from ? 'Déplacée' : g.view.beltAt(slot.x, slot.y) ? 'Filtre posé sur ce tapis' : io === 'in' ? 'Entrée prévue : trace un tapis jusqu’au chevron' : 'Sortie prévue : trace un tapis depuis le chevron', 'good');
         }
         if (this.overlay) this.overlay.style.visibility = '';
-        this.refreshSheet(true);
+        this.refreshSheet();
       };
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
@@ -2314,6 +2260,7 @@ export class Hud implements GestureHandlers {
   }
 
   /** Ce qu'un véhicule dépose ou prend à un arrêt : rien, tout, ou des objets choisis. */
+  /** Ce qu'un véhicule prend ou dépose à un arrêt : rien, tout, ou les objets choisis (plusieurs), dans la grande fenêtre. */
   private openStopRule(lineId: number, i: number, which: 'take' | 'drop'): void {
     const g = this.game;
     const l = g.factory.lines.get(lineId);
@@ -2321,49 +2268,65 @@ export class Hud implements GestureHandlers {
     if (!l || !st) return;
     const m = g.factory.machines.get(st.id);
     let rule = stopRules(st)[which];
-    let picked = new Set<string>(Array.isArray(rule) ? rule : []);
-    this.openSheet((sheet, close) => {
-      const back = () => { close(); this.openLine(lineId); };
-      sheet.append(this.sheetHead(`${which === 'take' ? 'Prend' : 'Dépose'} à ${m ? this.stationName(m) : '?'}`, which === 'take' ? 'Ce que le véhicule emporte d’ici (jamais ce qu’il vient d’y déposer)' : 'Ce que le véhicule laisse ici en arrivant', back));
-      const card = h('div', 'card');
-      const modes = h('div', 'rule-seg');
+    const picked = new Set<string>(Array.isArray(rule) ? rule : []);
+    let query = '';
+    const save = () => { g.setStopRule(lineId, i, which, rule); this.refreshSheet(); };
+    this.openModal(`${which === 'take' ? 'Prend' : 'Dépose'} à ${m ? this.stationName(m) : '?'}`, which === 'take' ? 'Ce que le véhicule emporte d’ici (jamais ce qu’il vient d’y déposer)' : 'Ce que le véhicule laisse ici en arrivant', (body, _close, rebuild) => {
+      const modes = h('div', 'rule-seg pick-seg');
       for (const [mode, label] of [['none', 'Rien'], ['all', 'Tout'], ['list', 'Choisir']] as const) {
         const on = mode === 'list' ? Array.isArray(rule) : rule === mode;
         const b = h('button', `btn${on ? ' primary' : ''}`, label);
         b.onclick = () => {
           rule = mode === 'list' ? [...picked] : mode;
-          if (mode !== 'list') g.setStopRule(lineId, i, which, rule);
-          this.refreshSheet();
+          if (mode !== 'list' || picked.size) save();
+          rebuild();
         };
         modes.append(b);
       }
-      card.append(modes);
-      if (Array.isArray(rule)) {
-        // Les objets de la partie : ceux qui passent déjà dans ce dépôt d'abord.
-        const here = m ? Object.keys(m.inBuf) : [];
-        const known = Object.keys(g.factory.stats.made);
-        const order = [...new Set([...here, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
-        const grid = h('div', 'sort-grid');
+      body.append(modes);
+      if (!Array.isArray(rule)) {
+        body.append(h('p', 'pick-note', rule === 'all' ? 'Tout ce qui est là part (ou est déposé), dans la limite du chargement.' : 'Rien n’est pris ni déposé à cet arrêt.'));
+        return;
+      }
+      body.append(h('p', 'pick-note', 'Touche les objets (plusieurs possibles).'));
+      const input = h('input', 'pick-search') as HTMLInputElement;
+      input.type = 'search';
+      input.placeholder = 'Chercher un objet';
+      input.value = query;
+      body.append(input);
+      const list = h('div', 'pick-list');
+      body.append(list);
+      // Les objets de la partie : ceux qui passent déjà dans ce dépôt d'abord.
+      const here = m ? [...Object.keys(m.inBuf), ...Object.keys(m.outBuf)] : [];
+      const known = Object.keys(g.factory.stats.made);
+      const order = [...new Set([...picked, ...here, ...known, ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
+      const fill = () => {
+        list.innerHTML = '';
+        const q = query.trim().toLowerCase();
+        let group = '';
         for (const id of order) {
-          const c = h('button', `sort-cell${picked.has(id) ? ' on' : ''}`, `<img src="${this.itemIcons.get(id)}" alt=""><small>${esc(item(id).name)}</small>`);
-          c.onclick = () => {
+          if (q && !item(id).name.toLowerCase().includes(q)) continue;
+          const grp = picked.has(id) ? 'Choisis' : here.includes(id) ? 'Dans cet arrêt' : 'Autres objets';
+          if (grp !== group) { group = grp; list.append(h('p', 'pick-group', grp)); }
+          const row = h('button', `pick-row${picked.has(id) ? ' on' : ''}`, `<img class="pi" src="${this.itemIcons.get(id)}" alt=""><span class="pl"><b>${esc(item(id).name)}</b></span><span class="pick-box">${picked.has(id) ? CHECK_SM : ''}</span>`);
+          row.onclick = () => {
             if (picked.has(id)) picked.delete(id); else picked.add(id);
             rule = [...picked];
             g.setStopRule(lineId, i, which, rule.length ? rule : 'none');
-            if (!rule.length) rule = [];
-            c.classList.toggle('on', picked.has(id));
+            this.refreshSheet();
+            row.classList.toggle('on', picked.has(id));
+            row.querySelector('.pick-box')!.innerHTML = picked.has(id) ? CHECK_SM : '';
           };
-          grid.append(c);
+          list.append(row);
         }
-        card.append(h('p', 'muted small', 'Touche les objets (plusieurs possibles).'), grid);
-      }
-      sheet.append(card);
-      const ok = h('button', 'btn primary', 'Terminé');
-      ok.onclick = back;
-      sheet.append(ok);
-    }, true);
-    this.sheetKind = 'stop';
-    void picked;
+      };
+      input.oninput = () => { query = input.value; fill(); };
+      fill();
+    }, (bar, close) => {
+      const ok = h('button', 'btn primary big', 'Terminé');
+      ok.onclick = close;
+      bar.append(ok);
+    });
   }
 
   /** Une ligne : ses arrêts (ce qu'on y dépose et ce qu'on y prend), ses véhicules, d'autres arrêts. */
@@ -2492,57 +2455,63 @@ export class Hud implements GestureHandlers {
     this.closePopover();
     const g = this.game;
     const setOrder = (list: DronePriority[]) => (station !== undefined ? g.setStationPriorities(station, list) : g.setDronePriorities(i, list));
-    this.openSheet((sheet, close) => {
-      const d = station !== undefined ? g.stationDrones.get(station) : g.drones[i];
+    const drone = () => (station !== undefined ? g.stationDrones.get(station) : g.drones[i]);
+    if (!drone()) return;
+    this.openModal(station !== undefined ? 'Priorités du drone de la station' : `Priorités du drone ${i + 1}`, 'De la plus importante à la moins importante. Le drone fait la première tâche utile de la liste ; son propre charbon passe toujours avant.', (body, close, rebuild) => {
+      const d = drone();
       if (!d) { close(); return; }
-      sheet.append(this.sheetHead(station !== undefined ? 'Priorités du drone de la station' : `Priorités du drone ${i + 1}`, 'De la plus importante à la moins importante. Le drone fait la première tâche utile de la liste ; son propre charbon passe toujours avant.', close));
-      const list = h('div', 'prio-list');
+      if (g.drones.length > 1 && station === undefined) {
+        const tabs = h('div', 'rule-seg pick-seg');
+        g.drones.forEach((_, j) => {
+          const b = h('button', `btn${j === i ? ' primary' : ''}`, `Drone ${j + 1}`);
+          b.onclick = () => { if (j !== i) this.openPriorities(j); };
+          tabs.append(b);
+        });
+        body.append(tabs);
+      }
+      const list = h('div', 'prio-list pick-prio');
       const move = (from: number, to: number) => {
         const order = [...d.priorities];
         const [p] = order.splice(from, 1);
         order.splice(to, 0, p);
         setOrder(order);
+        rebuild();
         this.refreshSheet();
       };
       d.priorities.forEach((p, k) => {
         const row = h('div', `prio-item${k === 0 ? ' first' : ''}`);
         row.innerHTML = `<span class="prio-n">${k + 1}</span><span class="prio-ico">${PRIO_ICONS[p] ?? ''}</span><b>${esc(DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p)}</b>`;
-        const up = h('button', 'prio-move', '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 L7 5 L11 9"/></svg>');
+        const up = h('button', 'prio-move', '<svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 L7 5 L11 9"/></svg>');
         up.setAttribute('aria-label', 'Monter');
         up.disabled = k === 0;
         up.onclick = () => move(k, k - 1);
-        const down = h('button', 'prio-move', '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5 L7 9 L11 5"/></svg>');
+        const down = h('button', 'prio-move', '<svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5 L7 9 L11 5"/></svg>');
         down.setAttribute('aria-label', 'Descendre');
         down.disabled = k === d.priorities.length - 1;
         down.onclick = () => move(k, k + 1);
         row.append(up, down);
         list.append(row);
       });
-      sheet.append(list);
-      const row = h('div', 'row prio-actions');
+      body.append(list);
+    }, (bar, close) => {
+      const row = h('div', 'row');
       if (g.drones.length > 1 && station === undefined) {
         const all = h('button', 'btn', 'Même ordre pour tous');
         all.onclick = () => {
-          g.drones.forEach((_, j) => g.setDronePriorities(j, d.priorities));
+          const d = drone();
+          if (d) g.drones.forEach((_, j) => g.setDronePriorities(j, d.priorities));
           this.toast('Tous les drones suivent cet ordre', 'good');
+          this.refreshSheet();
         };
         row.append(all);
       }
       const reset = h('button', 'btn', 'Ordre de départ');
-      reset.onclick = () => { setOrder(DEFAULT_ORDER); this.refreshSheet(); };
+      reset.onclick = () => { setOrder(DEFAULT_ORDER); this.openPriorities(i, station); this.refreshSheet(); };
       row.append(reset);
-      sheet.append(row);
-      if (g.drones.length > 1 && station === undefined) {
-        const tabs = h('div', 'row');
-        g.drones.forEach((_, j) => {
-          if (j === i) return;
-          const b = h('button', 'btn', `Drone ${j + 1}`);
-          b.onclick = () => this.openPriorities(j);
-          tabs.append(b);
-        });
-        sheet.append(tabs);
-      }
-    }, true);
+      const ok = h('button', 'btn primary', 'Terminé');
+      ok.onclick = close;
+      bar.append(row, ok);
+    });
   }
 
   private popKey = '';
@@ -2602,40 +2571,20 @@ export class Hud implements GestureHandlers {
       const straight = b.filter ? 'Tout le reste' : 'Un sur deux';
       const cStraight = h('div', 'mchip out belt', `<span class="mc-name"><span class="mc-t">Tout droit</span></span><span class="mc-rate"><b>${b.filter ? '' : '½'}</b><small>${straight.toLowerCase()}</small></span>`);
       place(cStraight, W - CW, midY - CH / 2);
-      const cSide = h('div', `mchip out belt${b.filter ? ' locked' : ''}${this.planOpen ? ' open' : ''}`, b.filter
+      const cSide = h('div', `mchip out belt${b.filter ? ' locked' : ''}`, b.filter
         ? `<span class="mc-name"><img src="${this.itemIcons.get(b.filter)}" alt=""><span class="mc-t">${esc(item(b.filter).name)}</span></span><span class="mc-rate"><small>seulement</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
         : `<span class="mc-name"><span class="mc-t">Dérivation</span></span><span class="mc-rate"><b>½</b><small>un sur deux</small><small class="mc-tag auto">auto</small></span>`);
       place(cSide, W / 2 - CW / 2, down ? H - CH - 2 : 2);
       cSide.onclick = () => {
         if (!tri) { this.toast('Débloque Tri dans l’arbre (Logistique) pour choisir ce qui part ici', 'info'); return; }
-        this.planOpen = !this.planOpen; this.refreshSheet(true);
-      };
-      if (this.planOpen && tri) {
-        const list = h('div', 'plan-list conn-menu');
-        list.append(h('p', 'plan-info', '<b>Dérivation</b> · en auto, un objet sur deux part de chaque côté ; choisis un objet pour que lui seul parte ici (tout le reste continue tout droit).'));
-        const set = (t: string | null) => { g.setBeltFilter(b, t); this.planOpen = false; this.refreshSheet(true); };
-        const auto = h('button', `plan-row${!b.filter ? ' on' : ''}`, `<span class="plan-auto">Auto</span><b>Un objet sur deux</b>${!b.filter ? CHECK_SM : ''}`);
-        auto.onclick = () => set(null);
-        list.append(auto);
+        const opts: PickOpt[] = [{ id: null, label: 'Un objet sur deux', sub: 'Rien n’est trié', badge: '<span class="plan-auto">Auto</span>', on: !b.filter }];
         const order = [...new Set([...seen, ...Object.keys(g.factory.stats.made), ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
-        for (const t of order) {
-          const on = b.filter === t;
-          const row = h('button', `plan-row${on ? ' on' : ''}${seen.includes(t) ? ' here' : ''}`, `<img class="plan-out" src="${this.itemIcons.get(t)}" alt=""><b>Seulement ${esc(item(t).name.toLowerCase())}</b>${seen.includes(t) ? '<small>sur le tapis</small>' : ''}${on ? CHECK_SM : ''}`);
-          row.onclick = () => set(t);
-          list.append(row);
-        }
-        box.append(list);
-        fitMenu(list);
-        const outside = (ev: PointerEvent) => {
-          if (!list.isConnected) { window.removeEventListener('pointerdown', outside, true); return; }
-          const t = ev.target as HTMLElement;
-          if (list.contains(t) || t.closest('.mchip.open')) return;
-          window.removeEventListener('pointerdown', outside, true);
-          ev.stopPropagation(); ev.preventDefault();
-          this.planOpen = false; this.refreshSheet(true);
-        };
-        setTimeout(() => window.addEventListener('pointerdown', outside, true), 0);
-      }
+        for (const t of order) opts.push({ id: t, label: `Seulement ${item(t).name.toLowerCase()}`, icon: this.itemIcons.get(t), on: b.filter === t, group: seen.includes(t) ? 'Sur ce tapis' : 'Autres objets' });
+        this.openPicker('Dérivation', 'En auto, un objet sur deux part de chaque côté. Choisis un objet pour que lui seul parte ici : tout le reste continue tout droit.', opts, (t) => {
+          g.setBeltFilter(b, t);
+          this.refreshSheet();
+        });
+      };
       box.append(h('p', 'mdiag-hint', tri ? 'Touche la dérivation pour choisir ce qui y part.' : 'En auto, un objet sur deux de chaque côté. Avec Tri (arbre, Logistique), tu choisis ce qui part dans la dérivation.'));
       sheet.append(box);
       const acts = h('div', 'row');
@@ -2762,13 +2711,12 @@ export class Hud implements GestureHandlers {
   }
 
   /** Reconstruit la feuille ouverte (livraisons en cours), en gardant le défilement. */
-  private refreshSheet(force = false): void {
+  private refreshSheet(): void {
     const back = this.overlay, build = this.sheetBuild;
     if (!back || !build) return;
     const sheet = back.firstElementChild as HTMLElement;
     // Pas pendant qu'on la tire vers le bas : le doigt perdrait son élément (et la fin du geste).
-    // Ni pendant que la liste des recettes est ouverte : elle perdrait son défilement à chaque mise à jour.
-    if (sheet.dataset.dragging || this.portDragging || ((this.planOpen || this.connOpen) && (this.sheetKind === 'machine' || this.sheetKind === 'chest' || this.sheetKind === 'splitter') && !force)) { this.sheetDirty = true; return; }
+    if (sheet.dataset.dragging || this.portDragging) { this.sheetDirty = true; return; }
     const top = sheet.scrollTop;
     sheet.innerHTML = '';
     build(sheet, () => this.closeSheet());
@@ -2776,13 +2724,84 @@ export class Hud implements GestureHandlers {
   }
 
   private closeSheet(): void {
+    this.closeModal();
     this.r.rangeOf = null;
-    this.planOpen = false;
-    this.connOpen = null;
     this.overlay?.remove();
     this.overlay = null;
     this.sheetBuild = null;
     this.sheetKind = '';
+  }
+
+  // ---------- Grandes fenêtres de choix ----------
+
+  private modal: HTMLElement | null = null;
+
+  /**
+   * Une grande fenêtre sur presque tout l'écran, au-dessus de la fenêtre du bas : pour choisir dans une liste.
+   * `build` remplit le corps ; `rebuild` le refait (en gardant le défilement).
+   */
+  private openModal(title: string, sub: string, build: (body: HTMLElement, close: () => void, rebuild: () => void) => void, foot?: (bar: HTMLElement, close: () => void) => void): void {
+    this.closeModal();
+    const back = h('div', 'pick-back');
+    const box = h('div', 'pick-modal');
+    back.append(box);
+    const close = () => { if (this.modal === back) this.closeModal(); };
+    box.append(this.sheetHead(title, sub, close));
+    const body = h('div', 'pick-body');
+    box.append(body);
+    const rebuild = () => { const top = body.scrollTop; body.innerHTML = ''; build(body, close, rebuild); body.scrollTop = top; };
+    build(body, close, rebuild);
+    if (foot) { const bar = h('div', 'pick-foot'); foot(bar, close); box.append(bar); }
+    // Le toucher qui l'ouvre ne doit pas la refermer (clic fantôme).
+    const opened = performance.now();
+    back.addEventListener('click', (e) => {
+      if (performance.now() - opened < 400) { e.stopPropagation(); e.preventDefault(); return; }
+      if (e.target === back) close();
+    }, true);
+    this.root.append(back);
+    this.modal = back;
+  }
+
+  private closeModal(): void {
+    this.modal?.remove();
+    this.modal = null;
+  }
+
+  /**
+   * Choisir une option dans une grande liste : le choix actuel coché, des groupes, une recherche s'il y en a beaucoup.
+   * Toucher une ligne choisit et referme.
+   */
+  private openPicker(title: string, sub: string, opts: PickOpt[], pick: (id: string | null) => void): void {
+    const searchable = opts.filter((o) => o.icon).length > 10;
+    let query = '';
+    this.openModal(title, sub, (body, close) => {
+      let list: HTMLElement;
+      const fill = () => {
+        list.innerHTML = '';
+        const q = query.trim().toLowerCase();
+        let group = '';
+        for (const o of opts) {
+          if (q && !o.label.toLowerCase().includes(q) && o.id !== null) continue;
+          if (o.group && o.group !== group) { group = o.group; list.append(h('p', 'pick-group', esc(group))); }
+          const row = h('button', `pick-row${o.on ? ' on' : ''}${o.danger ? ' danger' : ''}`, `${o.badge ?? (o.icon ? `<img class="pi" src="${o.icon}" alt="">` : '')}<span class="pl"><b>${esc(o.label)}</b>${o.sub ? `<small>${o.sub}</small>` : ''}</span>${o.on ? CHECK_SM : ''}`);
+          row.onclick = () => { close(); pick(o.id); };
+          list.append(row);
+        }
+      };
+      if (searchable) {
+        const input = h('input', 'pick-search') as HTMLInputElement;
+        input.type = 'search';
+        input.placeholder = 'Chercher un objet';
+        input.value = query;
+        input.oninput = () => { query = input.value; fill(); };
+        body.append(input);
+      }
+      list = h('div', 'pick-list');
+      body.append(list);
+      fill();
+      // Le choix actuel est visible tout de suite.
+      requestAnimationFrame(() => list.querySelector('.pick-row.on')?.scrollIntoView({ block: 'center' }));
+    });
   }
 
   private sheetHead(title: string, sub: string, close: () => void): HTMLElement {
