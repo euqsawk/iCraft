@@ -385,6 +385,18 @@ export class Factory {
    * Les entrées et sorties d'une machine, autour d'elle : tapis branchés (avec le dernier objet passé par là)
    * et entrées ou sorties prévues (un chevron, pas encore de tapis).
    */
+  /** Ce que la machine sort sans doute : ce qui attend dans sa sortie, sinon sa recette en cours ou la dernière. */
+  likelyOutput(m: Machine): string | undefined {
+    const ready = Object.keys(m.outBuf).find((t) => m.outBuf[t] > 0);
+    if (ready) return ready;
+    const def = machineDef(m.type);
+    if (def.kind === 'drill') return m.ore;
+    const n = def.recipes.length;
+    if (!n) return undefined;
+    const ri = m.craft ? m.craft.ri : n === 1 ? 0 : m.made > 0 ? ((m.rrRecipe - 1) % n + n) % n : -1;
+    return ri >= 0 ? Object.keys(def.recipes[ri].out)[0] : undefined;
+  }
+
   machineIO(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number }[] {
     this.refresh();
     const res: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number }[] = [];
@@ -395,8 +407,9 @@ export class Factory {
       const k = key(c.x, c.y);
       const nxt = this.nextOf.get(b);
       const feeds = [b.split, b.split2].some((d) => d !== undefined && this.machineAt(b.x + DX[d], b.y + DY[d]) === m);
-      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: m.seenIn?.[k], planned: false });
-      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: m.seenOut?.[k] ?? this.picks.get(k)?.[0], planned: false });
+      // Ce qui passe là : le dernier objet vu ; sinon (machine bouchée, ancienne partie) ce qui attend sur le tapis ou dans la machine.
+      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: m.seenIn?.[k] ?? b.items[0]?.t, planned: false });
+      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: m.seenOut?.[k] ?? this.picks.get(k)?.[0] ?? b.items[b.items.length - 1]?.t ?? this.likelyOutput(m), planned: false });
     }
     (m.ports ?? []).forEach((p, i) => {
       const x = m.x + p.rx, y = m.y + p.ry;
@@ -1793,6 +1806,8 @@ export class Factory {
       const allowed = pick ? all.filter((k) => pick.includes(k)) : all;
       const kinds = sends ? allowed.filter((k) => sends(b, k)) : allowed;
       if (!kinds.length) continue;
+      // Même bouchée, la sortie sait ce qu'elle attend de faire passer.
+      if (kinds.length === 1 && !m.seenOut?.[key(b.x, b.y)]) (m.seenOut ??= {})[key(b.x, b.y)] = kinds[0];
       const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
       if (side) {
         if (!this.roomAt(b, 0.5)) continue;

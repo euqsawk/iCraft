@@ -286,6 +286,24 @@ test('fiche machine : entrées et sorties vues, sorties prévues sur un côté, 
   g2.removePort(f2, 0);
   assert(!f2.ports, 'sortie prévue retirée');
 });
+test('une machine bouchée (ou d’une ancienne partie) connaît encore ses entrées et sorties', () => {
+  const g = new Game('TEST-6Q');
+  g.money = 10000;
+  g.world.reveal(-6, 2, 20);
+  assert(g.placeMachine('foreuse', -13, -5), 'foreuse fer');
+  const four = g.placeMachine('four', -8, -5)!;
+  assert(g.placeBelts(trace(g, [[-12.5, -4.5], [-8.5, -4.5], [-7.5, -4.5]]).result()), 'tapis fer');
+  // La sortie part dans le vide : elle se remplit, puis le four s'arrête.
+  assert(g.placeBelts(trace(g, [[-7.5, -4.5], [-5.5, -4.5], [-3.5, -4.5]]).result()), 'tapis sans issue');
+  run(g, 150);
+  for (let i = 0; i < 40; i++) { fuelAll(g); run(g, 10); }
+  const ready = Object.values(four.outBuf).reduce((a, b) => a + b, 0);
+  assert(ready > 0, `le four devrait être bouché (prêt ${ready})`);
+  delete four.seenIn; delete four.seenOut;
+  const io = g.view.machineIO(four);
+  const got = io.map((c) => `${c.io}:${c.item}`).sort().join();
+  assert(got === 'in:fer,out:lingot_fer', `vu : ${got}`);
+});
 test('sans charbon, le four attend', () => {
   const g = new Game('TEST-7');
   g.money = 10000;

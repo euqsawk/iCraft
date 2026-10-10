@@ -1881,27 +1881,30 @@ export class Hud implements GestureHandlers {
 
   /** La recette des débits attendus : celle prévue, sinon celle en cours, sinon celle des objets déjà reçus, sinon la première. */
   private ratesRecipe(mm: Machine): number {
-    const def = machineDef(mm.type), n = def.recipes.length;
-    if (!n) return -1;
+    const def = machineDef(mm.type);
+    if (!def.recipes.length) return -1;
     if (mm.plan !== undefined && def.recipes[mm.plan]) return mm.plan;
-    if (mm.craft) return mm.craft.ri;
-    const seen = new Set(Object.values(mm.seenIn ?? {}));
-    if (seen.size) {
-      const i = def.recipes.findIndex((r) => Object.keys(r.in).every((k) => seen.has(k)));
-      if (i >= 0) return i;
-    }
-    if (mm.made > 0) return ((mm.rrRecipe - 1) % n + n) % n;
-    return 0;
+    const ri = this.autoRecipe(mm);
+    return ri >= 0 ? ri : 0;
   }
 
-  /** La recette que la machine fait vraiment (en auto), si on le sait. */
+  /**
+   * La recette que la machine fait vraiment (en auto), si on le sait : celle en cours, sinon d'après
+   * ce qu'elle a vu passer, ce qui attend sur ses tapis et dans ses cases (une machine bouchée le sait encore).
+   */
   private autoRecipe(mm: Machine): number {
     const def = machineDef(mm.type), n = def.recipes.length;
     if (!n) return -1;
     if (mm.craft) return mm.craft.ri;
-    const seen = new Set(Object.values(mm.seenIn ?? {}));
-    if (seen.size) return def.recipes.findIndex((r) => Object.keys(r.in).every((k) => seen.has(k)));
-    return mm.made > 0 ? ((mm.rrRecipe - 1) % n + n) % n : -1;
+    const io = this.game.view.machineIO(mm).filter((c) => !c.planned && c.item);
+    const ins = new Set([...Object.values(mm.seenIn ?? {}), ...io.filter((c) => c.io === 'in').map((c) => c.item!), ...Object.keys(mm.inBuf).filter((t) => mm.inBuf[t] > 0)]);
+    const outs = new Set([...Object.keys(mm.outBuf).filter((t) => mm.outBuf[t] > 0), ...Object.values(mm.seenOut ?? {})]);
+    const byOut = def.recipes.findIndex((r) => Object.keys(r.out).some((k) => outs.has(k)));
+    if (byOut >= 0) return byOut;
+    const byIn = def.recipes.findIndex((r) => Object.keys(r.in).every((k) => ins.has(k)));
+    if (byIn >= 0) return byIn;
+    if (mm.made > 0) return ((mm.rrRecipe - 1) % n + n) % n;
+    return n === 1 ? 0 : -1;
   }
 
   private static rate(x: number): string {
@@ -1921,23 +1924,33 @@ export class Hud implements GestureHandlers {
     else text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(shown))}" alt=""> ${esc(item(outOf(shown)).name.toLowerCase())}</small>`;
     const btn = h('button', `plan-btn${this.planOpen ? ' open' : ''}`, `<span class="plan-auto">Auto</span><span class="plan-txt">${this.planOpen ? '<b>Prévoir les débits pour…</b>' : text}</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${this.planOpen ? 'M3 10 L8 5 L13 10' : 'M3 6 L8 11 L13 6'}"/></svg>`);
     btn.setAttribute('aria-expanded', String(this.planOpen));
-    btn.onclick = () => { this.planOpen = !this.planOpen; this.refreshSheet(); };
+    btn.onclick = () => { this.planOpen = !this.planOpen; this.refreshSheet(true); };
     wrap.append(btn);
     if (this.planOpen) {
       const list = h('div', 'plan-list');
       list.append(h('p', 'plan-info', 'La machine reste en auto : elle fabrique selon ce qu’on lui apporte. Choisir une recette sert seulement à prévoir ses débits ici.'));
       const clear = h('button', `plan-row${mm.plan === undefined ? ' on' : ''}`, `<span class="plan-ins"></span><b>Selon ce qui arrive</b><small></small>`);
-      clear.onclick = () => { g.setPlan(mm, undefined); this.planOpen = false; this.refreshSheet(); };
+      clear.onclick = () => { g.setPlan(mm, undefined); this.planOpen = false; this.refreshSheet(true); };
       list.append(clear);
       def.recipes.forEach((r, i) => {
         if (!r || !Object.keys(r.out).length) return;
         const o = Object.keys(r.out)[0];
         const ins = Object.keys(r.in).map((k) => `<img src="${this.itemIcons.get(k)}" alt="">`).join('');
         const row = h('button', `plan-row${mm.plan === i ? ' on' : ''}`, `<span class="plan-ins">${ins}</span><img class="plan-out" src="${this.itemIcons.get(o)}" alt=""><b>${esc(item(o).name)}</b><small>${Hud.rate(r.out[o] / r.time)} /s</small>`);
-        row.onclick = () => { g.setPlan(mm, i); this.planOpen = false; this.refreshSheet(); };
+        row.onclick = () => { g.setPlan(mm, i); this.planOpen = false; this.refreshSheet(true); };
         list.append(row);
       });
       wrap.append(list);
+      // Toucher ailleurs dans la fenêtre referme la liste (sans rien faire d'autre).
+      const outside = (ev: PointerEvent) => {
+        if (!wrap.isConnected) { window.removeEventListener('pointerdown', outside, true); return; }
+        if (wrap.contains(ev.target as Node)) return;
+        window.removeEventListener('pointerdown', outside, true);
+        ev.stopPropagation(); ev.preventDefault();
+        this.planOpen = false;
+        this.refreshSheet(true);
+      };
+      setTimeout(() => window.addEventListener('pointerdown', outside, true), 0);
     }
     return wrap;
   }
@@ -2630,12 +2643,13 @@ export class Hud implements GestureHandlers {
   }
 
   /** Reconstruit la feuille ouverte (livraisons en cours), en gardant le défilement. */
-  private refreshSheet(): void {
+  private refreshSheet(force = false): void {
     const back = this.overlay, build = this.sheetBuild;
     if (!back || !build) return;
     const sheet = back.firstElementChild as HTMLElement;
     // Pas pendant qu'on la tire vers le bas : le doigt perdrait son élément (et la fin du geste).
-    if (sheet.dataset.dragging || this.portDragging) { this.sheetDirty = true; return; }
+    // Ni pendant que la liste des recettes est ouverte : elle perdrait son défilement à chaque mise à jour.
+    if (sheet.dataset.dragging || this.portDragging || (this.planOpen && this.sheetKind === 'machine' && !force)) { this.sheetDirty = true; return; }
     const top = sheet.scrollTop;
     sheet.innerHTML = '';
     build(sheet, () => this.closeSheet());
@@ -2644,6 +2658,7 @@ export class Hud implements GestureHandlers {
 
   private closeSheet(): void {
     this.r.rangeOf = null;
+    this.planOpen = false;
     this.overlay?.remove();
     this.overlay = null;
     this.sheetBuild = null;
