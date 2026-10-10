@@ -1003,6 +1003,34 @@ export class Game {
     this.emit({ type: 'factory' });
   }
 
+  /** Recette prévue d'une machine (pour les débits attendus) ; undefined = rien de prévu. La machine reste en auto. */
+  setPlan(m: Machine, ri: number | undefined): void {
+    if (ri === undefined) delete m.plan; else m.plan = ri;
+    this.emit({ type: 'factory' });
+  }
+
+  /** Prévoit une entrée ou une sortie sur un côté d'une machine (case dehors, sans la prendre). */
+  addPort(m: Machine, x: number, y: number, io: 'in' | 'out', item?: string): boolean {
+    if (!this.view.perimeter(m).some((c) => c.x === x && c.y === y)) return false;
+    const rx = x - m.x, ry = y - m.y;
+    const ports = (m.ports ??= []);
+    // Une seule chose par emplacement : on remplace ce qui y était.
+    const i = ports.findIndex((p) => p.rx === rx && p.ry === ry);
+    if (i >= 0) ports.splice(i, 1);
+    // Le même objet n'est prévu qu'à un endroit : on le déplace.
+    if (item) { const j = ports.findIndex((p) => p.io === io && p.item === item); if (j >= 0) ports.splice(j, 1); }
+    ports.push({ rx, ry, io, ...(item ? { item } : {}) });
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  removePort(m: Machine, i: number): void {
+    if (!m.ports?.[i]) return;
+    m.ports.splice(i, 1);
+    if (!m.ports.length) delete m.ports;
+    this.emit({ type: 'factory' });
+  }
+
   /** Les trieurs que recouvre un bâtiment partent (remboursés). */
   private clearPicksUnder(w: number, h: number, x: number, y: number): void {
     const n = this.view.clearPicksUnder(w, h, x, y);

@@ -259,6 +259,33 @@ test('foreuse → four à charbon → Noyau : la mission du palier avance', () =
   assert(four.made > 0, `le four n'a rien fabriqué (état ${four.status}, entrées ${JSON.stringify(four.inBuf)})`);
   assert((g.palierDone.lingot_fer ?? 0) > 0 && g.palierProgress() > 0, `mission : ${JSON.stringify(g.palierDone)}`);
 });
+test('fiche machine : entrées et sorties vues, sorties prévues sur un côté, recette prévue sauvegardée', () => {
+  const g = new Game('TEST-6P');
+  buildIronLine(g);
+  run(g, 150);
+  fuelAll(g);
+  run(g, 60);
+  const four = [...g.factory.machines.values()].find((m) => m.type === 'four')!;
+  const io = g.view.machineIO(four);
+  const ins = io.filter((c) => c.io === 'in' && !c.planned).map((c) => c.item).sort().join();
+  const outs = io.filter((c) => c.io === 'out' && !c.planned).map((c) => c.item).join();
+  assert(ins === 'charbon,fer' && outs === 'lingot_fer', `vu : entrées ${ins}, sorties ${outs}`);
+  assert(io.every((c) => c.side === (c.io === 'in' ? 'left' : 'right')), `côtés : ${JSON.stringify(io)}`);
+  assert(!g.addPort(four, four.x, four.y, 'out'), 'une sortie prévue dans le bâtiment');
+  assert(!g.addPort(four, four.x - 1, four.y - 1, 'out'), 'un coin n’est pas un côté');
+  assert(g.addPort(four, four.x, four.y - 1, 'out', 'lingot_fer'), 'sortie prévue en haut');
+  assert(g.addPort(four, four.x + 1, four.y - 1, 'out', 'lingot_fer') && four.ports!.length === 1 && four.ports![0].rx === 1, 'le même objet est déplacé, pas doublé');
+  const planned = g.view.machineIO(four).filter((c) => c.planned);
+  assert(planned.length === 1 && planned[0].side === 'top' && planned[0].port === 0, `prévue : ${JSON.stringify(planned)}`);
+  assert(!g.factory.beltAt(four.x + 1, four.y - 1), 'une sortie prévue ne prend pas de case');
+  g.setPlan(four, 0);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  const f2 = [...g2.factory.machines.values()].find((m) => m.type === 'four')!;
+  assert(f2.plan === 0 && f2.ports?.length === 1 && Object.values(f2.seenIn ?? {}).includes('fer'), `rechargé : ${JSON.stringify({ plan: f2.plan, ports: f2.ports, seen: f2.seenIn })}`);
+  g2.removePort(f2, 0);
+  assert(!f2.ports, 'sortie prévue retirée');
+});
 test('sans charbon, le four attend', () => {
   const g = new Game('TEST-7');
   g.money = 10000;

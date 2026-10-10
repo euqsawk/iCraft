@@ -57,6 +57,8 @@ export type Preview =
   | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
   | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number; module?: boolean }
+  /** On glisse une entrée ou une sortie vers un côté de la machine : ses emplacements, et celui visé. */
+  | { kind: 'ports'; id: number; io: 'in' | 'out'; slot: { x: number; y: number } | null }
   | null;
 
 export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number } | { kind: 'robot' } | null;
@@ -1059,6 +1061,31 @@ export class GameRenderer {
       // Liaison de côté : la machine voisine dépose sur ce tapis.
       for (const fd of b.feeds ?? []) if (fd !== back && f.machineAt(b.x + DX[fd], b.y + DY[fd])) port(b, fd, false);
     }
+    // Entrées et sorties prévues (pas encore de tapis) : un chevron dans une pastille, sur le bord de la machine.
+    for (const m of f.machines.values()) {
+      if (!m.ports?.length) continue;
+      const per = f.perimeter(m);
+      for (const p of m.ports) {
+        const x = m.x + p.rx, y = m.y + p.ry;
+        if (f.beltAt(x, y)) continue;
+        const c = per.find((q) => q.x === x && q.y === y);
+        if (!c) continue;
+        this.drawPortBadge(g, c.x, c.y, c.d, p.io === 'in', 1);
+      }
+    }
+  }
+
+  /** Une pastille sur le bord d'une machine, côté case (x, y) : chevron vers la machine (entrée) ou vers dehors (sortie). */
+  private drawPortBadge(g: Graphics, x: number, y: number, d: number, into: boolean, alpha: number, ring?: number): void {
+    const ax = DX[d], ay = DY[d], px = -ay, py = ax;
+    const ex = (x + 0.5 - ax * 0.5) * CELL, ey = (y + 0.5 - ay * 0.5) * CELL;
+    const color = into ? PALETTE.coral : PALETTE.green;
+    g.circle(ex, ey, 7.5).fill({ color: 0xffffff, alpha }).stroke({ width: 2, color, alpha });
+    if (ring) g.circle(ex, ey, 11).stroke({ width: 3, color: ring });
+    // Entrée : la pointe vers la machine (contre la direction « dehors »).
+    const s = into ? -1 : 1;
+    g.moveTo(ex - ax * 2 * s + px * 3.5, ey - ay * 2 * s + py * 3.5).lineTo(ex + ax * 2 * s, ey + ay * 2 * s).lineTo(ex - ax * 2 * s - px * 3.5, ey - ay * 2 * s - py * 3.5)
+      .stroke({ width: 2.4, color, alpha, cap: 'round', join: 'round' });
   }
 
   private drawItems(): void {
@@ -1667,7 +1694,20 @@ export class GameRenderer {
     const g = this.overlay;
     g.clear();
     const pv = this.preview;
-    if (pv?.kind === 'cable') {
+    if (pv?.kind === 'ports') {
+      const m = this.game.view.machines.get(pv.id);
+      if (m) {
+        for (const c of this.game.view.perimeter(m)) {
+          const hot = !!pv.slot && pv.slot.x === c.x && pv.slot.y === c.y;
+          const ex = (c.x + 0.5 - DX[c.d] * 0.5) * CELL, ey = (c.y + 0.5 - DY[c.d] * 0.5) * CELL;
+          if (hot) this.drawPortBadge(g, c.x, c.y, c.d, pv.io === 'in', 1, PALETTE.coral);
+          else {
+            dashedPolyline(g, Array.from({ length: 13 }, (_, i) => ({ x: ex + Math.cos(i / 12 * Math.PI * 2) * 8, y: ey + Math.sin(i / 12 * Math.PI * 2) * 8 })), 3, 3);
+            g.stroke({ width: 2, color: PALETTE.ink, alpha: 0.45 });
+          }
+        }
+      }
+    } else if (pv?.kind === 'cable') {
       const cells = pv.tracer.cells;
       if (cells.length) {
         // La portée du câble tracé, et les machines qu'il alimentera (cerclées de jaune).

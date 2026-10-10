@@ -1651,6 +1651,7 @@ export class Hud implements GestureHandlers {
   openMachine(m: Machine): void {
     this.closePopover();
     this.invSel = null;
+    if (this.machineId !== m.id) this.planOpen = false;
     this.machineId = m.id;
     this.openSheet((sheet, close) => {
       const g = this.game;
@@ -1810,56 +1811,59 @@ export class Hud implements GestureHandlers {
         sheet.append(acts);
         return;
       }
+      sheet.classList.add('mach-sheet');
       sheet.append(this.sheetHead(title, esc(status), close));
-      sheet.append(this.flowCard(mm));
-      // Liaisons directes avec des machines collées
-      const links = (mm.links ?? []).map((id) => g.view.machines.get(id)).filter((x): x is Machine => !!x);
-      if (links.length) {
-        const lc = h('div', 'card');
-        lc.innerHTML = '<p class="muted">Reliée directement (machines collées)</p>';
-        for (const to of links) {
-          const row = h('div', 'row link-row', `<span>→ ${esc(machineDef(to.type).name)}</span>`);
-          const cut = h('button', 'btn', 'Couper');
-          cut.onclick = () => { g.unlinkMachines(mm, to.id); this.refreshSheet(); };
-          row.append(cut);
-          lc.append(row);
-        }
-        sheet.append(lc);
-      }
-      // Charbon et recettes
-      const top = h('div', 'card mrec');
-      top.innerHTML = `${def.coal ? this.gauge('Carburant', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb) : ''}${g.view.powerUse(mm) ? this.powerCard(mm) : ''}${this.recipesHtml(def, mm)}`;
+      // Liste déroulante : la machine reste en auto, une recette choisie sert à prévoir les débits.
+      if (def.kind === 'crafter' && def.recipes.length) sheet.append(this.planSelect(mm));
       if (mm.type === 'raffinerie') {
         const cur = mm.choice ?? 'plastique';
-        const row = h('div', 'row');
+        const row = h('div', 'mrow seg-row', '<span>Le pétrole donne</span>');
         for (const [id, label] of [['plastique', 'Plastique'], ['carburant', 'Carburant']]) {
           const b = h('button', `btn ${cur === id ? 'primary' : ''}`, label);
           b.onclick = () => { g.view.setChoice(mm, id); this.refreshSheet(); };
           row.append(b);
         }
-        top.append(row);
-        if (cur === 'carburant') top.append(h('p', 'muted small', 'Elle remplit d’abord sa propre case carburant avec ce qu’elle produit : plus besoin de la recharger.'));
+        sheet.append(row);
       }
-      sheet.append(top);
-      // Ce que la machine contient : en attente, et prêt à sortir
-      const cellsOf = (buf: Record<string, number>) => {
-        const c: ({ t: string; n: number } | null)[] = Object.entries(buf).filter(([, n]) => n > 0).map(([t, n]) => ({ t, n }));
-        while (c.length < 6) c.push(null);
-        return c;
+      sheet.append(this.machineDiagram(mm));
+      // Énergie, sur une ligne
+      if (g.view.powered(mm)) {
+        sheet.append(h('div', 'mrow', `<span class="mrow-ico">${ICONS.cable}</span><span>Au courant</span><b>${kW(g.view.powerUse(mm))}</b>`));
+      } else if (def.coal) {
+        const gauge = h('div', 'mrow mgauge', this.gauge('Carburant', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb));
+        sheet.append(gauge);
+      }
+      // Ce que la machine contient, en petit : toucher une pile la rend au robot.
+      const slots = (buf: Record<string, number>, which: 'in' | 'out', min: number) => {
+        const list = Object.entries(buf).filter(([, n]) => n > 0);
+        let html = list.map(([t, n]) => `<button class="mslot" data-which="${which}" data-item="${t}" aria-label="${esc(item(t).name)} : ${n}"><img src="${this.itemIcons.get(t)}" alt=""><b>${n}</b></button>`).join('');
+        for (let i = list.length; i < min; i++) html += '<span class="mslot empty"></span>';
+        return html;
       };
-      const box = h('div', 'card');
-      box.innerHTML = `${def.kind === 'crafter' ? `<p class="muted">En attente</p>${this.gridHtml(cellsOf(mm.inBuf), 'min', 6)}` : ''}
-        <p class="muted">Prêt à sortir · touche une pile pour la reprendre</p>${this.gridHtml(cellsOf(mm.outBuf), 'mout', 6)}`;
-      this.wireGrid(box, mm);
-      const sel = this.invSel;
-      if (sel && sel.side !== 'robot') { const bar = this.invBar(mm); if (bar) box.append(bar); }
-      sheet.append(box);
-      // Depuis l'inventaire du robot
-      const dep = h('div', 'card');
-      dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · charbon et ingrédients</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
-      this.wireGrid(dep, mm);
-      if (sel && sel.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
-      sheet.append(dep);
+      const inv = h('div', 'minv', `${def.kind === 'crafter' ? `<div class="minv-g"><small>En attente</small><div class="minv-s">${slots(mm.inBuf, 'in', 2)}</div></div><span class="minv-sep"></span>` : ''}
+        <div class="minv-g"><small>Prêt à sortir</small><div class="minv-s">${slots(mm.outBuf, 'out', 1)}</div></div>
+        <span class="minv-hint">${[...Object.values(mm.inBuf), ...Object.values(mm.outBuf)].some((n) => n > 0) ? 'Touche une pile<br>pour la reprendre' : 'Vide'}</span>`);
+      inv.querySelectorAll<HTMLButtonElement>('.mslot[data-item]').forEach((b) => {
+        b.onclick = () => {
+          const which = b.dataset.which as 'in' | 'out', t = b.dataset.item!;
+          const n = g.machineToRobot(mm, which, t, (which === 'in' ? mm.inBuf : mm.outBuf)[t] ?? 0);
+          if (!n) this.toast(`L’inventaire de ${g.look.name} est plein`, 'warn');
+          this.refreshSheet();
+        };
+      });
+      sheet.append(inv);
+      // Liaisons directes avec des machines collées
+      const links = (mm.links ?? []).map((id) => g.view.machines.get(id)).filter((x): x is Machine => !!x);
+      for (const to of links) {
+        const row = h('div', 'mrow', `<span>Reliée directement à ${esc(machineDef(to.type).name.toLowerCase())}</span>`);
+        const cut = h('button', 'btn small', 'Couper');
+        cut.onclick = () => { g.unlinkMachines(mm, to.id); this.refreshSheet(); };
+        row.append(cut);
+        sheet.append(row);
+      }
+      const give = h('button', 'btn primary big mgive', `${ICONS.robot ?? ''}Donner depuis ${esc(g.look.name)}`);
+      give.onclick = () => this.openGive(mm);
+      sheet.append(give);
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(mm); };
@@ -1870,48 +1874,260 @@ export class Hud implements GestureHandlers {
     this.sheetKind = 'machine';
   }
 
-  /** Débit réel d'une machine : ce qui entre et ce qui sort, par seconde, avec le maximum possible. */
-  private flowCard(m: Machine): HTMLElement {
-    const g = this.game, def = machineDef(m.type);
-    const real = g.view.flowOf(m);
-    // Le maximum : la recette en cours (ou la dernière), et le charbon brûlé en travaillant.
-    const maxIn: Record<string, number> = {}, maxOut: Record<string, number> = {};
-    if (def.kind === 'drill' && m.ore) maxOut[m.ore] = m.rate ?? 0;
-    if (def.kind === 'crafter' && def.recipes.length) {
-      const ri = m.craft ? m.craft.ri : ((m.rrRecipe - 1) % def.recipes.length + def.recipes.length) % def.recipes.length;
-      const rec = def.recipes[ri];
-      if (m.craft || m.made > 0 || Object.keys(real.in).length) {
-        for (const [k, v] of Object.entries(rec.in)) maxIn[k] = v / rec.time;
-        for (const [k, v] of Object.entries(rec.out)) maxOut[k] = v / rec.time;
-      }
+  /** La liste déroulante ouverte (recette prévue) ; refermée en changeant de machine. */
+  private planOpen = false;
+  /** Une entrée ou une sortie est en train d'être glissée vers la carte (la fenêtre attend). */
+  private portDragging = false;
+
+  /** La recette des débits attendus : celle prévue, sinon celle en cours, sinon celle des objets déjà reçus, sinon la première. */
+  private ratesRecipe(mm: Machine): number {
+    const def = machineDef(mm.type), n = def.recipes.length;
+    if (!n) return -1;
+    if (mm.plan !== undefined && def.recipes[mm.plan]) return mm.plan;
+    if (mm.craft) return mm.craft.ri;
+    const seen = new Set(Object.values(mm.seenIn ?? {}));
+    if (seen.size) {
+      const i = def.recipes.findIndex((r) => Object.keys(r.in).every((k) => seen.has(k)));
+      if (i >= 0) return i;
     }
-    // Ce qu'elle brûle : le carburant s'il y en a dans sa case (ou s'il est seul à passer), sinon le charbon.
-    const fuelItem = def.coal && ((m.carb ?? 0) > 0 || ((real.in.carburant ?? 0) > 0 && !(real.in.charbon ?? 0) && !def.recipes.some((x) => x.in.carburant))) ? 'carburant' : 'charbon';
-    if (def.coal && !g.view.powered(m)) maxIn[fuelItem] = (maxIn[fuelItem] ?? 0) + 1 / (RULES.coalMachineSeconds * (fuelItem === 'carburant' ? RULES.carburantMult : 1));
-    const rate = (x: number) => (x < 0.005 ? '0' : x >= 10 ? x.toFixed(1).replace('.', ',') : x.toFixed(2).replace('.', ','));
-    const chevron = (color: string) => `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="${color}" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3.5 L10.5 8 L6 12.5"/></svg>`;
-    const rows = (side: 'in' | 'out') => {
-      const r = side === 'in' ? real.in : real.out, mx = side === 'in' ? maxIn : maxOut;
-      const keys = [...new Set([...Object.keys(mx), ...Object.keys(r)])]
-        .sort((a, b) => Number(a === fuelItem) - Number(b === fuelItem));
-      return keys.map((k) => {
-        const max = mx[k] ?? 0;
-        // La mesure peut dépasser d'un cheveu le maximum (bord de la fenêtre) : on la borne.
-        const v = max > 0 ? Math.min(r[k] ?? 0, max) : r[k] ?? 0;
-        const pct = max > 0 ? Math.min(100, (v / max) * 100) : v > 0 ? 100 : 0;
-        const fuel = side === 'in' && def.coal && isFuel(k) && !def.recipes.some((x) => x.in[k]);
-        return `<div class="flow-row ${side}">
-          <span class="flow-badge">${chevron(side === 'in' ? '#F47C64' : '#2E6B51')}</span>
-          <div class="flow-main"><small>${side === 'in' ? 'Entrée' : 'Sortie'}${fuel ? ' · carburant' : ''}</small><span class="flow-item"><img src="${this.itemIcons.get(k)}" alt="">${esc(item(k).name)}</span></div>
-          <div class="flow-rate"><b>${rate(v)}</b><span>/ s</span>${max > 0 ? `<small>max ${rate(max)}</small>` : ''}</div>
-          <span class="flow-bar"><span style="width:${pct}%"></span></span>
-        </div>`;
-      }).join('');
-    };
-    const card = h('div', 'card flow');
-    const body = rows('in') + rows('out');
-    card.innerHTML = `<p class="muted">Débit réel · mesuré sur les ${FLOW_WINDOW} dernières secondes</p>${body || '<p class="muted small">Rien ne passe pour l’instant.</p>'}`;
-    return card;
+    if (mm.made > 0) return ((mm.rrRecipe - 1) % n + n) % n;
+    return 0;
+  }
+
+  /** La recette que la machine fait vraiment (en auto), si on le sait. */
+  private autoRecipe(mm: Machine): number {
+    const def = machineDef(mm.type), n = def.recipes.length;
+    if (!n) return -1;
+    if (mm.craft) return mm.craft.ri;
+    const seen = new Set(Object.values(mm.seenIn ?? {}));
+    if (seen.size) return def.recipes.findIndex((r) => Object.keys(r.in).every((k) => seen.has(k)));
+    return mm.made > 0 ? ((mm.rrRecipe - 1) % n + n) % n : -1;
+  }
+
+  private static rate(x: number): string {
+    return x < 0.005 ? '0' : x >= 10 ? x.toFixed(1).replace('.', ',') : x.toFixed(2).replace('.', ',').replace(/0$/, '');
+  }
+
+  /** « Auto · fait des engrenages » ; ouverte, la liste des recettes pour prévoir les débits. */
+  private planSelect(mm: Machine): HTMLElement {
+    const g = this.game, def = machineDef(mm.type);
+    const wrap = h('div', 'plan');
+    const auto = this.autoRecipe(mm);
+    const shown = this.ratesRecipe(mm);
+    const outOf = (ri: number) => Object.keys(def.recipes[ri].out)[0];
+    let text: string;
+    if (mm.plan !== undefined) text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(mm.plan))}" alt=""> ${esc(item(outOf(mm.plan)).name.toLowerCase())}</small>`;
+    else if (auto >= 0) text = `<b>fait des <img src="${this.itemIcons.get(outOf(auto))}" alt=""> ${esc(item(outOf(auto)).plural)}</b>`;
+    else text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(shown))}" alt=""> ${esc(item(outOf(shown)).name.toLowerCase())}</small>`;
+    const btn = h('button', `plan-btn${this.planOpen ? ' open' : ''}`, `<span class="plan-auto">Auto</span><span class="plan-txt">${this.planOpen ? '<b>Prévoir les débits pour…</b>' : text}</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${this.planOpen ? 'M3 10 L8 5 L13 10' : 'M3 6 L8 11 L13 6'}"/></svg>`);
+    btn.setAttribute('aria-expanded', String(this.planOpen));
+    btn.onclick = () => { this.planOpen = !this.planOpen; this.refreshSheet(); };
+    wrap.append(btn);
+    if (this.planOpen) {
+      const list = h('div', 'plan-list');
+      list.append(h('p', 'plan-info', 'La machine reste en auto : elle fabrique selon ce qu’on lui apporte. Choisir une recette sert seulement à prévoir ses débits ici.'));
+      const clear = h('button', `plan-row${mm.plan === undefined ? ' on' : ''}`, `<span class="plan-ins"></span><b>Selon ce qui arrive</b><small></small>`);
+      clear.onclick = () => { g.setPlan(mm, undefined); this.planOpen = false; this.refreshSheet(); };
+      list.append(clear);
+      def.recipes.forEach((r, i) => {
+        if (!r || !Object.keys(r.out).length) return;
+        const o = Object.keys(r.out)[0];
+        const ins = Object.keys(r.in).map((k) => `<img src="${this.itemIcons.get(k)}" alt="">`).join('');
+        const row = h('button', `plan-row${mm.plan === i ? ' on' : ''}`, `<span class="plan-ins">${ins}</span><img class="plan-out" src="${this.itemIcons.get(o)}" alt=""><b>${esc(item(o).name)}</b><small>${Hud.rate(r.out[o] / r.time)} /s</small>`);
+        row.onclick = () => { g.setPlan(mm, i); this.planOpen = false; this.refreshSheet(); };
+        list.append(row);
+      });
+      wrap.append(list);
+    }
+    return wrap;
+  }
+
+  /**
+   * La machine au milieu, ses entrées et sorties autour, là où elles se branchent, avec leurs débits.
+   * Ce qui manque encore (d'après la recette) attend en pointillés : on le glisse sur un côté du bâtiment.
+   */
+  private machineDiagram(mm: Machine): HTMLElement {
+    const g = this.game, f = g.view, def = machineDef(mm.type);
+    const W = 340, M = 80, CW = 118, CH = 52;
+    const box = h('div', 'mdiag');
+    const inner = h('div', 'mdiag-in');
+    box.append(inner);
+    const real = f.flowOf(mm);
+    const ri = this.ratesRecipe(mm), rec = ri >= 0 ? def.recipes[ri] : null;
+    const maxIn: Record<string, number> = {}, maxOut: Record<string, number> = {};
+    if (rec) {
+      for (const [k, v] of Object.entries(rec.in)) maxIn[k] = v / rec.time;
+      for (const [k, v] of Object.entries(rec.out)) maxOut[k] = v / rec.time;
+    }
+    if (def.kind === 'drill' && mm.ore) maxOut[mm.ore] = mm.rate ?? 0;
+    type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number };
+    const io = f.machineIO(mm);
+    const entries: Entry[] = io.map((c) => ({ side: c.side, io: c.io, item: c.item, kind: c.planned ? 'planned' : 'belt', port: c.port }));
+    const has = (k: string, dir: 'in' | 'out') => entries.some((e) => e.io === dir && e.item === k);
+    for (const k of Object.keys(maxIn)) if (!has(k, 'in')) entries.push({ side: 'left', io: 'in', item: k, kind: 'ghost' });
+    for (const k of Object.keys(maxOut)) if (!has(k, 'out')) entries.push({ side: 'right', io: 'out', item: k, kind: 'ghost' });
+    // La hauteur suit ce qu'il y a autour : pas de vide en haut ni en bas sans raison.
+    const count = (side: Entry['side']) => entries.filter((e) => e.side === side).length;
+    const stack = (n: number) => n * CH + Math.max(0, n - 1) * 6;
+    const topH = count('top') ? CH + 26 : 0, botH = count('bottom') ? CH + 26 : 0;
+    const midH = Math.max(M + 16, stack(count('left')), stack(count('right')));
+    const H = topH + midH + botH;
+    const mx = (W - M) / 2, my = topH + (midH - M) / 2;
+    inner.style.height = `${H}px`;
+    // La machine
+    const icon = this.machineIcons.get(mm.type);
+    const mEl = h('div', 'mdiag-m', icon ? `<img src="${icon}" alt="${esc(def.name)}">` : '');
+    mEl.style.left = `${mx}px`; mEl.style.top = `${my}px`;
+    inner.append(mEl);
+    const place = (el: HTMLElement, x: number, y: number) => { el.style.left = `${x}px`; el.style.top = `${y}px`; inner.append(el); };
+    (['left', 'right', 'top', 'bottom'] as const).forEach((side) => {
+      const list = entries.filter((e) => e.side === side);
+      list.forEach((e, i) => {
+        let x: number, y: number;
+        if (side === 'left' || side === 'right') {
+          const total = list.length * CH + (list.length - 1) * 6;
+          x = side === 'left' ? 0 : W - CW;
+          y = topH + midH / 2 - total / 2 + i * (CH + 6);
+        } else {
+          const total = list.length * CW + (list.length - 1) * 8;
+          x = W / 2 - total / 2 + i * (CW + 8);
+          y = side === 'top' ? 2 : H - CH - 2;
+        }
+        // Le fil jusqu'au bord de la machine, et le chevron sur ce bord.
+        const cls = `mdiag-wire ${e.io} ${e.kind}`;
+        let cx: number, cy: number;
+        if (side === 'left' || side === 'right') {
+          cy = Math.max(my + 12, Math.min(my + M - 12, y + CH / 2));
+          const x0 = side === 'left' ? CW : mx + M, x1 = side === 'left' ? mx : W - CW;
+          const wire = h('div', `${cls} h`); wire.style.width = `${x1 - x0}px`; place(wire, x0, cy - 2);
+          cx = side === 'left' ? mx : mx + M;
+        } else {
+          cx = Math.max(mx + 12, Math.min(mx + M - 12, x + CW / 2));
+          const y0 = side === 'top' ? CH + 2 : my + M, y1 = side === 'top' ? my : H - CH - 2;
+          const wire = h('div', `${cls} v`); wire.style.height = `${y1 - y0}px`; place(wire, cx - 2, y0);
+          cy = side === 'top' ? my : my + M;
+        }
+        const out = side === 'left' ? 0 : side === 'right' ? 180 : side === 'top' ? 90 : 270;
+        const rot = e.io === 'in' ? out : (out + 180) % 360;
+        const chev = h('span', `mdiag-chev ${e.io} ${e.kind}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`);
+        place(chev, cx - 10, cy - 10);
+        // La carte de l'entrée ou de la sortie
+        const k = e.item;
+        const max = k ? (e.io === 'in' ? maxIn[k] : maxOut[k]) : undefined;
+        const got = k ? (e.io === 'in' ? real.in[k] : real.out[k]) ?? 0 : 0;
+        const name = k ? esc(item(k).name) : e.io === 'in' ? 'Tapis relié' : 'Sortie';
+        const ico = k ? `<img src="${this.itemIcons.get(k)}" alt="">` : '';
+        let body: string;
+        if (e.kind === 'belt') {
+          body = `<span class="mc-rate"><b>${k ? Hud.rate(got) : '—'}</b><small>/s</small>${max !== undefined ? `<small class="mc-max">max ${Hud.rate(max)}</small>` : ''}</span>
+            ${max ? `<span class="mc-bar"><span style="width:${Math.min(100, (got / max) * 100)}%"></span></span>` : ''}`;
+        } else if (e.kind === 'planned') {
+          body = `<span class="mc-rate"><small>prévue</small>${max !== undefined ? `<small class="mc-max">max ${Hud.rate(max)}</small>` : ''}</span>`;
+        } else {
+          body = `<span class="mc-rate"><b>${max !== undefined ? Hud.rate(max) : '—'}</b><small>/s${e.io === 'out' ? ' max' : ''}</small></span>`;
+        }
+        const chip = h('div', `mchip ${e.io} ${e.kind}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span>${body}`);
+        if (e.kind === 'planned' && e.port !== undefined) {
+          const x0 = h('button', 'mc-x', '×');
+          x0.setAttribute('aria-label', 'Retirer');
+          const pi = e.port;
+          x0.onclick = (ev) => { ev.stopPropagation(); g.removePort(mm, pi); this.refreshSheet(); };
+          chip.append(x0);
+        }
+        if (e.kind !== 'belt') this.bindPortDrag(chip, mm, e.io, k);
+        place(chip, x, y);
+      });
+    });
+    if (entries.some((e) => e.kind === 'ghost')) box.append(h('p', 'mdiag-hint', 'Glisse une entrée ou une sortie sur un côté du bâtiment pour la prévoir : un chevron, sans prendre de case.'));
+    else if (io.length) box.append(h('p', 'mdiag-hint', `Débit mesuré sur les ${FLOW_WINDOW} dernières secondes.`));
+    return box;
+  }
+
+  /** Glisser une entrée ou une sortie de la fenêtre jusqu'à un côté du bâtiment, sur la carte. */
+  private bindPortDrag(el: HTMLElement, mm: Machine, io: 'in' | 'out', itemId?: string): void {
+    el.addEventListener('pointerdown', (e) => {
+      if ((e.target as HTMLElement).closest('.mc-x')) return;
+      const sx = e.clientX, sy = e.clientY;
+      let started = false, ghost: HTMLElement | null = null;
+      let slot: { x: number; y: number } | null = null;
+      try { el.setPointerCapture(e.pointerId); } catch { /* rien */ }
+      const begin = () => {
+        started = true;
+        this.portDragging = true;
+        if (this.overlay) this.overlay.style.visibility = 'hidden';
+        ghost = el.cloneNode(true) as HTMLElement;
+        ghost.classList.add('mchip-drag');
+        this.root.append(ghost);
+        this.r.focusOn(mm.x + mm.w / 2, mm.y + mm.h / 2, Math.max(this.r.camera.zoom, 1.6), 0.35);
+        this.showBubble(window.innerWidth / 2, Math.min(window.innerHeight * 0.36, 300), 'Lâche-la sur un côté du bâtiment', false);
+      };
+      const move = (ev: PointerEvent) => {
+        if (!started) { if (Math.hypot(ev.clientX - sx, ev.clientY - sy) < 8) return; begin(); }
+        if (ghost) ghost.style.transform = `translate(${ev.clientX - 52}px, ${ev.clientY - 70}px) rotate(-4deg)`;
+        slot = this.portSlotAt(mm, ev.clientX, ev.clientY - 40);
+        this.r.preview = { kind: 'ports', id: mm.id, io, slot };
+      };
+      const end = () => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', end);
+        window.removeEventListener('pointercancel', end);
+        if (!started) return;
+        ghost?.remove();
+        this.r.preview = null;
+        this.bubble.classList.add('hidden');
+        this.portDragging = false;
+        if (slot && this.game.addPort(mm, slot.x, slot.y, io, itemId)) this.toast(io === 'in' ? 'Entrée prévue : trace un tapis jusqu’au chevron' : 'Sortie prévue : trace un tapis depuis le chevron', 'good');
+        if (this.overlay) this.overlay.style.visibility = '';
+        this.refreshSheet();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', end);
+      window.addEventListener('pointercancel', end);
+    });
+  }
+
+  /** L'emplacement (case dehors, sur un côté) le plus proche du doigt, s'il est assez près. */
+  private portSlotAt(mm: Machine, sx: number, sy: number): { x: number; y: number } | null {
+    const w = this.worldAt(sx, sy);
+    let best: { x: number; y: number } | null = null, bd = 1.1;
+    for (const c of this.game.view.perimeter(mm)) {
+      const ex = c.x + 0.5 - DX[c.d] * 0.3, ey = c.y + 0.5 - DY[c.d] * 0.3;
+      const d = Math.hypot(w.x - ex, w.y - ey);
+      if (d < bd) { bd = d; best = { x: c.x, y: c.y }; }
+    }
+    return best;
+  }
+
+  /** Donner à une machine depuis l'inventaire du robot : ce qui lui sert est en clair. */
+  private openGive(mm: Machine): void {
+    const g = this.game;
+    this.invSel = null;
+    this.openSheet((sheet, close) => {
+      const def = machineDef(mm.type);
+      if (!g.view.machines.has(mm.id)) { close(); return; }
+      const back = () => { close(); this.openMachine(mm); };
+      sheet.append(this.sheetHead(`Donner ${def.name.match(/^[AEÉIOU]/) ? 'à l’' : 'au '}${def.name.toLowerCase()}`, `Depuis l’inventaire de ${esc(g.look.name)} · ce qui lui sert est en clair`, back));
+      const card = h('div', 'card');
+      card.innerHTML = this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0);
+      this.wireGrid(card, mm);
+      if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) card.append(bar); }
+      sheet.append(card);
+      const useful = g.robot.inv.slots.map((s2, i) => ({ s: s2, i })).filter((x) => x.s && g.machineAccepts(mm, x.s.t) > 0);
+      const all = h('button', 'btn big', `Tout ce qui lui sert${useful.length ? ` <span class="give-icons">${[...new Set(useful.map((x) => x.s!.t))].map((t) => `<img src="${this.itemIcons.get(t)}" alt="">`).join('')}</span>` : ''}`);
+      all.disabled = !useful.length;
+      all.onclick = () => {
+        let n = 0;
+        for (const x of useful) { const sl = g.robot.inv.slots[x.i]; if (sl) n += g.robotToMachine(mm, x.i, sl.n); }
+        if (n) this.toast(`${n} objet${n > 1 ? 's' : ''} donné${n > 1 ? 's' : ''}`, 'good');
+        back();
+      };
+      sheet.append(all);
+      if (def.coal) sheet.append(h('p', 'muted small', 'Le charbon et le carburant vont dans sa case carburant ; le reste dans ses entrées.'));
+      const ret = h('button', 'btn', 'Retour à la machine');
+      ret.onclick = back;
+      sheet.append(ret);
+    }, true);
+    this.sheetKind = 'machine';
   }
 
   /** La Revente en grand : contenu, passage du gros drone, et dépôt depuis l'inventaire. */
@@ -2428,7 +2644,7 @@ export class Hud implements GestureHandlers {
     if (!back || !build) return;
     const sheet = back.firstElementChild as HTMLElement;
     // Pas pendant qu'on la tire vers le bas : le doigt perdrait son élément (et la fin du geste).
-    if (sheet.dataset.dragging) { this.sheetDirty = true; return; }
+    if (sheet.dataset.dragging || this.portDragging) { this.sheetDirty = true; return; }
     const top = sheet.scrollTop;
     sheet.innerHTML = '';
     build(sheet, () => this.closeSheet());

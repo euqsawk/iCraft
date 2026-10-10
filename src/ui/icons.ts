@@ -6,6 +6,8 @@ export const ICONS = {
   menu: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M3 6H15M3 12H15"/></svg>',
   close: '<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M4 4L14 14M14 4L4 14"/></svg>',
   tapis: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18 V10 Q 4 6 8 6 H18"/></svg>',
+  // Le robot : une tête ronde, une antenne, deux yeux.
+  robot: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="12" height="9" rx="3"/><path d="M10 3 V6 M7.5 10.5 h.01 M12.5 10.5 h.01 M6 18 h8"/></svg>',
   cable: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 L5 12 H10 L9 20 L17 9 H12 Z"/></svg>',
   machine: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><rect x="4" y="4" width="14" height="14" rx="4"/></svg>',
   transport: '<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="11" height="8" rx="2"/><path d="M13 9 H17 L20 12 V15 H13 Z"/><circle cx="6" cy="17" r="2"/><circle cx="16" cy="17" r="2"/></svg>',

@@ -95,10 +95,19 @@ export interface Machine {
   water?: number;
   /** Monte-charge d'un atelier : minuteur des échanges avec les coffres collés. */
   liftT?: number;
+  /** Recette prévue (fenêtre de la machine) : sert seulement à calculer les débits attendus ; la machine reste en auto. */
+  plan?: number;
+  /** Dernier objet reçu par chaque tapis d'entrée, et envoyé par chaque tapis de sortie (clé : case du tapis). */
+  seenIn?: Record<number, string>;
+  seenOut?: Record<number, string>;
+  /** Entrées et sorties prévues sur les bords (case dehors, relative à la machine) : un chevron, sans prendre de case. */
+  ports?: MachinePort[];
   /** Atelier (module) : l'usine rangée dedans, et le côté de son intérieur en cases. */
   inner?: Factory;
   size?: number;
 }
+
+export interface MachinePort { rx: number; ry: number; io: 'in' | 'out'; item?: string }
 
 /** L'intérieur d'un atelier : pas de filons, tout est découvert. */
 const ROOM_WORLD = { patchAt: () => null, isRevealed: () => true } as unknown as World;
@@ -359,6 +368,43 @@ export class Factory {
     let n = 0;
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (this.picks.delete(key(x + i, y + j))) n++;
     return n;
+  }
+
+  /** Les cases autour d'une machine, sur ses côtés (sans les coins) : là où une entrée ou une sortie peut se brancher. */
+  perimeter(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; d: Dir }[] {
+    const out: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; d: Dir }[] = [];
+    const dirOf = (dx: number, dy: number) => ([0, 1, 2, 3] as Dir[]).find((d) => DX[d] === dx && DY[d] === dy)!;
+    for (let i = 0; i < m.w; i++) out.push({ x: m.x + i, y: m.y - 1, side: 'top', d: dirOf(0, -1) });
+    for (let j = 0; j < m.h; j++) out.push({ x: m.x + m.w, y: m.y + j, side: 'right', d: dirOf(1, 0) });
+    for (let i = m.w - 1; i >= 0; i--) out.push({ x: m.x + i, y: m.y + m.h, side: 'bottom', d: dirOf(0, 1) });
+    for (let j = m.h - 1; j >= 0; j--) out.push({ x: m.x - 1, y: m.y + j, side: 'left', d: dirOf(-1, 0) });
+    return out;
+  }
+
+  /**
+   * Les entrées et sorties d'une machine, autour d'elle : tapis branchés (avec le dernier objet passé par là)
+   * et entrées ou sorties prévues (un chevron, pas encore de tapis).
+   */
+  machineIO(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number }[] {
+    this.refresh();
+    const res: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number }[] = [];
+    const outs = new Set(this.outputs.get(m) ?? []);
+    for (const c of this.perimeter(m)) {
+      const b = this.beltAt(c.x, c.y);
+      if (!b) continue;
+      const k = key(c.x, c.y);
+      const nxt = this.nextOf.get(b);
+      const feeds = [b.split, b.split2].some((d) => d !== undefined && this.machineAt(b.x + DX[d], b.y + DY[d]) === m);
+      if ((nxt?.kind === 'machine' && nxt.machine === m) || feeds) res.push({ x: c.x, y: c.y, side: c.side, io: 'in', item: m.seenIn?.[k], planned: false });
+      if (outs.has(b)) res.push({ x: c.x, y: c.y, side: c.side, io: 'out', item: m.seenOut?.[k] ?? this.picks.get(k)?.[0], planned: false });
+    }
+    (m.ports ?? []).forEach((p, i) => {
+      const x = m.x + p.rx, y = m.y + p.ry;
+      if (res.some((r) => r.x === x && r.y === y && r.io === p.io)) return;
+      const c = this.perimeter(m).find((q) => q.x === x && q.y === y);
+      if (c) res.push({ x, y, side: c.side, io: p.io, item: p.item, planned: true, port: i });
+    });
+    return res;
   }
 
   /** La machine (ou le coffre) qui dépose sur ce tapis, s'il part d'elle. */
@@ -1461,6 +1507,7 @@ export class Factory {
           } else if (nxt.kind === 'machine' && this.canAccept(nxt.machine, it.t)) {
             items.shift(); i--;
             if (b.meter) this.meterHit(b, it.t);
+            (nxt.machine.seenIn ??= {})[key(b.x, b.y)] = it.t;
             this.give(nxt.machine, it.t);
           } else {
             it.p = 1;
@@ -1754,6 +1801,7 @@ export class Factory {
         if (rear < RULES.beltGap / span(b)) continue;
       }
       const t = kinds[(m.rrOut + s) % kinds.length];
+      (m.seenOut ??= {})[key(b.x, b.y)] = t;
       buf[t]--;
       if (buf[t] === 0 && (buf === m.inBuf || sends)) delete buf[t];
       const it: BeltItem = { t, p: side ? 0.5 : 0 };
@@ -1783,6 +1831,8 @@ export class Factory {
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
+        ...(m.plan !== undefined ? { plan: m.plan } : {}), ...(m.ports?.length ? { ports: m.ports.map((p) => ({ ...p })) } : {}),
+        ...(m.seenIn ? { seenIn: { ...m.seenIn } } : {}), ...(m.seenOut ? { seenOut: { ...m.seenOut } } : {}),
         ...(m.charge ? { charge: Math.round(m.charge) } : {}),
         ...(m.inner ? { inner: m.inner.serialize(), size: m.size, ore: m.ore, rate: m.rate } : m.ore && this.freeEnergy ? { ore: m.ore, rate: m.rate } : {}),
       })),
@@ -1825,6 +1875,10 @@ export class Factory {
       // Dans un atelier, une foreuse garde le filon d'où elle vient.
       if (sm.ore && !m.ore) { m.ore = sm.ore; m.rate = sm.rate; }
       if (sm.charge) m.charge = sm.charge;
+      if (typeof sm.plan === 'number') m.plan = sm.plan;
+      if (sm.ports?.length) m.ports = sm.ports.filter((p) => p && (p.io === 'in' || p.io === 'out')).map((p) => ({ ...p }));
+      if (sm.seenIn) m.seenIn = { ...sm.seenIn };
+      if (sm.seenOut) m.seenOut = { ...sm.seenOut };
       if (sm.inner) this.makeInner(m, sm.size ?? 20).load(sm.inner);
     }
     this.nextId = Math.max(this.nextId, s.nextId);
@@ -1857,6 +1911,7 @@ export interface FactorySave {
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
     inner?: FactorySave; size?: number; ore?: string; rate?: number; charge?: number;
+    plan?: number; ports?: MachinePort[]; seenIn?: Record<number, string>; seenOut?: Record<number, string>;
   }[];
 }
 

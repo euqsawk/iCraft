@@ -4,7 +4,7 @@ import { item } from '../data/items.ts';
 import type { Game } from '../sim/game.ts';
 import { NODE_ICONS } from './nodeIcons.ts';
 
-const ROW = 128, TOP = 18, TILE = 76;
+const ROW = 124, TOP = 14, TILE = 76, LABEL_H = 38;
 const STAR = '<svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 1 L11.2 6.8 L17 9 L11.2 11.2 L9 17 L6.8 11.2 L1 9 L6.8 6.8 Z" fill="#F47C64"/></svg>';
 const STAR_INK = '<svg width="10" height="10" viewBox="0 0 18 18" aria-hidden="true"><path d="M9 1 L11.2 6.8 L17 9 L11.2 11.2 L9 17 L6.8 11.2 L1 9 L6.8 6.8 Z" fill="#2E3A4B"/></svg>';
 const CHECK = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 6.5 L5 9 L9.5 3.5"/></svg>';
@@ -106,22 +106,47 @@ export class TreeScreen {
     const w = scroll.clientWidth || 390;
     const base = Math.min(w, 460), off = (w - base) / 2;
     const cols = [off + base * 0.185, off + base * 0.5, off + base * 0.815];
-    const top = (row: number) => TOP + row * ROW;
-    const maxRow = Math.max(...br.nodes.map((x) => x.row));
+    // Une ligne par palier (seulement ceux qui ouvrent quelque chose ici) ; un palier trop rempli prend plusieurs lignes
+    // et pousse les suivants vers le bas. Chaque nœud garde sa colonne si elle est libre.
+    const pos = new Map<string, { col: number; y: number }>();
+    let html = '';
+    let y = TOP;
+    const paliers = [...new Set(br.nodes.map((x) => x.palier))].sort((a, b) => a - b);
+    for (const p of paliers) {
+      const group = br.nodes.filter((x) => x.palier === p).sort((a, b) => a.row - b.row || a.col - b.col);
+      const lines: (string | null)[][] = [];
+      for (const x of group) {
+        let line = lines.find((l) => l[x.col] === null) ?? lines.find((l) => l.includes(null));
+        if (!line) { line = [null, null, null]; lines.push(line); }
+        const c = line[x.col] === null ? x.col : line.indexOf(null);
+        line[c] = x.id;
+      }
+      const groupTop = y;
+      const state = p < g.palier ? 'done' : p === g.palier ? 'now' : 'later';
+      y += LABEL_H;
+      lines.forEach((line, i) => line.forEach((id, c) => { if (id) pos.set(id, { col: c, y: y + i * ROW }); }));
+      y += lines.length * ROW;
+      if (state === 'now') html += `<div class="tree-band" style="top:${groupTop - 6}px;height:${y - groupTop - 6}px"></div>`;
+      const label = state === 'done' ? `${CHECK}Palier ${p}` : state === 'now' ? `Palier ${p} · en cours` : `${LOCK}Palier ${p}`;
+      html += `<div class="tree-sep ${state}" style="top:${groupTop + 12}px"></div><div class="tree-pal ${state}" style="top:${groupTop}px">${label}</div>`;
+      y += 4;
+    }
+    const at = (id: string) => pos.get(id) ?? { col: 1, y: TOP };
     // De la place en bas pour la fiche du nœud (sa hauteur varie avec le texte) : on peut toujours voir la dernière ligne.
+    const bottom = y;
     const fit = () => {
       const sheetH = el.querySelector<HTMLElement>('.tree-sheet')?.offsetHeight ?? 300;
-      canvas.style.height = `${TOP + maxRow * ROW + TILE + Math.max(310, sheetH + 60)}px`;
+      canvas.style.height = `${bottom + Math.max(250, sheetH + 30)}px`;
     };
     fit();
     requestAnimationFrame(fit);
-    let html = '';
     for (const child of br.nodes) {
       for (const pid of child.parents) {
         const p = NODE[pid];
         if (!p) continue;
         const on = g.isUnlocked(pid);
-        const x1 = cols[p.col], y1 = top(p.row) + TILE, x2 = cols[child.col], y2 = top(child.row), mid = y2 - 14;
+        const pa = at(p.id), ch = at(child.id);
+        const x1 = cols[pa.col], y1 = pa.y + TILE, x2 = cols[ch.col], y2 = ch.y, mid = y2 - 14;
         const segs = x1 === x2 ? [[x1, y1, x1, y2]] : [[x1, y1, x1, mid], [x1, mid, x2, mid], [x2, mid, x2, y2]];
         for (const [ax, ay, bx, by] of segs) {
           const vertical = ax === bx;
@@ -143,9 +168,9 @@ export class TreeScreen {
       const badge = st === 'owned' ? `<span class="nb-owned">${CHECK}</span>`
         : st === 'available' ? (g.canAfford(x) ? `<span class="nb-cost ready">${STAR_INK}Prêt</span>` : first ? `<span class="nb-cost"><img src="${this.icons.get(first[0])}" alt="">${first[1]}</span>` : '')
         : st === 'soon' ? '<span class="nb-soon">Bientôt</span>'
-        : x.palier > g.palier ? `<span class="nb-level">Palier ${x.palier}</span>`
         : `<span class="nb-lock">${LOCK}</span>`;
-      html += `<button class="node ${st}${x.id === this.sel ? ' sel' : ''}" data-id="${x.id}" style="left:${cols[x.col] - 50}px;top:${top(x.row)}px" aria-label="${hide ? 'Déblocage caché' : esc(x.name)}">
+      const xp = at(x.id);
+      html += `<button class="node ${st}${x.id === this.sel ? ' sel' : ''}" data-id="${x.id}" style="left:${cols[xp.col] - 50}px;top:${xp.y}px" aria-label="${hide ? 'Déblocage caché' : esc(x.name)}">
         <span class="tile${hide ? ' mystery' : ''}"><span class="ico">${hide ? MYSTERY : NODE_ICONS[x.icon] ?? ''}</span>${badge}</span>
         <span class="lbl">${hide ? HIDDEN_NAME : esc(x.name)}</span></button>`;
     }
