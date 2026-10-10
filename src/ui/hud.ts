@@ -23,7 +23,7 @@ import { checkForUpdate, copyText } from './update.ts';
 import { exportPanel, playTime } from './title.ts';
 import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
-import { NODE_ICONS } from './nodeIcons.ts';
+import { NODE_ICONS, UNLOCK_ICON } from './nodeIcons.ts';
 import { swipeToClose } from './swipe.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'transport';
@@ -467,7 +467,7 @@ export class Hud implements GestureHandlers {
     }
     // Dernière carte : l'arbre, pour débloquer d'autres machines.
     const ready = this.game.unlockableCount();
-    const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${NODE_ICONS.assembleur}</span>Débloquer<small>${ready ? `${ready} prêt${ready > 1 ? 's' : ''}` : `Palier ${this.game.palier}`}</small>`);
+    const more = h('button', 'mcard more', `<span style="width:40px;height:40px;display:flex">${UNLOCK_ICON}</span>Débloquer<small>${ready ? `${ready} prêt${ready > 1 ? 's' : ''}` : `Palier ${this.game.palier}`}</small>`);
     more.onclick = () => this.openTree('production');
     row.append(more);
     p.append(row);

@@ -49,6 +49,9 @@ export const NODE_ICONS: Record<string, string> = {
   laboratoire: '<svg width="100%" height="100%" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M12 4 H20 M13 4 V12 L6 25 A2.5 2.5 0 0 0 8.2 28.5 H23.8 A2.5 2.5 0 0 0 26 25 L19 12 V4" fill="none" stroke="#2E3A4B" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path><path d="M9 21 H23 L25 25.5 H7 Z" fill="#8BD17C"></path></svg>',
 };
 
+/** Le « + » (l'ancien dessin de l'assembleur) : le bouton Débloquer de la palette. */
+export const UNLOCK_ICON = NODE_ICONS.assembleur;
+
 // Les bâtiments prennent leur nouveau dessin (le même que sur la carte) ; l'arbre : le sapin.
 const DRAW = 'fill="none" stroke="#2E3A4B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"';
 const body = (id: string): string | null => {
