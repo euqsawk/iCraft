@@ -2,6 +2,7 @@
 import { Application } from 'pixi.js';
 // Sans « eval » : le jeu marche aussi sur les pages qui l'interdisent (lien de test hébergé).
 import 'pixi.js/unsafe-eval';
+import { loadBuildingTextures } from './render/buildingIcons.ts';
 import { PALETTE, RULES } from './config.ts';
 import { Gestures } from './input/gestures.ts';
 import { GameRenderer } from './render/renderer.ts';
@@ -85,6 +86,7 @@ async function boot(): Promise<void> {
   const host = document.getElementById('game')!;
   host.append(app.canvas);
 
+  await loadBuildingTextures();
   const renderer = new GameRenderer(app, game);
   let leaving = false;
   const save = () => (leaving ? Promise.resolve() : saveSlot(slot, game.serialize()));

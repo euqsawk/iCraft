@@ -1,4 +1,6 @@
 // Icônes des nœuds de l'arbre de déblocages (reprises de la maquette Claude Design).
+import { BUILDING_SVG } from '../render/buildingIcons.ts';
+
 export const NODE_ICONS: Record<string, string> = {
   foreuse: "<svg width=\"100%\" height=\"100%\" focusable=\"false\" viewBox=\"0 0 32 32\" aria-hidden=\"true\"><path d=\"M7 9 H25 L16 25 Z\" fill=\"#8A99AD\"></path></svg>",
   four: "<svg width=\"100%\" height=\"100%\" focusable=\"false\" viewBox=\"0 0 32 32\" aria-hidden=\"true\"><path d=\"M8 26 V15 A8 8 0 0 1 24 15 V26 Z\" fill=\"#2E3A4B\"></path><path d=\"M16 23 C13 21 14 18 16 15 C18 18 19 21 16 23 Z\" fill=\"#F47C64\"></path></svg>",
@@ -47,10 +49,27 @@ export const NODE_ICONS: Record<string, string> = {
   laboratoire: '<svg width="100%" height="100%" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M12 4 H20 M13 4 V12 L6 25 A2.5 2.5 0 0 0 8.2 28.5 H23.8 A2.5 2.5 0 0 0 26 25 L19 12 V4" fill="none" stroke="#2E3A4B" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"></path><path d="M9 21 H23 L25 25.5 H7 Z" fill="#8BD17C"></path></svg>',
 };
 
+// Les bâtiments prennent leur nouveau dessin (le même que sur la carte) ; l'arbre : le sapin.
+const DRAW = 'fill="none" stroke="#2E3A4B" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"';
+const body = (id: string): string | null => {
+  const v = BUILDING_SVG[id];
+  return !v ? null : Array.isArray(v) ? v[Math.min(1, v.length - 1)] : v;
+};
+for (const [key, id] of [...Object.keys(BUILDING_SVG).map((k) => [k, k]), ['reacteur', 'centrale']]) {
+  const b = body(id);
+  if (!b) continue;
+  NODE_ICONS[key] = `<svg width="100%" height="100%" viewBox="0 0 64 64" ${DRAW} aria-hidden="true" focusable="false">${b}</svg>`;
+}
+
 // Versions électriques : l'icône de la machine, un peu plus petite, avec un éclair jaune.
 const BOLT = '<path d="M24 3 L18 12 H22 L20 19 L28 9 H24 Z" fill="#FFC857" stroke="#2E3A4B" stroke-width="1.6" stroke-linejoin="round"></path>';
 for (const id of ['foreuse', 'four', 'presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'broyeur', 'melangeur', 'raffinerie', 'fabricant', 'centrifugeuse']) {
   const key = `${id}_elec`;
+  const b = body(id);
+  if (b) {
+    NODE_ICONS[key] = `<svg width="100%" height="100%" focusable="false" viewBox="0 0 32 32" aria-hidden="true"><g transform="translate(-1 5) scale(0.4)" ${DRAW}>${b}</g>${BOLT}</svg>`;
+    continue;
+  }
   const svg = NODE_ICONS[id];
   if (NODE_ICONS[key] || !svg) continue;
   const inner = svg.replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '');

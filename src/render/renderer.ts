@@ -15,6 +15,7 @@ import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
 import { Camera } from './camera.ts';
+import { buildingTexture } from './buildingIcons.ts';
 import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
 import { PROPELLER, robotShapes, type Shape } from './robotShapes.ts';
 import { robotColor } from '../data/look.ts';
@@ -87,6 +88,17 @@ interface MachineView {
   made: number;
   pop: number;
   status: string;
+}
+
+/** La variante du dessin d'un bâtiment : le minerai d'une foreuse, une forme d'arbre selon sa place. */
+function iconVariant(m: Machine): number | string {
+  if ((m.type === 'foreuse' || m.type === 'super_foreuse') && m.ore) return m.ore;
+  if (m.type === 'arbre') {
+    let h = Math.imul(m.x, 374761393) + Math.imul(m.y, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) % 3;
+  }
+  return 0;
 }
 
 export class GameRenderer {
@@ -1153,6 +1165,7 @@ export class GameRenderer {
 
   // ---------- Machines ----------
 
+
   private makeLabel(text: string): Text {
     const t = new Text({ text, style: { fontFamily: FONT, fontSize: 11, fontWeight: '800', fill: PALETTE.ink2 }, resolution: 3 });
     t.anchor.set(0.5, 1);
@@ -1183,7 +1196,14 @@ export class GameRenderer {
       body.stroke({ width: 2, color: PALETTE.ink, alpha: 0.45 });
       icon.alpha = 0.4;
     }
-    drawMachineIcon(iconG, m.type, m.ore);
+    const tex = buildingTexture(m.type, iconVariant(m));
+    if (tex) {
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      const size = Math.round(Math.min(bw, bh) * (bare ? 0.7 : 0.68));
+      sp.width = sp.height = size;
+      icon.addChild(sp);
+    } else drawMachineIcon(iconG, m.type, m.ore);
     // Voyant du charbon, en haut à gauche : il clignote quand la machine en manque.
     const lamp = new Graphics();
     lamp.circle(-bw / 2 + 7, -bh / 2 + 7, 4.5).fill(0xffffff).circle(-bw / 2 + 7, -bh / 2 + 7, 3).fill(PALETTE.coral);
@@ -1823,10 +1843,18 @@ export class GameRenderer {
     const c = new Container();
     const g = new Graphics();
     drawMachineBody(g, 46, 46, 15);
-    const ig = new Graphics();
-    drawMachineIcon(ig, type, type === 'foreuse' ? 'fer' : undefined);
-    if (type === 'coffre') ig.scale.set(1.8);
-    c.addChild(g, ig);
+    const tex = buildingTexture(type, type === 'foreuse' || type === 'super_foreuse' ? 'fer' : type === 'arbre' ? 1 : 0);
+    if (tex) {
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      sp.width = sp.height = 31;
+      c.addChild(g, sp);
+    } else {
+      const ig = new Graphics();
+      drawMachineIcon(ig, type, type === 'foreuse' ? 'fer' : undefined);
+      if (type === 'coffre') ig.scale.set(1.8);
+      c.addChild(g, ig);
+    }
     const canvas = this.app.renderer.extract.canvas({ target: c, resolution: 3 }) as HTMLCanvasElement;
     c.destroy({ children: true });
     return canvas.toDataURL();

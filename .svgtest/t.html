@@ -1,0 +1,13 @@
+<!doctype html><html><body><script type="module">
+import { Graphics } from '/node_modules/pixi.js/pixi.mjs';
+const out = {};
+const a = new Graphics().svg('<svg viewBox="0 0 64 64"><rect x="10" y="10" width="20" height="10" fill="#f00"/></svg>');
+out.plain = a.getLocalBounds();
+const b = new Graphics().svg('<svg viewBox="0 0 64 64"><g transform="rotate(90 20 15)"><rect x="10" y="10" width="20" height="10" fill="#f00"/></g></svg>');
+out.rot = b.getLocalBounds();
+const c = new Graphics().svg('<svg viewBox="0 0 64 64"><g transform="translate(5 5)"><circle cx="10" cy="10" r="5" fill="#f00"/></g></svg>');
+out.tr = c.getLocalBounds();
+const d = new Graphics().svg('<svg viewBox="0 0 64 64"><path d="M12 54 V32 a20 20 0 0 1 40 0 V54 Z" fill="#E3ECE7" stroke="#2E3A4B" stroke-width="3.5"/></svg>');
+out.arc = d.getLocalBounds();
+window.out = JSON.stringify(Object.fromEntries(Object.entries(out).map(([k,v])=>[k,[v.minX,v.minY,v.maxX,v.maxY]])));
+</script></body></html>
