@@ -1864,6 +1864,14 @@ export class Hud implements GestureHandlers {
     const body = this.overlay?.querySelector('.mtab-body');
     if (body) body.scrollTop = 0;
     this.refreshSheet();
+    this.reframe();
+  }
+
+  /** La fenêtre a changé de hauteur (onglet) : la machine reste visible au-dessus. */
+  private reframe(): void {
+    if (!this.overlay?.classList.contains('see-map')) return;
+    const m = this.game.view.machines.get(this.sheetKind === 'chest' ? this.chestId : this.machineId);
+    if (m) this.frameMachine(m);
   }
 
   /** La caméra place la machine au milieu de ce qui reste visible au-dessus de la fenêtre. */
@@ -1881,8 +1889,12 @@ export class Hud implements GestureHandlers {
   /** Nom, pastille d'état, bouton fermer. */
   private machHead(title: string, mm: Machine, close: () => void): HTMLElement {
     const tone = mm.status === 'working' ? 'ok' : mm.status === 'idle' ? 'idle' : 'warn';
+    return this.pillHead(title, STATUS_SHORT[mm.status] ?? STATUS_TEXT[mm.status] ?? '', tone, close);
+  }
+
+  private pillHead(title: string, pill: string, tone: 'ok' | 'idle' | 'warn', close: () => void): HTMLElement {
     const head = h('div', 'sheet-head mhead');
-    head.innerHTML = `<h2>${esc(title)}</h2><span class="mpill ${tone}"><i></i>${esc(STATUS_SHORT[mm.status] ?? STATUS_TEXT[mm.status] ?? '')}</span>`;
+    head.innerHTML = `<h2>${esc(title)}</h2><span class="mpill ${tone}"><i></i>${esc(pill)}</span>`;
     const x = h('button', 'round', ICONS.close);
     x.setAttribute('aria-label', 'Fermer');
     x.onclick = close;
@@ -2051,7 +2063,7 @@ export class Hud implements GestureHandlers {
       list.append(row);
     });
     body.append(list);
-    body.append(h('p', 'muted small mrec-hint', 'Elle fabrique toute seule selon ce qu’on lui apporte. Toucher une recette affiche ses débits dans Production.'));
+    body.append(h('p', 'muted small mrec-hint', 'Elle fabrique selon ce qu’on lui apporte. Une recette touchée montre ses débits.'));
   }
 
   /** Une entrée ou une sortie est en train d'être glissée vers la carte (la fenêtre attend). */
@@ -2538,6 +2550,7 @@ export class Hud implements GestureHandlers {
       for (const v of Object.values(chest.inBuf)) total += v;
       for (const v of Object.values(chest.outBuf)) arrived += v;
       const stop = g.view.isStop(chest), cap = g.view.slotsOf(chest) * RULES.invStack;
+      if (stop && g.stationKind(chest)) { this.buildStopSheet(sheet, chest, close); return; }
       sheet.classList.add('inv-sheet');
       sheet.append(this.sheetHead(machineDef(chest.type).name, stop
         ? `Deux coffres de ${cap} objets : ce qui arrive par ${g.stationKind(chest) === 'train' ? 'train' : 'camion'}, et ce qui part`
@@ -2573,6 +2586,85 @@ export class Hud implements GestureHandlers {
       sheet.append(acts);
     }, true);
     this.sheetKind = 'chest';
+    if (this.game.view.isStop(m) && this.game.stationKind(m)) {
+      this.overlay?.classList.add('see-map');
+      this.frameMachine(m);
+    }
+  }
+
+  private stopTab: 'lines' | 'arr' | 'dep' = 'lines';
+  private stopTabOf = -1;
+
+  /**
+   * Dépôt ou gare, comme une machine : une demi-fenêtre (la carte reste visible), trois onglets
+   * (ses lignes, ce qui est arrivé, ce qui part) et en bas Relier / Déplacer / Supprimer.
+   */
+  private buildStopSheet(sheet: HTMLElement, st: Machine, close: () => void): void {
+    const g = this.game, f = g.view, kind = g.stationKind(st)!;
+    const train = kind === 'train';
+    if (this.stopTabOf !== st.id) { this.stopTab = 'lines'; this.stopTabOf = st.id; }
+    sheet.classList.add('mach-sheet');
+    this.r.selection = { kind: 'machine', id: st.id };
+    const lines = f.linesOf(st);
+    const sum = (b: Record<string, number>) => Object.values(b).reduce((a, n) => a + Math.max(0, n), 0);
+    const dep = sum(st.inBuf), arr = sum(st.outBuf), cap = f.slotsOf(st) * RULES.invStack;
+    const docked = lines.some((l) => l.vehicles.some((v) => !v.moving && l.stops[v.at % l.stops.length]?.id === st.id));
+    sheet.append(this.pillHead(this.stationName(st), lines.length ? `${lines.length} ligne${lines.length > 1 ? 's' : ''}${docked ? ' · à quai' : ''}` : train ? 'Pas reliée' : 'Pas relié', lines.length ? 'ok' : 'idle', close));
+    const tabs = h('div', 'mtabs');
+    const list: ['lines' | 'arr' | 'dep', string][] = [['lines', 'Lignes'], ['arr', `Arrivées${arr ? ` <small>${fmt(arr)}</small>` : ''}`], ['dep', `Départs${dep ? ` <small>${fmt(dep)}</small>` : ''}`]];
+    for (const [id, label] of list) {
+      const b = h('button', `mtab${this.stopTab === id ? ' on' : ''}`, label);
+      b.onclick = () => { if (this.stopTab === id) return; this.stopTab = id; this.invSel = null; this.refreshSheet(); this.reframe(); };
+      tabs.append(b);
+    }
+    sheet.append(tabs);
+    const body = h('div', 'mtab-body');
+    if (this.stopTab === 'lines') {
+      const card = h('div', 'card slines');
+      for (const l of lines) {
+        const names = l.stops.map((s2) => { const x = f.machines.get(s2.id); return x ? this.stationName(x) : '?'; }).join(' → ');
+        const row = h('button', 'sline', `<span class="sline-ico">${train ? ICONS.train : ICONS.transport}</span><span class="sline-t"><b>${esc(names)}</b><small>${l.vehicles.length} ${train ? 'train' : 'camion'}${l.vehicles.length > 1 ? 's' : ''} · ${l.stops.length} arrêts en boucle</small></span><i>›</i>`);
+        row.onclick = () => this.openLine(l.id);
+        card.append(row);
+      }
+      if (!lines.length) card.append(h('p', 'muted', `Remplis ${train ? 'cette gare' : 'ce dépôt'} par tapis (ou les drones), puis relie-${train ? 'la' : 'le'} : le ${train ? 'train' : 'camion'} charge ici les départs et dépose à l’autre bout, dans ses arrivées.`));
+      body.append(card);
+    } else {
+      const isArr = this.stopTab === 'arr';
+      const buf = isArr ? st.outBuf : st.inBuf, n = isArr ? arr : dep;
+      const cells = this.chestCells(st, buf).filter((c) => c);
+      const cols = 6;
+      while (cells.length < Math.max(cols, Math.ceil(cells.length / cols) * cols)) cells.push(null);
+      const c1 = h('div', 'card');
+      c1.innerHTML = `<div class="sfill"><b>${isArr ? 'Arrivées' : 'Départs'}</b><span class="mp-bar"><span style="width:${Math.min(100, (n / cap) * 100)}%"></span></span><b>${fmt(n)} / ${cap}</b></div>
+        <p class="muted small">${isArr ? `Déposé par les ${train ? 'trains' : 'camions'} ; ressort sur les tapis qui partent d’ici, les drones s’y servent.` : `Apporté par les tapis et les drones ; part avec les ${train ? 'trains' : 'camions'}.`}</p>
+        ${this.gridHtml(cells, isArr ? 'arr' : 'chest', cols)}`;
+      this.wireGrid(c1, st);
+      const c2 = h('div', 'card');
+      c2.innerHTML = `<p class="muted">Inventaire de ${esc(g.look.name)} · touche une pile pour la déplacer</p>${this.gridHtml(g.robot.inv.slots, 'robot')}`;
+      this.wireGrid(c2, st);
+      body.append(c1, c2);
+      const bar = this.invBar(st);
+      if (bar) { bar.classList.add('floating'); body.append(bar); }
+    }
+    sheet.append(body);
+    const acts = h('div', 'macts');
+    const others = [...f.machines.values()].filter((x) => x.type === st.type && x !== st);
+    const link = h('button', 'btn primary', 'Relier');
+    link.onclick = () => {
+      if (!others.length) { this.toast(`Pose d’abord ${train ? 'une autre gare' : 'un autre dépôt'}`, 'info'); return; }
+      this.closeSheet();
+      this.openMap({
+        title: train ? 'Choisis l’autre gare' : 'Choisis l’autre dépôt',
+        sub: `${this.stationName(st)} : touche l’arrêt d’arrivée`,
+        candidates: others,
+        onPick: (to) => { const l = g.linkStations(st, to); if (l) this.openLine(l.id); },
+      });
+    };
+    const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
+    mv.onclick = () => { close(); this.startMove(st); };
+    acts.append(link, mv, this.deleteButton(st, 'Supprimer', 'Confirmer', close));
+    sheet.append(acts);
   }
 
   /** La liste des tâches d'un drone, à ranger de la plus importante à la moins importante. */

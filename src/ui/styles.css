@@ -956,8 +956,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 /* Fenêtre d'une machine (piste C) : demi-hauteur, la carte reste visible au-dessus. */
 .backdrop.see-map { background: transparent; }
 .backdrop.see-map > .sheet { box-shadow: 0 -4px 0 rgba(46, 58, 75, .08), 0 -10px 30px rgba(46, 58, 75, .12); }
-.sheet.mach-sheet { gap: 12px; height: min(calc(468px + env(safe-area-inset-bottom, 0px)), 66%); max-height: none; overflow: hidden; }
-.mach-sheet > .mtab-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: -4px -16px; padding: 4px 16px 8px; }
+.sheet.mach-sheet { gap: 12px; max-height: calc(100% - var(--top) - 8px); }
 .mhead { justify-content: flex-start; gap: 8px; }
 .mhead h2 { flex: none; font-size: 22px; min-width: 0; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mhead .round { margin-left: auto; flex: none; }
@@ -1015,7 +1014,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .minv2 .mslot { width: 42px; height: 42px; border-radius: 12px; }
 .minv2 .mslot img { width: 26px; height: 26px; }
 .mrecs { padding: 6px 12px; gap: 0; }
-.mrec-row { display: flex; align-items: center; gap: 4px; width: 100%; min-height: 46px; padding: 6px 4px; background: none; border-top: 2px solid #EEF4F0; border-radius: 0; font: 800 14px var(--font); color: var(--ink); text-align: left; }
+.mrec-row { display: flex; align-items: center; gap: 4px; width: 100%; min-height: 40px; padding: 4px; background: none; border-top: 2px solid #EEF4F0; border-radius: 0; font: 800 14px var(--font); color: var(--ink); text-align: left; }
 .mrec-row:first-child { border-top: none; }
 .mrec-row.on { background: #EEF6F1; border-radius: 12px; border-top-color: transparent; box-shadow: inset 0 0 0 2.5px #2E9E6A; }
 .mrec-row.on + .mrec-row { border-top-color: transparent; }
@@ -1035,3 +1034,16 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .macts .btn.danger.armed { background: var(--coral); color: #fff; }
 .macts .btn svg { flex: none; }
 @media (max-width: 359px) { .macts .btn svg { display: none; } }
+.slines { padding: 6px 12px; gap: 0; }
+.slines > .muted { padding: 8px 2px; }
+.sline { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 56px; padding: 8px 2px; background: none; border-top: 2px solid #EEF4F0; border-radius: 0; color: var(--ink); text-align: left; font-family: var(--font); }
+.sline:first-child { border-top: none; }
+.sline-ico { flex: none; width: 36px; height: 36px; border-radius: 12px; background: #F0F5F2; display: flex; align-items: center; justify-content: center; }
+.sline-ico svg { width: 22px; height: 22px; }
+.sline-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.sline-t b { font-size: 14px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sline-t small { font-size: 11.5px; font-weight: 700; color: var(--ink2); }
+.sline i { flex: none; font-style: normal; font-size: 20px; font-weight: 900; color: var(--ink2); }
+.sfill { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
+.sfill .mp-bar { flex: 1; }
+.sfill b:last-child { font-variant-numeric: tabular-nums; font-size: 13px; }
