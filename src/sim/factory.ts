@@ -4,7 +4,7 @@ import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type R
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { patchCells, RICHNESS_RATE, type Patch, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
-import { addTo, burnOne, takeOf } from './fuel.ts';
+import { addTo, burnOne, moveFuel, takeOf } from './fuel.ts';
 
 export interface BeltItem {
   t: string;
@@ -232,6 +232,10 @@ export class Factory {
   private splitOf = new Map<Belt, Next>();
   private split2Of = new Map<Belt, Next>();
   private outputs = new Map<Machine, Belt[]>();
+  /** Groupes de foreuses 1 × 1 collées par un côté (construites) : chaque foreuse → son groupe. */
+  private drillGroups = new Map<Machine, Machine[]>();
+  /** À qui le tour, parmi les sorties d'un groupe de foreuses. */
+  private drillTurn = new Map<Machine[], number>();
   private accepts = new Map<string, Set<string>>();
 
   /** Vitesse des tapis (déblocages Tapis rapide et express). */
@@ -546,7 +550,7 @@ export class Factory {
     if (def.kind === 'drill') {
       let best: [string, { n: number; rate: number }] | null = null;
       for (const e of oreCount) if (!best || e[1].n > best[1].n) best = e;
-      if (!best || best[1].n < 2) return { ok: false, reason: 'À poser sur un filon' };
+      if (!best || best[1].n < Math.min(2, def.w * def.h)) return { ok: false, reason: 'À poser sur un filon' };
       // Les filons sous la machine.
       const under = new Map<string, Patch>();
       for (let j = 0; j < def.h; j++) for (let i = 0; i < def.w; i++) { const p = this.world.patchAt(x + i, y + j); if (p && p.type !== 'eau') under.set(p.id, p); }
@@ -567,6 +571,8 @@ export class Factory {
         const cells = patchCells(main).length;
         return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * RICHNESS_RATE[main.richness] * (cells / 4), belts };
       }
+      // Une foreuse 1 × 1 : le quart d'une ancienne foreuse 2 × 2 (quatre collées valent la même chose).
+      if (def.w * def.h === 1) return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate / 4, belts };
       return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate * (best[1].n / 4 * 0.5 + 0.5), belts };
     }
     return { ok: true, belts };
@@ -1165,6 +1171,7 @@ export class Factory {
       }
     }
 
+    this.buildDrillGroups();
     this.buildNets();
     this.buildWaterNets();
 
@@ -1272,7 +1279,15 @@ export class Factory {
 
   /** La machine fait clignoter son voyant : il lui faut du charbon. */
   lowFuel(m: Machine): boolean {
-    return m.built && !this.freeEnergy && machineDef(m.type).coal && !this.selfFed(m) && !this.powered(m) && m.fuel <= RULES.lowFuel;
+    if (!(m.built && !this.freeEnergy && machineDef(m.type).coal && !this.selfFed(m) && !this.powered(m))) return false;
+    // Un groupe de foreuses partage son charbon : il clignote quand tout le groupe en manque.
+    const group = this.drillGroups.get(m);
+    if (group && group.length > 1) {
+      let fuel = 0;
+      for (const x of group) fuel += x.fuel;
+      return fuel <= RULES.lowFuel * Math.ceil(group.length / 4);
+    }
+    return m.fuel <= RULES.lowFuel;
   }
 
   /** Cases occupées d'un coffre (piles de 10). */
@@ -1310,7 +1325,7 @@ export class Factory {
   private useFuel(m: Machine, def: MachineDef, dt: number): boolean {
     if (!def.coal) return true;
     if (m.burn <= 0) {
-      const k = burnOne(m, RULES.coalMachineSeconds);
+      const k = burnOne(m, RULES.coalMachineSeconds * (def.coalMult ?? 1));
       if (!k) return false;
       this.flow(m, k, 1, false);
       this.pollute(m, RULES.pollMachine);
@@ -1545,11 +1560,97 @@ export class Factory {
     return n;
   }
 
+  /** Une foreuse 1 × 1 : elle se relie toute seule à celles qui la touchent par un côté. */
+  static isSmallDrill(m: Machine): boolean {
+    return m.type === 'foreuse';
+  }
+
+  /** Les groupes : foreuses 1 × 1 construites qui se touchent par un côté, de n'importe quelle forme. */
+  private buildDrillGroups(): void {
+    this.drillGroups.clear();
+    this.drillTurn.clear();
+    for (const m of this.machines.values()) {
+      if (!m.built || !Factory.isSmallDrill(m) || this.drillGroups.has(m)) continue;
+      const group: Machine[] = [m];
+      this.drillGroups.set(m, group);
+      for (let i = 0; i < group.length; i++) {
+        const c = group[i];
+        for (let d = 0; d < 4; d++) {
+          const o = this.cellMachine.get(key(c.x + DX[d], c.y + DY[d]));
+          if (o && o.built && Factory.isSmallDrill(o) && !this.drillGroups.has(o)) { this.drillGroups.set(o, group); group.push(o); }
+        }
+      }
+    }
+  }
+
+  /** Le groupe d'une foreuse 1 × 1 (elle seule si elle n'en touche aucune ; vide pour une autre machine). */
+  drillGroup(m: Machine): Machine[] {
+    this.refresh();
+    return this.drillGroups.get(m) ?? (Factory.isSmallDrill(m) ? [m] : []);
+  }
+
+  /** Nombre de sorties d'une machine : tapis qui en partent et liaisons directes. */
+  private outletCount(m: Machine): number {
+    return (this.outputs.get(m)?.length ?? 0) + (m.links?.length ?? 0);
+  }
+
+  /** Nombre de sorties d'un groupe de foreuses (tapis qui en partent et liaisons). */
+  drillOutletTotal(m: Machine): number {
+    return this.drillGroup(m).reduce((a, x) => a + this.outletCount(x), 0);
+  }
+
+  /** Les foreuses du groupe qui ont une sortie (tapis ou liaison) : tout le minerai du groupe part par elles. */
+  drillOutlets(m: Machine): Machine[] {
+    return this.drillGroup(m).filter((x) => this.outletCount(x) > 0);
+  }
+
+  /**
+   * Où va un minerai extrait dans un groupe : la sortie la moins chargée (par tapis), pour que
+   * deux sorties en reçoivent chacune la moitié. Sans sortie, il reste dans la foreuse.
+   */
+  private drillTarget(m: Machine, take = false): Machine {
+    const group = this.drillGroups.get(m);
+    if (!group || group.length < 2) return m;
+    // Chaque sortie (tapis ou liaison) a son tour : deux sorties reçoivent chacune la moitié.
+    const slots: Machine[] = [];
+    for (const x of group) for (let i = this.outletCount(x); i > 0; i--) slots.push(x);
+    if (!slots.length) return m;
+    const turn = this.drillTurn.get(group) ?? 0;
+    for (let s = 0; s < slots.length; s++) {
+      const x = slots[(turn + s) % slots.length];
+      if (this.outCount(x) < RULES.machineBuffer * this.outletCount(x)) {
+        if (take) this.drillTurn.set(group, (turn + s + 1) % slots.length);
+        return x;
+      }
+    }
+    return slots[turn % slots.length];
+  }
+
   private tickDrill(m: Machine, dt: number): void {
     if (!m.ore || !m.rate) { m.status = 'noore'; return; }
-    if (this.outCount(m) >= RULES.machineBuffer) { m.status = 'blocked'; m.drillT = Math.min(m.drillT, 1); return; }
-    // Sur du charbon, elle démarre même à vide : elle brûlera ce qu'elle extrait.
     const def = machineDef(m.type);
+    const group = this.drillGroups.get(m);
+    // Dans un groupe, ce qui attend dans une foreuse sans sortie rejoint une sortie dès qu'il y en a une.
+    if (group && group.length > 1 && !this.outletCount(m)) {
+      for (const t of Object.keys(m.outBuf)) {
+        while ((m.outBuf[t] ?? 0) > 0) {
+          const to = this.drillTarget(m, true);
+          if (to === m || this.outCount(to) >= RULES.machineBuffer * this.outletCount(to)) break;
+          m.outBuf[t]--; to.outBuf[t] = (to.outBuf[t] ?? 0) + 1;
+        }
+        if (!m.outBuf[t]) delete m.outBuf[t];
+      }
+    }
+    const target = this.drillTarget(m);
+    const cap = RULES.machineBuffer * Math.max(1, target === m ? 1 : this.outletCount(target));
+    if (this.outCount(target) >= cap) { m.status = 'blocked'; m.drillT = Math.min(m.drillT, 1); return; }
+    // Le charbon se partage dans le groupe : à vide, elle en prend un à la voisine qui en a le plus.
+    if (group && group.length > 1 && def.coal && m.fuel <= 0 && m.burn <= 0 && !this.freeEnergy && !this.powered(m)) {
+      let rich: Machine | null = null;
+      for (const x of group) if (x !== m && x.fuel > (rich?.fuel ?? 0)) rich = x;
+      if (rich) moveFuel(rich, m, 1);
+    }
+    // Sur du charbon, elle démarre même à vide : elle brûlera ce qu'elle extrait.
     const k = this.energy(m, def, dt);
     if (k <= 0 && !this.selfFed(m)) { m.status = this.noEnergy(m); return; }
     m.status = 'working';
@@ -1560,7 +1661,8 @@ export class Factory {
       if (this.selfFed(m) && m.fuel < RULES.fuelStack) {
         m.fuel++; // sa propre case carburant d'abord
       } else {
-        m.outBuf[m.ore] = (m.outBuf[m.ore] ?? 0) + 1;
+        const to = this.drillTarget(m, true);
+        to.outBuf[m.ore] = (to.outBuf[m.ore] ?? 0) + 1;
         this.flow(m, m.ore, 1, true);
       }
     }
@@ -1812,6 +1914,7 @@ export class Factory {
   serialize(): FactorySave {
     return {
       nextId: this.nextId,
+      drills1: 1,
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
@@ -1852,11 +1955,14 @@ export class Factory {
       }
     }
     this.nextId = 1;
+    const oldDrills: FactorySave['machines'] = [];
     for (const sm of s.machines) {
       // Chaque machine garde son numéro. (Avant, un numéro provisoire pouvait effacer
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
       sm.type = baseType(sm.type); // les anciennes « machines électriques » redeviennent des machines normales
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
+      // Ancienne foreuse 2 × 2 : coupée en quatre plus bas, une fois les autres numéros connus.
+      if (!s.drills1 && sm.type === 'foreuse') { oldDrills.push(sm); continue; }
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
@@ -1884,6 +1990,26 @@ export class Factory {
     for (const st of s.tunnels ?? []) this.legacyRefund += (st.cells.length + 1) * 4;
     // Les trieurs d'avant (retirés, comme les filtres) sont remboursés.
     this.legacyRefund += oldPicks.size * 20;
+    // Les foreuses 2 × 2 d'avant deviennent quatre foreuses 1 × 1 (un groupe), sur les cases de filon ;
+    // la première garde son numéro, son charbon et ce qu'elle contenait. Les cases sans filon sont remboursées.
+    const small = MACHINES.foreuse;
+    for (const sm of oldDrills) {
+      let first: Machine | null = null;
+      for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
+        const cx = sm.x + i, cy = sm.y + j;
+        if (this.cellMachine.has(key(cx, cy)) || this.belts.has(key(cx, cy))) { this.legacyRefund += small.cost; continue; }
+        const inherited = !!sm.ore; // dans un atelier : le filon d'où elle vient
+        if (!inherited && !this.checkMachine('foreuse', cx, cy).ok) { this.legacyRefund += small.cost; continue; }
+        const m = this.addMachine('foreuse', cx, cy, sm.built, first ? undefined : sm.id);
+        if (inherited) { m.ore = sm.ore; m.rate = (sm.rate ?? 0) / 4; }
+        if (!first) {
+          first = m;
+          Object.assign(m, { inBuf: sm.inBuf ?? {}, outBuf: sm.outBuf ?? {}, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, made: sm.made ?? 0 });
+          if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
+          if (sm.links?.length) m.links = [...sm.links];
+        }
+      }
+    }
     this.dirty = true;
   }
 }
@@ -1897,6 +2023,8 @@ export interface FactorySave {
   picks?: [number, string[]][];
   /** Anciennes parties : tapis souterrains (retirés du jeu, remboursés au chargement). */
   tunnels?: { cells: number[] }[];
+  /** Foreuses 1 × 1 (sans ce drapeau : une ancienne partie, ses foreuses 2 × 2 sont coupées en quatre). */
+  drills1?: 1;
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?][];
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;

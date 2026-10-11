@@ -28,7 +28,7 @@ export class BeltTracer {
   endTarget: { x: number; y: number } | null = null;
   /** Le tracé a buté sur un obstacle. */
   blocked = false;
-  readonly startMachine: Machine | null = null;
+  startMachine: Machine | null = null;
   /** Depuis une machine vers un tapis qui la longe : une liaison de côté, sans nouvelle case. */
   linkBelt: Belt | null = null;
   linkDir: Dir | null = null;
@@ -170,6 +170,13 @@ export class BeltTracer {
       this.linkDir = null;
       this.linkMachine = null;
       if (this.factory.inside(m, cx, cy)) return;
+      // Un groupe de foreuses est une seule machine : le doigt qui passe sur une voisine du groupe part d'elle.
+      const here = this.factory.machineAt(cx, cy);
+      if (here && here !== m && m.type === 'foreuse' && here.type === 'foreuse' && (!m.built || !here.built || this.factory.drillGroup(m).includes(here))) {
+        this.startMachine = here;
+        this.move(fx, fy);
+        return;
+      }
       // Première case : collée au bord de la machine, du côté du doigt.
       let x = Math.min(Math.max(cx, m.x), m.x + m.w - 1);
       let y = Math.min(Math.max(cy, m.y), m.y + m.h - 1);

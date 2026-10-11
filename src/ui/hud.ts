@@ -743,7 +743,20 @@ export class Hud implements GestureHandlers {
     if (def.kind === 'drill' && check.ok && check.ore) {
       const rate = (check.rate ?? 0).toFixed(2).replace('.', ',');
       const tail = this.tool === 'move' ? 'déplacer ici' : `${ICONS.coinSm}${def.cost}`;
-      this.showBubble(s.x, s.y - 8, `<span class="rate"><img src="${this.itemIcons.get(check.ore)}" alt=""><b>${rate} / s</b></span> ${esc(item(check.ore).name.toLowerCase())} · ${tail}${onBelt}`, false);
+      // Collée à d'autres foreuses : elle rejoint leur groupe, on montre ce que le groupe fera ensemble.
+      let join = '';
+      if (type === 'foreuse') {
+        const f = this.game.view, mates = new Set<Machine>();
+        for (let d = 0; d < 4; d++) {
+          const o = f.machineAt(p.x + DX[d], p.y + DY[d]);
+          if (o && o.type === 'foreuse' && o !== this.moving) for (const x of f.drillGroup(o)) if (x !== this.moving) mates.add(x);
+        }
+        if (mates.size) {
+          const total = [...mates].reduce((a, x) => a + (x.rate ?? 0), check.rate ?? 0);
+          join = ` · groupe de ${mates.size + 1} : <b>${total.toFixed(2).replace('.', ',')} / s</b>`;
+        }
+      }
+      this.showBubble(s.x, s.y - 8, `<span class="rate"><img src="${this.itemIcons.get(check.ore)}" alt=""><b>${rate} / s</b></span> ${esc(item(check.ore).name.toLowerCase())}${join} · ${tail}${onBelt}`, false);
       return;
     }
     const label = this.placingPlan ? (check.ok ? `${esc(this.placingPlan.name)} · ${ICONS.coinSm}${this.game.planPrice(this.placingPlan.save)}` : esc(check.reason ?? 'Impossible')) : this.copying ? (check.ok ? `Copie · ${ICONS.coinSm}${this.game.copyPrice(this.copying)}${onBelt}` : esc(check.reason ?? 'Impossible')) : this.tool === 'move' ? `Déplacer ici${onBelt}` : check.ok ? `${def.name} · ${ICONS.coinSm}${def.cost}${onBelt}` : esc(check.reason ?? 'Impossible');
@@ -1822,9 +1835,10 @@ export class Hud implements GestureHandlers {
       // Four, presse, assembleur, foreuse… : une demi-fenêtre (la carte reste visible), trois onglets.
       sheet.classList.add('mach-sheet');
       this.r.selection = { kind: 'machine', id: mm.id };
-      sheet.append(this.machHead(def.kind === 'drill' ? def.name : title, mm, close));
+      const crew = g.view.drillGroup(mm);
+      sheet.append(this.machHead(def.kind === 'drill' ? (crew.length > 1 ? `${crew.length} foreuses` : def.name) : title, mm, close));
       if (this.machTab === 'rec' && !def.recipes.length) this.machTab = 'prod';
-      const held = [...Object.values(mm.inBuf), ...Object.values(mm.outBuf)].reduce((a, n) => a + Math.max(0, n), 0);
+      const held = (crew.length > 1 ? crew : [mm]).reduce((a, x) => a + [...Object.values(x.inBuf), ...Object.values(x.outBuf)].reduce((b, n) => b + Math.max(0, n), 0), 0);
       const tabs = h('div', 'mtabs');
       const tabList: ['prod' | 'inv' | 'rec', string][] = [['prod', 'Production'], ['inv', `Contenu${held ? ` <small>${fmt(held)}</small>` : ''}`]];
       if (def.recipes.length) tabList.push(['rec', `Recettes${def.recipes.length > 1 ? ` <small>${def.recipes.length}</small>` : ''}`]);
@@ -1923,7 +1937,20 @@ export class Hud implements GestureHandlers {
     }
     const card = h('div', 'card mprod');
     let flow = '', cap = '', foot = '';
-    if (def.kind === 'drill') {
+    const crew = f.drillGroup(mm);
+    if (def.kind === 'drill' && crew.length > 1) {
+      // Un groupe de foreuses collées : tout ce qu'il extrait, et par combien de sorties ça part.
+      const by = new Map<string, number>();
+      for (const x of crew) if (x.ore) by.set(x.ore, (by.get(x.ore) ?? 0) + (x.rate ?? 0));
+      const outs = f.drillOutletTotal(mm);
+      const total = [...by.values()].reduce((a, n) => a + n, 0);
+      cap = `${crew.length} foreuses collées · un seul groupe`;
+      flow = `<div class="mp-it"><span class="mp-ico"><img src="${this.machineIcons.get('foreuse')}" alt=""><i>${crew.length}</i></span><b>&nbsp;</b><span class="mp-n">groupe</span></div>${MP_ARROW}`
+        + `<div class="mp-ins">${[...by].slice(0, 3).map(([k, r]) => this.mpItem(k, r, true)).join('<span class="mp-plus">+</span>')}</div>`;
+      foot = `<span>${outs ? `${outs} sortie${outs > 1 ? 's' : ''}${outs > 1 ? ` · ${Hud.rate(total / outs)} /s chacune` : ''}` : 'Pas de sortie : trace un tapis depuis une foreuse'}</span>`;
+      const made = crew.reduce((a, x) => a + x.made, 0);
+      if (made > 0) foot += `<span>${fmt(made)} extraits</span>`;
+    } else if (def.kind === 'drill') {
       const patch = g.world.patchAt(mm.x, mm.y) ?? g.world.patchAt(mm.x + 1, mm.y + 1);
       const ore = mm.ore;
       cap = ore ? `Extrait du ${esc(item(ore).name.toLowerCase())}` : 'Pas de filon dessous';
@@ -1945,17 +1972,19 @@ export class Hud implements GestureHandlers {
         foot = `<span>${secs(rec.time)} par ${esc(item(main).name.toLowerCase())}</span>`;
       }
     }
-    if (mm.made > 0) foot += `<span>${fmt(mm.made)} ${def.kind === 'drill' ? 'extrait' : 'fabriqué'}${mm.made > 1 ? 's' : ''}</span>`;
+    if (mm.made > 0 && crew.length < 2) foot += `<span>${fmt(mm.made)} ${def.kind === 'drill' ? 'extrait' : 'fabriqué'}${mm.made > 1 ? 's' : ''}</span>`;
     const many = def.recipes.length > 1;
     card.innerHTML = `<div class="mp-cap"><span>${cap}</span>${many ? `<button class="mp-more">${def.recipes.length} recettes ›</button>` : ''}</div>
       ${flow ? `<div class="mp-flow">${flow}</div>` : ''}
-      <span class="mp-bar"><span data-mp="${mm.id}" style="width:${this.machProgress(mm) * 100}%"></span></span>
+      ${crew.length > 1 ? '' : `<span class="mp-bar"><span data-mp="${mm.id}" style="width:${this.machProgress(mm) * 100}%"></span></span>`}
       ${foot ? `<div class="mp-foot">${foot}</div>` : ''}
       ${mm.status !== 'working' && mm.status !== 'idle' && mm.status !== 'noinput' ? `<p class="mp-warn">${esc(STATUS_TEXT[mm.status] ?? '')}</p>` : ''}`;
     card.querySelector<HTMLButtonElement>('.mp-more')?.addEventListener('click', () => this.setMachTab('rec'));
     // Énergie : le charbon (stock + celui qui brûle), ou le courant.
     if (f.powered(mm)) {
-      card.append(h('div', 'mfuel power', `<span class="mf-ico">${ICONS.cable}</span><span class="mf-l">Au courant</span><b>${kW(f.powerUse(mm))}</b>`));
+      const on = crew.length > 1 ? crew.filter((x) => f.powered(x)) : [mm];
+      const label = crew.length > 1 ? `Au courant · ${on.length} sur ${crew.length}` : 'Au courant';
+      card.append(h('div', 'mfuel power', `<span class="mf-ico">${ICONS.cable}</span><span class="mf-l">${label}</span><b>${kW(on.reduce((a, x) => a + f.powerUse(x), 0))}</b>`));
     } else if (def.coal && f.selfFed(mm)) {
       card.append(h('div', 'mfuel', `<span class="mf-ico"><img src="${this.itemIcons.get(mm.ore === 'charbon' ? 'charbon' : 'carburant')}" alt=""></span><span class="mf-l">Se sert dans ce qu’elle produit</span><b>${mm.fuel}/${f.fuelCap(mm)}</b>`));
     } else if (def.coal && !f.freeEnergy) {
@@ -1979,18 +2008,27 @@ export class Hud implements GestureHandlers {
    */
   private fuelBar(mm: Machine): HTMLElement {
     const f = this.game.view;
-    const cap = f.fuelCap(mm), n = Math.max(0, mm.fuel), carb = mm.carb ?? 0;
-    const per = RULES.coalMachineSeconds;
+    // Un groupe de foreuses partage son charbon : on montre celui de tout le groupe.
+    const crew = f.drillGroup(mm), all = crew.length > 1 ? crew : [mm], k = all.length;
+    let n = 0, carb = 0, cap = 0, left = 0;
+    const per = RULES.coalMachineSeconds * (machineDef(mm.type).coalMult ?? 1);
+    for (const x of all) {
+      const xn = Math.max(0, x.fuel), xc = x.carb ?? 0;
+      n += xn; carb += xc; cap += f.fuelCap(x);
+      left += (xn - xc) * per + xc * per * RULES.carburantMult + Math.max(0, x.burn);
+    }
+    left /= k;
     const burnMax = mm.burn > per ? per * RULES.carburantMult : per;
-    const left = (n - carb) * per + carb * per * RULES.carburantMult + Math.max(0, mm.burn);
     let cells = '';
-    for (let i = 0; i < cap; i++) cells += `<i class="${i < carb ? 'carb' : i < n ? 'on' : ''}"></i>`;
+    if (cap <= 20) for (let i = 0; i < cap; i++) cells += `<i class="${i < carb ? 'carb' : i < n ? 'on' : ''}"></i>`;
+    const bar = cap <= 20 ? `<span class="mf-cells">${cells}</span>` : `<span class="mf-cont"><span style="width:${Math.min(100, (n / cap) * 100)}%"></span></span>`;
     const low = f.lowFuel(mm);
     const el = h('div', `mfuel${low ? ' low' : ''}`);
+    const every = (carb > 0 ? per * RULES.carburantMult : per) / k;
     el.innerHTML = `<span class="mf-ico"><img src="${this.itemIcons.get(carb > 0 ? 'carburant' : 'charbon')}" alt=""></span>
       <span class="mf-main">
-        <span class="mf-bar"><span class="mf-burn" title="En train de brûler"><span data-burn="${mm.id}" style="width:${Math.min(1, Math.max(0, mm.burn) / burnMax) * 100}%"></span></span><span class="mf-cells">${cells}</span></span>
-        <small>1 toutes les ${secs(carb > 0 ? per * RULES.carburantMult : per)} · ${left > 0 ? `tient encore ${secs(left)}` : 'vide'}</small>
+        <span class="mf-bar">${k > 1 ? '' : `<span class="mf-burn" title="En train de brûler"><span data-burn="${mm.id}" style="width:${Math.min(1, Math.max(0, mm.burn) / burnMax) * 100}%"></span></span>`}${bar}</span>
+        <small>1 toutes les ${secs(every)}${k > 1 ? ' pour le groupe' : ''} · ${left > 0 ? `tient encore ${secs(left)}` : 'vide'}</small>
       </span>
       <b>${n}/${cap}</b>`;
     return el;
@@ -2005,22 +2043,33 @@ export class Hud implements GestureHandlers {
       for (let i = list.length; i < min; i++) html += '<span class="mslot empty"></span>';
       return html;
     };
-    const any = [...Object.values(mm.inBuf), ...Object.values(mm.outBuf)].some((n) => n > 0);
+    // Un groupe de foreuses : ce qui attend dans tout le groupe, ensemble.
+    const crew = f.drillGroup(mm), all = crew.length > 1 ? crew : [mm];
+    const outAll: Record<string, number> = {};
+    for (const x of all) for (const [t, n] of Object.entries(x.outBuf)) if (n > 0) outAll[t] = (outAll[t] ?? 0) + n;
+    const any = Object.values(mm.inBuf).some((n) => n > 0) || Object.keys(outAll).length > 0;
     const inv = h('div', 'card minv2', `${def.kind === 'crafter' ? `<div class="minv-g"><small>En attente</small><div class="minv-s">${slots(mm.inBuf, 'in', 3)}</div></div>` : ''}
-      <div class="minv-g"><small>Prêt à sortir</small><div class="minv-s">${slots(mm.outBuf, 'out', 2)}</div></div>
+      <div class="minv-g"><small>Prêt à sortir${all.length > 1 ? ' (tout le groupe)' : ''}</small><div class="minv-s">${slots(outAll, 'out', 2)}</div></div>
       <p class="muted small">${any ? `Touche une pile pour la rendre à ${esc(g.look.name)}.` : 'Rien dedans pour l’instant.'}</p>`);
     inv.querySelectorAll<HTMLButtonElement>('.mslot[data-item]').forEach((b) => {
       b.onclick = () => {
         const which = b.dataset.which as 'in' | 'out', t = b.dataset.item!;
-        const n = g.machineToRobot(mm, which, t, (which === 'in' ? mm.inBuf : mm.outBuf)[t] ?? 0);
-        if (!n) this.toast(`L’inventaire de ${g.look.name} est plein`, 'warn');
+        let n = 0, full = false;
+        for (const x of which === 'in' ? [mm] : all) {
+          const want = (which === 'in' ? x.inBuf : x.outBuf)[t] ?? 0;
+          if (!want) continue;
+          const got = g.machineToRobot(x, which, t, want);
+          n += got;
+          if (got < want) { full = true; break; }
+        }
+        if (!n || full) this.toast(`L’inventaire de ${g.look.name} est plein`, 'warn');
         this.refreshSheet();
       };
     });
     body.append(inv);
     // Les tapis branchés : on entre et on sort par où l'on veut, on les compte seulement.
-    const io = f.machineIO(mm);
-    const nin = io.filter((c) => !c.planned && c.io === 'in').length, nout = io.filter((c) => !c.planned && c.io === 'out').length;
+    const io = f.machineIO(mm), ioAll = all.flatMap((x) => (x === mm ? io : f.machineIO(x)));
+    const nin = ioAll.filter((c) => !c.planned && c.io === 'in').length, nout = ioAll.filter((c) => !c.planned && c.io === 'out').length;
     const belts = h('div', 'mrow', `<span class="mrow-ico">${ICONS.tapis}</span><span>${nin || nout ? `${nin} tapis entre${nin > 1 ? 'nt' : ''} · ${nout} sort${nout > 1 ? 'ent' : ''}` : 'Aucun tapis branché'}</span>`);
     body.append(belts);
     // Restes d'une ancienne partie : des entrées ou sorties prévues sans tapis. On peut les effacer.
@@ -3521,7 +3570,7 @@ export class Hud implements GestureHandlers {
       this.overlay.querySelectorAll<HTMLElement>('[data-burn]').forEach((bar) => {
         const mm = this.game.view.machines.get(Number(bar.dataset.burn));
         if (!mm) return;
-        const per = RULES.coalMachineSeconds, max = mm.burn > per ? per * RULES.carburantMult : per;
+        const per = RULES.coalMachineSeconds * (machineDef(mm.type).coalMult ?? 1), max = mm.burn > per ? per * RULES.carburantMult : per;
         bar.style.width = `${Math.min(1, Math.max(0, mm.burn) / max) * 100}%`;
       });
       this.liveTimer += dt;

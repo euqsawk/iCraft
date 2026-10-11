@@ -61,7 +61,7 @@ const base: UnlockEffect = { kind: 'base' };
 export const BRANCHES: Branch[] = [
   {
     id: 'production', label: 'Production', nodes: [
-      n('foreuse', 'Foreuse', 'foreuse', 0, 0, 1, {}, [], 'Posée sur un filon, elle en extrait la matière.', m('foreuse'), ['Filon → Minerai']),
+      n('foreuse', 'Foreuse', 'foreuse', 0, 0, 1, {}, [], 'Posée sur une case de filon, elle en extrait la matière. Collées, les foreuses font un seul groupe, qui sort tout par ses tapis.', m('foreuse'), ['Filon → Minerai']),
       n('four', 'Four', 'four', 0, 1, 1, {}, [], 'Fond le minerai en lingots.', m('four'), ['Fer → Lingot de fer', 'Cuivre → Lingot de cuivre', 'Sable → Verre']),
       n('coffre', 'Coffre', 'coffre', 0, 2, 1, {}, [], 'Garde 100 objets. Les drones y prennent le charbon et ce que demandent le Noyau, le Comptoir et le Laboratoire.', m('coffre')),
       n('broyeur', 'Broyeur', 'broyeur', 1, 0, 2, { plaque_fer: 40 }, ['foreuse'], 'Réduit les roches en poudre.', m('broyeur'), ['Calcaire → Ciment', 'Quartz → Cristal']),

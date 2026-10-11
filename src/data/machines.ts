@@ -37,14 +37,16 @@ export interface MachineDef {
   supply?: number;
   /** Puissance consommée quand elle travaille au courant, en kW (les grosses machines consomment plus). */
   kw?: number;
+  /** Un charbon dure plus longtemps (petite machine : la foreuse 1 × 1 en brûle quatre fois moins). */
+  coalMult?: number;
 }
 
 const r = (inp: Record<string, number>, out: Record<string, number>, time: number): Recipe => ({ in: inp, out, time });
 
 export const MACHINES: Record<string, MachineDef> = {
   foreuse: {
-    id: 'foreuse', name: 'Foreuse', kind: 'drill', coal: true, w: 2, h: 2, cost: 40, unlock: 1, recipes: [], buildable: true,
-    hint: 'Posée sur un filon',
+    id: 'foreuse', name: 'Foreuse', kind: 'drill', coal: true, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true, coalMult: 4,
+    hint: 'Sur un filon · collées, elles font un seul groupe',
   },
   four: {
     id: 'four', name: 'Four', kind: 'crafter', coal: true, w: 2, h: 2, cost: 40, unlock: 1, buildable: true,
@@ -261,7 +263,7 @@ export const ELECTRIC_BASES = ['foreuse', 'four', 'presse', 'tour', 'trefileuse'
 
 /** Consommation au courant, en kW : de 60 kW pour une presse à 400 kW pour une centrifugeuse. */
 const KW: Record<string, number> = {
-  presse: 60, tour: 60, trefileuse: 60, foreuse: 90, super_foreuse: 400, four: 90, broyeur: 120, melangeur: 120,
+  presse: 60, tour: 60, trefileuse: 60, foreuse: 25, super_foreuse: 400, four: 90, broyeur: 120, melangeur: 120,
   assembleur: 150, haut_fourneau: 180, raffinerie: 250, fabricant: 300, centrifugeuse: 400,
 };
 for (const [id, kw] of Object.entries(KW)) if (MACHINES[id]) MACHINES[id].kw = kw;

@@ -1047,3 +1047,6 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .sfill { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
 .sfill .mp-bar { flex: 1; }
 .sfill b:last-child { font-variant-numeric: tabular-nums; font-size: 13px; }
+.mf-cont { flex: 1; height: 10px; border-radius: 3px; background: #E3EDE8; overflow: hidden; }
+.mf-cont > span { display: block; height: 100%; background: #3C4350; border-radius: 3px; }
+.mfuel.low .mf-cont > span { background: var(--coral); }

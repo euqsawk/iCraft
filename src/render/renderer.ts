@@ -85,6 +85,9 @@ interface MachineView {
   label: Text | null;
   built: boolean;
   ore?: string;
+  /** Foreuse 1 × 1 : côtés où une foreuse voisine du même groupe est collée (masque), et texte du nom. */
+  link?: number;
+  labelText?: string;
   made: number;
   pop: number;
   status: string;
@@ -1121,6 +1124,40 @@ export class GameRenderer {
   }
 
   /** Une autre machine touche-t-elle le haut de celle-ci ? */
+  /** Côtés (1 droite, 2 bas, 4 gauche, 8 haut) où une foreuse 1 × 1 construite est collée à celle-ci (construite). */
+  private drillLink(m: Machine): number {
+    if (!m.built) return 0;
+    const f = this.game.view;
+    let mask = 0;
+    for (let d = 0; d < 4; d++) {
+      const o = f.machineAt(m.x + DX[d], m.y + DY[d]);
+      if (o && o.built && o.type === 'foreuse') mask |= 1 << d;
+    }
+    return mask;
+  }
+
+  private leaders = new WeakMap<Machine[], Machine>();
+
+  /** La foreuse en haut à gauche de son groupe : c'est elle qui porte le nom et le voyant. */
+  private drillLeader(m: Machine): Machine {
+    const group = this.game.view.drillGroup(m);
+    if (group.length < 2) return m;
+    let lead = this.leaders.get(group);
+    if (!lead) {
+      lead = group.reduce((a, b) => (b.y < a.y || (b.y === a.y && b.x < a.x) ? b : a));
+      this.leaders.set(group, lead);
+    }
+    return lead;
+  }
+
+  /** Le nom d'un groupe de foreuses : ses minerais (« Fer », « Fer + cuivre »). */
+  private drillGroupName(m: Machine): string {
+    const ores = [...new Set(this.game.view.drillGroup(m).map((x) => x.ore).filter((o): o is string => !!o))];
+    const short = (o: string) => item(o).name.replace('Minerai de ', '').replace("Minerai d'", '').replace('Minerai d’', '');
+    const names = ores.slice(0, 2).map(short).join(' + ') + (ores.length > 2 ? ' …' : '');
+    return names.replace(/^./, (c) => c.toUpperCase()) || 'Foreuse';
+  }
+
   private machineAbove(m: Machine): boolean {
     const f = this.game.view;
     for (let x = m.x; x < m.x + m.w; x++) {
@@ -1158,12 +1195,32 @@ export class GameRenderer {
     const badge = new Graphics();
     const W = def.w * CELL, H = def.h * CELL;
     const isDrill = def.kind === 'drill';
-    const bw = isDrill ? W - 8 : W - 2, bh = isDrill ? H - 8 : H - 2, br = isDrill ? 12 : def.w === 1 ? 7 : 15;
+    const small = m.type === 'foreuse';
+    const bw = small ? W - 2 : isDrill ? W - 8 : W - 2, bh = small ? H - 2 : isDrill ? H - 8 : H - 2, br = small ? 7 : isDrill ? 12 : def.w === 1 ? 7 : 15;
     // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
     const bare = def.kind === 'lamp' || def.kind === 'tree';
     if (bare) {
       icon.scale.set(1.35);
       if (!m.built) icon.alpha = 0.4;
+    } else if (m.built && small) {
+      // Foreuse 1 × 1 : le socle se prolonge jusqu'aux voisines du groupe, elles ne font qu'un bloc.
+      const link = this.drillLink(m);
+      // Les ponts vont jusqu'au bord de la case, et jusqu'aux coins quand une voisine est aussi de l'autre côté.
+      const x0 = link & 4 ? -W / 2 - 0.5 : -bw / 2, x1 = link & 1 ? W / 2 + 0.5 : bw / 2;
+      const y0 = link & 8 ? -H / 2 - 0.5 : -bh / 2, y1 = link & 2 ? H / 2 + 0.5 : bh / 2;
+      const shapes = (dy: number) => {
+        body.roundRect(-bw / 2, -bh / 2 + dy, bw, bh, br);
+        const hx0 = link & 4 ? x0 : 0, hx1 = link & 1 ? x1 : 0, vy0 = link & 8 ? y0 : 0, vy1 = link & 2 ? y1 : 0;
+        if (link & 5) body.rect(hx0, -bh / 2 + dy, hx1 - hx0, bh);
+        if (link & 10) body.rect(-bw / 2, vy0 + dy, bw, vy1 - vy0);
+        // Les coins entre deux voisines (droite et bas, etc.) : le reste des coins reste arrondi.
+        if (link & 1 && link & 2) body.rect(0, dy, x1, y1);
+        if (link & 1 && link & 8) body.rect(0, y0 + dy, x1, -y0);
+        if (link & 4 && link & 2) body.rect(x0, dy, -x0, y1);
+        if (link & 4 && link & 8) body.rect(x0, y0 + dy, -x0, -y0);
+      };
+      shapes(4); body.fill(PALETTE.shadow);
+      shapes(0); body.fill(PALETTE.white);
     } else if (m.built) {
       drawMachineBody(body, bw, bh, br);
     } else {
@@ -1195,7 +1252,7 @@ export class GameRenderer {
     root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
-    return { root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '' };
+    return { root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '', ...(small ? { link: this.drillLink(m) } : {}) };
   }
 
   private buildNoyau(m: Machine): void {
@@ -1225,7 +1282,7 @@ export class GameRenderer {
         continue;
       }
       let v = this.machineViews.get(m.id);
-      if (v && (v.built !== m.built || v.ore !== m.ore)) {
+      if (v && (v.built !== m.built || v.ore !== m.ore || (v.link !== undefined && v.link !== this.drillLink(m)))) {
         v.root.destroy({ children: true });
         this.machineViews.delete(m.id);
         v = undefined;
@@ -1245,16 +1302,24 @@ export class GameRenderer {
       v.icon.scale.set(s * (def.kind === 'lamp' || def.kind === 'tree' ? 1.35 : 1));
       if (m.type === 'four' && m.status === 'working') v.icon.y = Math.sin(this.time * 9) * 0.6;
       // Le nom s'affiche au-dessus de la machine, sauf si une autre machine y est collée (il la recouvrirait).
-      if (v.label) v.label.visible = this.camera.zoom > 0.6 && !this.machineAbove(m);
-      const low = this.game.view.lowFuel(m);
+      // Un groupe de foreuses : le nom, le voyant et les pastilles une seule fois, sur la foreuse en haut à gauche.
+      const lead = v.link === undefined || this.drillLeader(m) === m;
+      if (v.link !== undefined && v.label) {
+        const txt = lead ? this.drillGroupName(m) : '';
+        if (txt !== v.labelText) { v.labelText = txt; v.label.text = txt; }
+      }
+      if (v.label) v.label.visible = lead && this.camera.zoom > 0.6 && !this.machineAbove(m);
+      const low = lead && this.game.view.lowFuel(m);
       v.lamp.visible = low && Math.sin(this.time * (m.fuel <= 0 && m.burn <= 0 ? 12 : 6)) > -0.2;
       // Branchée sur un réseau qui a du courant : un petit éclair dans le coin (elle se passe de charbon).
       const powered = m.built && this.game.view.powered(m);
-      const st = `${m.status}${powered ? '+' : ''}`;
+      const st = lead ? `${m.status}${powered ? '+' : ''}` : 'member';
       if (st !== v.status) {
         v.status = st;
         v.badge.clear();
-        if (m.built && m.status === 'blocked') {
+        if (st === 'member') {
+          // Une foreuse du groupe qui n'est pas la première : rien dans son coin.
+        } else if (m.built && m.status === 'blocked') {
           // Pastille « en pause » dans le coin, sans déborder sur une machine voisine.
           const r = def.w === 1 ? 5.5 : 7, x = def.w * CELL / 2 - 4 - r, y = -def.h * CELL / 2 + 4 + r;
           v.badge.circle(x, y, r).fill(0xffffff).stroke({ width: 2, color: PALETTE.coral });

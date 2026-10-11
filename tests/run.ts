@@ -11,7 +11,7 @@ import { decodeSave, encodeSave } from '../src/save/code.ts';
 import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
-import { ROCKET_NEEDS } from '../src/sim/factory.ts';
+import { ROCKET_NEEDS, type Machine } from '../src/sim/factory.ts';
 import { patchCells } from '../src/world/world.ts';
 import { key } from '../src/sim/geom.ts';
 
@@ -41,6 +41,14 @@ function trace(g: Game, pts: [number, number][]): BeltTracer {
 
 function run(g: Game, seconds: number): void {
   for (let i = 0; i < seconds * 30; i++) g.tick(1 / 30);
+}
+
+/** Un carré de 2 × 2 foreuses 1 × 1 (un groupe, comme une ancienne foreuse) ; renvoie la première. */
+function drills(g: Game, x: number, y: number): Machine {
+  const placed: Machine[] = [];
+  for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]]) { const m = g.placeMachine('foreuse', x + i, y + j); if (m) placed.push(m); }
+  assert(placed.length, `pas de foreuse en ${x}, ${y}`);
+  return placed[0];
 }
 
 /** Remplit de charbon toutes les machines construites. */
@@ -609,6 +617,48 @@ test('deux machines collées se relient sans tapis', () => {
   assert(!g.linkMachines(four, far), 'pas de liaison entre machines éloignées');
 });
 
+test('foreuses 1 × 1 : collées en L, un seul groupe ; deux sorties se partagent le minerai, le charbon se partage', () => {
+  const g = new Game('TEST-G1');
+  g.money = 10000; g.world.reveal(-10, -3, 20); g.drones[0].cargo = null;
+  const ds = [[-14, -5], [-13, -5], [-12, -5], [-12, -4], [-12, -3]].map(([x, y]) => g.placeMachine('foreuse', x, y)!);
+  assert(ds.every(Boolean), 'cinq foreuses posées sur le filon');
+  const a = g.placeMachine('coffre', -18, -5)!, b = g.placeMachine('coffre', -12, 1)!;
+  assert(g.placeBelts(trace(g, [[-13.5, -4.5], [-17.5, -4.5]]).result()), 'sortie A');
+  assert(g.placeBelts(trace(g, [[-11.5, -2.5], [-11.5, 1.5]]).result()), 'sortie B');
+  run(g, 40);
+  assert(ds.every((m) => m.built) && g.factory.drillGroup(ds[0]).length === 5, `groupe : ${g.factory.drillGroup(ds[0]).length}`);
+  assert(g.factory.drillOutlets(ds[1]).length === 2, 'deux foreuses ont une sortie');
+  for (const m of ds) { m.fuel = 0; m.burn = 0; m.made = 0; m.outBuf = {}; }
+  a.inBuf = {}; b.inBuf = {};
+  ds[2].fuel = 10; // tout le charbon dans une seule foreuse
+  run(g, 120);
+  assert(ds.every((m) => m.made > 0), `toutes travaillent avec le charbon d’une seule : ${ds.map((m) => m.made).join(', ')}`);
+  const na = a.inBuf.fer ?? 0, nb = b.inBuf.fer ?? 0;
+  assert(na + nb > 30 && Math.abs(na - nb) <= Math.max(3, (na + nb) * 0.15), `partage : ${na} / ${nb}`);
+});
+test('ancienne partie : une foreuse 2 × 2 devient quatre foreuses 1 × 1 (cases sans filon remboursées)', () => {
+  const g = new Game('TEST-G2');
+  g.world.reveal(-10, -3, 20);
+  const s = g.factory.serialize();
+  delete s.drills1;
+  const old = (id: number, x: number, y: number) => ({ id, type: 'foreuse', x, y, built: true, inBuf: {}, outBuf: { fer: 3 }, fuel: 7, burn: 0, craft: null, drillT: 0, made: 12 });
+  const cells = (x: number, y: number) => [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
+  const ok = (x: number, y: number) => g.factory.checkMachine('foreuse', x, y).ok;
+  assert(cells(-13, -4).every(([x, y]) => ok(x, y)), 'un carré tout sur le filon');
+  const missing = cells(-14, -2).filter(([x, y]) => !ok(x, y)).length;
+  assert(missing > 0 && missing < 4, 'un carré à moitié sur le filon');
+  s.machines.push(old(900, -13, -4), old(901, -14, -2));
+  s.nextId = 902;
+  g.factory.load(s);
+  const at = (x: number, y: number) => g.factory.machineAt(x, y);
+  const four = cells(-13, -4).map(([x, y]) => at(x, y));
+  assert(four.every((m) => m?.type === 'foreuse' && m.w === 1), 'quatre petites foreuses');
+  assert(four[0]!.id === 900 && four[0]!.fuel === 7 && four[0]!.outBuf.fer === 3, 'la première garde son numéro, son charbon et son contenu');
+  assert(new Set(four.map((m) => m!.id)).size === 4, 'numéros distincts');
+  assert(cells(-14, -2).filter(([x, y]) => at(x, y)).length === 4 - missing, 'seulement sur le filon');
+  assert(g.factory.legacyRefund === missing * MACHINES.foreuse.cost, `remboursé : ${g.factory.legacyRefund}`);
+  assert(g.factory.serialize().drills1 === 1, 'nouvelle sauvegarde marquée');
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');
@@ -621,7 +671,7 @@ test('une foreuse sur du charbon s’alimente toute seule', () => {
   run(g, 40);
   assert((m.outBuf.charbon ?? 0) > 0, 'une fois sa case pleine, elle envoie le reste');
 });
-test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => {
+test('une machine sans charbon attend ; un charbon dure 40 s de travail pour une petite foreuse', () => {
   const g = new Game('TEST-20');
   g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
   const m = g.placeMachine('foreuse', -13, -5)!;
@@ -631,8 +681,10 @@ test('une machine sans charbon attend ; un charbon dure 10 s de travail', () => 
   run(g, 5);
   assert(m.made === 0 && m.status === 'nofuel', `état ${m.status}`);
   g.factory.addFuel(m, 1);
-  run(g, 12);
-  assert(m.fuel === 0 && m.made >= 4 && m.made <= 6, `fabriqués avec 1 charbon : ${m.made}`);
+  // Une foreuse 1 × 1 brûle quatre fois moins : un charbon dure 40 s de travail.
+  run(g, 45);
+  const expect = 40 * m.rate!;
+  assert(m.fuel === 0 && Math.abs(m.made - expect) <= 1.5, `fabriqués avec 1 charbon : ${m.made} (attendu ${expect.toFixed(1)})`);
   assert(g.factory.lowFuel(m), 'le voyant devrait clignoter');
 });
 test('le drone de départ dépose ses 10 charbons dans la foreuse qui clignote', () => {
@@ -704,7 +756,7 @@ test('le robot mine à l’arrêt sur un filon et se ravitaille avec son charbon
 test('coffre : rempli par un tapis, vidé par un tapis, les drones y prennent le charbon', () => {
   const g = new Game('TEST-24');
   g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
-  const drill = g.placeMachine('foreuse', -12, 9)!;
+  const drill = drills(g, -12, 9);
   const chest = g.placeMachine('coffre', -7, 9)!;
   g.placeBelts(trace(g, [[-11.5, 9.5], [-8.5, 9.5], [-7.5, 9.5]]).result());
   run(g, 40);
