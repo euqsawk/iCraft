@@ -5,6 +5,7 @@ import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { patchCells, RICHNESS_RATE, type Patch, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
 import { addTo, burnOne, takeOf } from './fuel.ts';
+import { fixedPorts, hasFixedPorts, type FixedPort } from '../data/ports.ts';
 
 export interface BeltItem {
   t: string;
@@ -105,7 +106,12 @@ export interface Machine {
   /** Atelier (module) : l'usine rangée dedans, et le côté de son intérieur en cases. */
   inner?: Factory;
   size?: number;
+  /** Orientation (0 à 3, en quarts de tour) : elle place les entrées et sorties imposées. */
+  rot?: number;
 }
+
+/** Un emplacement imposé d'une machine, avec sa case dehors en coordonnées absolues. */
+export type PlacedPort = FixedPort & { x: number; y: number };
 
 /**
  * Une entrée ou une sortie sur un côté d'une machine. En auto (sans `lock`), l'objet n'est qu'une étiquette
@@ -195,7 +201,7 @@ export const FLOW_WINDOW = 20;
 
 type Next =
   | { kind: 'belt'; belt: Belt; side: boolean }
-  | { kind: 'machine'; machine: Machine }
+  | { kind: 'machine'; machine: Machine; port?: 'in' | 'fuel' }
   | null;
 
 export interface PlaceCheck {
@@ -352,6 +358,65 @@ export class Factory {
   }
 
 
+  // ---------- Entrées et sorties imposées ----------
+
+  /** Les entrées et sorties imposées de la machine (cases dehors, absolues), ou null si elle n'en a pas. */
+  fixedPortsOf(m: { type: string; x: number; y: number; w: number; h: number; rot?: number }): PlacedPort[] | null {
+    if (!hasFixedPorts(m.type)) return null;
+    const rot = m.rot ?? 0;
+    const c = this.portCache.get(m);
+    if (c && c.x === m.x && c.y === m.y && c.rot === rot) return c.list;
+    const list = fixedPorts(m.type, rot, m.w, m.h).map((p) => ({ ...p, x: m.x + p.rx, y: m.y + p.ry }));
+    this.portCache.set(m, { x: m.x, y: m.y, rot, list });
+    return list;
+  }
+  private portCache = new WeakMap<object, { x: number; y: number; rot: number; list: PlacedPort[] }>();
+
+  /** L'emplacement imposé de la machine sur cette case dehors (entrée, sortie ou charbon), s'il y en a un. */
+  fixedPortAt(m: Machine, x: number, y: number, io?: 'in' | 'out' | 'fuel'): PlacedPort | undefined {
+    return this.fixedPortsOf(m)?.find((p) => p.x === x && p.y === y && (!io || p.io === io));
+  }
+
+  /** Un tapis sur cette case peut-il partir de la machine (sa sortie, ou n'importe où sans emplacements imposés) ? */
+  canOutputAt(m: Machine, x: number, y: number): boolean {
+    const fp = this.fixedPortsOf(m);
+    return !fp || fp.some((p) => p.io === 'out' && p.x === x && p.y === y);
+  }
+
+  /** Ce qu'un tapis sur cette case peut faire entrer dans la machine : 'in', 'fuel', rien (null) ; undefined sans emplacements imposés. */
+  inputAt(m: Machine, x: number, y: number): 'in' | 'fuel' | null | undefined {
+    const fp = this.fixedPortsOf(m);
+    if (!fp) return undefined;
+    const p = fp.find((q) => q.io !== 'out' && q.x === x && q.y === y);
+    return p ? (p.io as 'in' | 'fuel') : null;
+  }
+
+  /** Un tapis en (x, y) qui pointe vers (tx, ty) peut-il y donner ? Faux seulement contre une machine, hors de ses entrées. */
+  canFeed(x: number, y: number, tx: number, ty: number): boolean {
+    const m = this.machineAt(tx, ty);
+    return !m || this.inputAt(m, x, y) !== null;
+  }
+
+  /** Les entrées du charbon de la machine (cases dehors), branchées ou non. */
+  fuelPorts(m: Machine): PlacedPort[] {
+    return (this.fixedPortsOf(m) ?? []).filter((p) => p.io === 'fuel');
+  }
+
+  /**
+   * Deux machines collées : par où la seconde reçoit ce que sort la première.
+   * null : elles ne se relient pas (la sortie de l'une ne donne pas dans une entrée de l'autre) ;
+   * sinon les sortes d'entrées touchées ('in', 'fuel'), ou 'free' si la seconde n'a pas d'emplacements imposés.
+   */
+  linkVia(from: Machine, to: Machine): { in: boolean; fuel: boolean } | 'free' | null {
+    const fo = this.fixedPortsOf(from);
+    if (fo && !fo.some((p) => p.io === 'out' && this.inside(to, p.x, p.y))) return null;
+    const ft = this.fixedPortsOf(to);
+    if (!ft) return 'free';
+    const touch = ft.filter((p) => p.io !== 'out' && this.inside(from, p.x, p.y));
+    if (!touch.length) return null;
+    return { in: touch.some((p) => p.io === 'in'), fuel: touch.some((p) => p.io === 'fuel') };
+  }
+
   /** Les cases autour d'une machine, sur ses côtés (sans les coins) : là où une entrée ou une sortie peut se brancher. */
   perimeter(m: Machine): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; d: Dir }[] {
     const out: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; d: Dir }[] = [];
@@ -388,6 +453,35 @@ export class Factory {
     this.refresh();
     const res: { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; planned: boolean; port?: number; lock?: boolean }[] = [];
     const outs = new Set(this.outputs.get(m) ?? []);
+    const fixed = this.fixedPortsOf(m);
+    if (fixed) {
+      // Entrées et sorties imposées : toujours là, branchées ou non (le charbon a sa propre entrée, à part).
+      const sides = ['right', 'bottom', 'left', 'top'] as const;
+      for (const p of fixed) {
+        if (p.io === 'fuel') continue;
+        const io = p.io;
+        const b = this.beltAt(p.x, p.y);
+        const k = key(p.x, p.y);
+        const portAt = m.ports?.find((q) => q.io === io && m.x + q.rx === p.x && m.y + q.ry === p.y);
+        const pi = this.portIndex(m, p.x, p.y, io);
+        let linked = false;
+        if (b) {
+          if (io === 'in') {
+            const nxt = this.nextOf.get(b);
+            linked = (nxt?.kind === 'machine' && nxt.machine === m) || [b.split, b.split2].some((d) => d !== undefined && b.x + DX[d] === p.x - DX[p.d] && b.y + DY[d] === p.y - DY[p.d]);
+          } else linked = outs.has(b);
+        }
+        if (linked && b) {
+          const item = io === 'in'
+            ? (portAt?.lock ? portAt.item : undefined) ?? m.seenIn?.[k] ?? b.items[0]?.t ?? portAt?.item
+            : (portAt?.lock ? portAt.item : undefined) ?? m.seenOut?.[k] ?? portAt?.item ?? b.items[b.items.length - 1]?.t ?? this.likelyOutput(m);
+          res.push({ x: p.x, y: p.y, side: sides[p.d], io, item, planned: false, lock: portAt?.lock, port: pi });
+        } else {
+          res.push({ x: p.x, y: p.y, side: sides[p.d], io, item: portAt?.item, planned: true, lock: portAt?.lock, port: pi });
+        }
+      }
+      return res;
+    }
     for (const c of this.perimeter(m)) {
       const b = this.beltAt(c.x, c.y);
       if (!b) continue;
@@ -577,7 +671,7 @@ export class Factory {
     return { ok: true, belts };
   }
 
-  addMachine(type: string, x: number, y: number, built = false, id?: number): Machine {
+  addMachine(type: string, x: number, y: number, built = false, id?: number, rot = 0): Machine {
     const def = machineDef(type);
     const check = def.kind === 'drill' ? this.checkMachine(type, x, y, undefined, true) : { ok: true } as PlaceCheck;
     if (id === undefined) id = this.nextId++;
@@ -587,6 +681,7 @@ export class Factory {
       inBuf: {}, outBuf: {}, fuel: 0, burn: 0, craft: null, drillT: 0,
       status: 'idle', rrOut: 0, rrRecipe: 0, made: 0,
       ore: check.ore, rate: check.rate,
+      ...(rot && hasFixedPorts(type) ? { rot: ((rot % 4) + 4) % 4 } : {}),
     };
     this.machines.set(m.id, m);
     this.indexMachine(m);
@@ -602,16 +697,35 @@ export class Factory {
     for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) this.cellMachine.delete(key(m.x + i, m.y + j));
   }
 
-  moveMachine(m: Machine, x: number, y: number): boolean {
+  moveMachine(m: Machine, x: number, y: number, rot?: number): boolean {
     const check = this.checkMachine(m.type, x, y, m, true);
     if (check.ok && check.belts) return false;
     if (!check.ok) return false;
     this.unindexMachine(m);
     m.x = x; m.y = y;
+    if (rot !== undefined) this.setRotation(m, rot);
     if (check.ore) { m.ore = check.ore; m.rate = check.rate; }
     this.indexMachine(m);
     this.dirty = true;
     return true;
+  }
+
+  /** Tourne la machine (ses entrées et sorties imposées tournent avec elle, et ses filtres aussi). */
+  setRotation(m: Machine, rot: number): void {
+    if (!hasFixedPorts(m.type)) return;
+    const r = ((rot % 4) + 4) % 4;
+    const turn = (r - (m.rot ?? 0) + 4) % 4;
+    if (!turn) return;
+    if (m.ports?.length) {
+      const size = Math.max(m.w, m.h);
+      for (const p of m.ports) {
+        for (let i = 0; i < turn; i++) { const nx = size - 1 - p.ry; p.ry = p.rx; p.rx = nx; }
+      }
+    }
+    // Les liaisons de côté et le dernier objet vu dépendent des cases : on les oublie.
+    delete m.seenIn; delete m.seenOut;
+    if (r) m.rot = r; else delete m.rot;
+    this.dirty = true;
   }
 
   removeMachine(m: Machine): void {
@@ -1162,11 +1276,11 @@ export class Factory {
       if (b.split2 !== undefined) this.split2Of.set(b, this.linkFor(b, b.split2));
       // Sortie de machine : la case d'où vient le tapis est dans une machine.
       const fm = this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
-      if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
+      if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm) && this.canOutputAt(fm, b.x, b.y)) this.outputs.get(fm)!.push(b);
       // Liaison de côté : la machine voisine dépose au milieu de la case.
       for (const fd of b.feeds ?? []) {
         const lm = this.machineAt(b.x + DX[fd], b.y + DY[fd]);
-        if (lm && lm !== fm && !(nxt?.kind === 'machine' && nxt.machine === lm) && !this.outputs.get(lm)!.includes(b)) this.outputs.get(lm)!.push(b);
+        if (lm && lm !== fm && !(nxt?.kind === 'machine' && nxt.machine === lm) && !this.outputs.get(lm)!.includes(b) && this.canOutputAt(lm, b.x, b.y)) this.outputs.get(lm)!.push(b);
       }
     }
 
@@ -1209,7 +1323,11 @@ export class Factory {
       return { kind: 'belt', belt: nb, side: nb.inDir !== dir };
     }
     const m = this.machineAt(nx, ny);
-    return m ? { kind: 'machine', machine: m } : null;
+    if (!m) return null;
+    // Entrées imposées : le tapis ne donne dans la machine que depuis une de ses entrées (ingrédients ou charbon).
+    const via = this.inputAt(m, nx - DX[dir], ny - DY[dir]);
+    if (via === undefined) return { kind: 'machine', machine: m };
+    return via ? { kind: 'machine', machine: m, port: via } : null;
   }
 
   /** La dérivation d'un séparateur (pour les tests). */
@@ -1352,6 +1470,27 @@ export class Factory {
     m.inBuf[item] = (m.inBuf[item] ?? 0) + 1;
   }
 
+  /**
+   * Par une entrée imposée : l'entrée du charbon ne prend que du combustible (pour la case carburant),
+   * une entrée d'ingrédients ne prend que ce qui sert à une recette (le charbon du fourneau, par exemple).
+   * Sans entrée imposée (`port` absent), comme avant.
+   */
+  canAcceptVia(m: Machine, item: string, port?: 'in' | 'fuel'): boolean {
+    if (!port) return this.canAccept(m, item);
+    if (!m.built) return false;
+    if (port === 'fuel') return isFuel(item) && this.fuelRoom(m) > 0;
+    const def = machineDef(m.type);
+    if (def.kind !== 'crafter') return false;
+    if (!def.recipes.some((r) => r.in[item])) return false;
+    return (m.inBuf[item] ?? 0) < RULES.machineBuffer;
+  }
+
+  private giveVia(m: Machine, item: string, port?: 'in' | 'fuel'): void {
+    if (!port) { this.give(m, item); return; }
+    if (port === 'fuel') { addTo(m, 1, item); return; }
+    m.inBuf[item] = (m.inBuf[item] ?? 0) + 1;
+  }
+
   /** Retire des objets d'un coffre ; renvoie la quantité prise. */
   takeFromStorage(m: Machine, item: string, n: number, buf: Record<string, number> = this.outOf(m)): number {
     const k = Math.min(n, buf[item] ?? 0);
@@ -1381,7 +1520,7 @@ export class Factory {
   /** La suite peut-elle prendre un objet maintenant ? */
   private canTake(n: Next, item: string): boolean {
     if (!n) return false;
-    if (n.kind === 'machine') return this.canAccept(n.machine, item);
+    if (n.kind === 'machine') return this.canAcceptVia(n.machine, item, n.port);
     if (!n.belt.built) return false;
     if (n.side) return this.roomAt(n.belt, 0.5);
     const items = n.belt.items;
@@ -1499,11 +1638,11 @@ export class Factory {
             } else {
               it.p = 1;
             }
-          } else if (nxt.kind === 'machine' && this.canAccept(nxt.machine, it.t) && (this.portFilter(nxt.machine, b, 'in') ?? it.t) === it.t) {
+          } else if (nxt.kind === 'machine' && this.canAcceptVia(nxt.machine, it.t, nxt.port) && (nxt.port === 'fuel' || (this.portFilter(nxt.machine, b, 'in') ?? it.t) === it.t)) {
             items.shift(); i--;
             if (b.meter) this.meterHit(b, it.t);
-            (nxt.machine.seenIn ??= {})[key(b.x, b.y)] = it.t;
-            this.give(nxt.machine, it.t);
+            if (nxt.port !== 'fuel') (nxt.machine.seenIn ??= {})[key(b.x, b.y)] = it.t;
+            this.giveVia(nxt.machine, it.t, nxt.port);
           } else {
             it.p = 1;
           }
@@ -1644,11 +1783,21 @@ export class Factory {
     for (const id of m.links!) {
       const to = this.machines.get(id);
       if (!to || !to.built) continue;
-      const t = Object.keys(buf).find((k) => buf[k] > 0 && this.canAccept(to, k));
+      // Entrées et sorties imposées : la sortie de l'une doit donner dans une entrée de l'autre.
+      const via = this.linkVia(m, to);
+      if (!via) continue;
+      const port = (k: string): 'in' | 'fuel' | undefined | null => {
+        if (via === 'free') return this.canAccept(to, k) ? undefined : null;
+        if (via.in && this.canAcceptVia(to, k, 'in')) return 'in';
+        if (via.fuel && this.canAcceptVia(to, k, 'fuel')) return 'fuel';
+        return null;
+      };
+      const t = Object.keys(buf).find((k) => buf[k] > 0 && port(k) !== null);
       if (!t) continue;
+      const p = port(t);
       buf[t]--;
       if (buf[t] === 0 && buf === m.inBuf) delete buf[t];
-      this.give(to, t);
+      this.giveVia(to, t, p ?? undefined);
       m.linkT = 0;
       return;
     }
@@ -1830,6 +1979,8 @@ export class Factory {
         ...(m.plan !== undefined ? { plan: m.plan } : {}), ...(m.ports?.length ? { ports: m.ports.map((p) => ({ ...p })) } : {}),
         ...(m.seenIn ? { seenIn: { ...m.seenIn } } : {}), ...(m.seenOut ? { seenOut: { ...m.seenOut } } : {}),
         ...(m.charge ? { charge: Math.round(m.charge) } : {}),
+        // Toujours écrite pour les machines à entrées imposées (son absence signale une partie d'avant, à orienter).
+        ...(hasFixedPorts(m.type) ? { rot: m.rot ?? 0 } : {}),
         ...(m.inner ? { inner: m.inner.serialize(), size: m.size, ore: m.ore, rate: m.rate } : m.ore && this.freeEnergy ? { ore: m.ore, rate: m.rate } : {}),
       })),
     };
@@ -1860,12 +2011,15 @@ export class Factory {
       }
     }
     this.nextId = 1;
+    // Parties d'avant les entrées imposées : chaque machine prend l'orientation qui garde le plus de tapis branchés.
+    const unturned: Machine[] = [];
     for (const sm of s.machines) {
       // Chaque machine garde son numéro. (Avant, un numéro provisoire pouvait effacer
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
       sm.type = baseType(sm.type); // les anciennes « machines électriques » redeviennent des machines normales
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
-      const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
+      const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id, typeof sm.rot === 'number' ? sm.rot : 0);
+      if (typeof sm.rot !== 'number' && hasFixedPorts(sm.type)) unturned.push(m);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
       if (sm.links?.length) m.links = [...sm.links];
@@ -1903,6 +2057,33 @@ export class Factory {
       if (owner.ports?.some((p) => p.rx === rx && p.ry === ry)) continue;
       (owner.ports ??= []).push({ rx, ry, io: 'out', ...(items[0] ? { item: items[0], lock: true } : {}) });
     }
+    for (const m of unturned) this.orientToBelts(m);
+    this.dirty = true;
+  }
+
+  /**
+   * Choisit l'orientation qui branche le plus de tapis déjà là (pour les parties d'avant les entrées imposées),
+   * et ne garde que les filtres posés sur une entrée ou une sortie de cette orientation.
+   */
+  orientToBelts(m: Machine): void {
+    let best = 0, bestScore = -1;
+    for (let r = 0; r < 4; r++) {
+      let score = 0;
+      for (const p of this.fixedPortsOf({ ...m, rot: r }) ?? []) {
+        const b = this.beltAt(p.x, p.y);
+        if (!b) continue;
+        const toward = (DX[b.dir] === -DX[p.d] && DY[b.dir] === -DY[p.d]) || [b.split, b.split2].some((d) => d !== undefined && DX[d] === -DX[p.d] && DY[d] === -DY[p.d]);
+        const away = (DX[b.inDir] === DX[p.d] && DY[b.inDir] === DY[p.d]) || (b.feeds ?? []).some((d) => DX[d] === -DX[p.d] && DY[d] === -DY[p.d]);
+        if (p.io === 'out' ? away : toward) score += p.io === 'fuel' ? 1 : 2;
+      }
+      if (score > bestScore) { best = r; bestScore = score; }
+    }
+    if (best) m.rot = best; else delete m.rot;
+    const fp = this.fixedPortsOf(m)!;
+    if (m.ports) {
+      m.ports = m.ports.filter((q) => fp.some((p) => p.io === q.io && p.x === m.x + q.rx && p.y === m.y + q.ry));
+      if (!m.ports.length) delete m.ports;
+    }
     this.dirty = true;
   }
 }
@@ -1923,6 +2104,7 @@ export interface FactorySave {
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
     inner?: FactorySave; size?: number; ore?: string; rate?: number; charge?: number;
     plan?: number; ports?: MachinePort[]; seenIn?: Record<number, string>; seenOut?: Record<number, string>;
+    rot?: number;
   }[];
 }
 

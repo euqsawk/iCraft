@@ -25,6 +25,7 @@ import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS, UNLOCK_ICON } from './nodeIcons.ts';
 import { swipeToClose } from './swipe.ts';
+import { hasFixedPorts } from '../data/ports.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'transport';
 
@@ -106,6 +107,9 @@ export class Hud implements GestureHandlers {
   private tool: Tool = 'none';
   private machineType: string | null = null;
   private moving: Machine | null = null;
+  /** Orientation de la machine qu'on pose ou qu'on déplace (bouton Tourner, en bas à gauche). */
+  private placeRot = 0;
+  private rotateBtn: HTMLButtonElement | null = null;
   /** Copie d'atelier en cours de pose (mode déplacement, mais on pose une copie). */
   private copying: Machine | null = null;
   /** Plan d'atelier en cours de pose (glissé depuis la palette). */
@@ -505,6 +509,7 @@ export class Hud implements GestureHandlers {
           this.root.classList.add('dragging-machine');
           trash = h('div', 'drop-trash', `${ICONS.trash}<span>Lâche ici pour annuler</span>`);
           this.root.append(trash);
+          this.showRotate(hasFixedPorts(type));
           this.closePopover();
         } else return;
       }
@@ -533,12 +538,13 @@ export class Hud implements GestureHandlers {
       this.root.classList.remove('dragging-machine');
       const cancel = overTrash(ev);
       trash?.remove();
+      this.showRotate(false);
       this.dragEnded = true;
       setTimeout(() => { this.dragEnded = false; }, 350);
       const pv = this.r.preview;
       if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && !cancel) {
         if (this.placingPlan) this.game.placePlan(this.placingPlan.save, this.placingPlan.size, pv.x, pv.y);
-        else this.game.placeMachine(type, pv.x, pv.y);
+        else this.game.placeMachine(type, pv.x, pv.y, this.placeRot);
       }
       this.placingPlan = null;
       this.r.preview = null;
@@ -606,6 +612,30 @@ export class Hud implements GestureHandlers {
   }
 
   /**
+   * Bouton Tourner, en bas à gauche, pendant qu'on glisse une machine (ou qu'on la déplace) :
+   * chaque toucher la fait tourner d'un quart de tour, avec ses entrées et sa sortie.
+   */
+  private showRotate(on: boolean): void {
+    if (!on) { this.rotateBtn?.remove(); this.rotateBtn = null; return; }
+    if (this.rotateBtn) return;
+    const b = h('button', 'rotate-btn', `${ICONS.rotate}<span>Tourner</span>`) as HTMLButtonElement;
+    b.setAttribute('aria-label', 'Tourner la machine');
+    // Au doigt posé (pas au relâché) : on tourne avec un second doigt pendant que le premier tient la machine.
+    b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.rotatePlacement(); });
+    b.addEventListener('click', (e) => e.stopPropagation());
+    this.root.append(b);
+    this.rotateBtn = b;
+  }
+
+  private rotatePlacement(): void {
+    this.placeRot = (this.placeRot + 1) % 4;
+    this.rotateBtn?.animate([{ transform: 'rotate(-90deg)' }, { transform: 'rotate(0deg)' }], { duration: 180, easing: 'ease-out' });
+    if (this.dragAt && this.r.preview?.kind === 'place') { this.updatePlacement(this.dragAt.x, this.dragAt.y); return; }
+    // En déplacement, sans doigt sur la carte : la machine tourne sur place, tout de suite.
+    if (this.tool === 'move' && this.moving && !this.copying) this.game.rotateMachine(this.moving, this.placeRot);
+  }
+
+  /**
    * Mode déplacement : la machine est entourée d'un cadre qui pulse, un bandeau dit quoi faire
    * (avec Annuler), et son fantôme suit le doigt.
    */
@@ -614,6 +644,8 @@ export class Hud implements GestureHandlers {
     this.setTool('move');
     this.moving = m;
     this.r.movingId = m.id;
+    this.placeRot = m.rot ?? 0;
+    this.showRotate(hasFixedPorts(m.type));
     this.root.querySelector('.move-banner')?.remove();
     const def = machineDef(m.type);
     const banner = h('div', 'move-banner');
@@ -630,6 +662,7 @@ export class Hud implements GestureHandlers {
     if (t !== 'move') {
       this.r.movingId = null;
       this.root.querySelector('.move-banner')?.remove();
+      this.showRotate(false);
     }
     this.tool = t;
     // Câble : mode électricité, on voit les câbles sous les blocs et les machines alimentées.
@@ -709,7 +742,7 @@ export class Hud implements GestureHandlers {
     const p = this.placeAt(sx, sy, type);
     const def = machineDef(type);
     const check = this.game.view.checkMachine(type, p.x, p.y, this.copying ? undefined : this.moving ?? undefined, true);
-    this.r.preview = { kind: 'place', type, x: p.x, y: p.y, ok: check.ok, ore: check.ore };
+    this.r.preview = { kind: 'place', type, x: p.x, y: p.y, ok: check.ok, ore: check.ore, rot: this.placeRot };
     // Guides d'alignement avec les machines voisines.
     const cx = (p.x + def.w / 2) * CELL, cy = (p.y + def.h / 2) * CELL;
     const guides: { x0: number; y0: number; x1: number; y1: number }[] = [];
@@ -720,7 +753,8 @@ export class Hud implements GestureHandlers {
       else if (Math.abs(my - cy) < 1 && Math.abs(mx - cx) < CELL * 14) guides.push({ x0: cx, y0: cy, x1: mx, y1: my });
     }
     this.r.guides = guides;
-    const s = this.r.camera.worldToScreen(cx, p.y * CELL);
+    // Au-dessus des pastilles de ses entrées et sorties, pour qu'elles restent visibles.
+    const s = this.r.camera.worldToScreen(cx, (p.y - (hasFixedPorts(type) ? 0.75 : 0)) * CELL);
     const onBelt = check.ok && check.belts ? ' · sur le tapis' : '';
     // Une foreuse sur un filon : ce qu'elle va extraire, en direct.
     if (def.kind === 'drill' && check.ok && check.ore) {
@@ -999,11 +1033,11 @@ export class Hud implements GestureHandlers {
         const t = this.tracer;
         this.game.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir, jump: t.splitJump } : undefined);
       } else if (this.tool === 'machine' && pv?.kind === 'place' && this.machineType) {
-        this.game.placeMachine(this.machineType, pv.x, pv.y);
+        this.game.placeMachine(this.machineType, pv.x, pv.y, this.placeRot);
       } else if (this.tool === 'move' && pv?.kind === 'place' && this.moving && this.copying) {
         if (this.game.copyAtelier(this.copying, pv.x, pv.y)) this.setTool('none');
       } else if (this.tool === 'move' && pv?.kind === 'place' && this.moving) {
-        this.game.moveMachine(this.moving, pv.x, pv.y);
+        this.game.moveMachine(this.moving, pv.x, pv.y, hasFixedPorts(this.moving.type) ? this.placeRot : undefined);
         this.setTool('none');
       }
     }
@@ -1103,6 +1137,7 @@ export class Hud implements GestureHandlers {
         ${inChips ? `<p>${this.game.view.isStop(m) ? 'Départs' : def.kind === 'storage' || def.kind === 'sell' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
         ${outChips ? `<p>${this.game.view.isStop(m) ? 'Arrivées' : 'Prêt à sortir'}</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
+          ${hasFixedPorts(m.type) ? `<button class="btn" data-act="rotate">${ICONS.rotate}Tourner</button>` : ''}
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
           <button class="btn danger" data-act="del">${ICONS.trash}${m.built ? 'Supprimer' : 'Annuler'}</button>
         </div>`;
@@ -1110,6 +1145,8 @@ export class Hud implements GestureHandlers {
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeMachine(m); this.closePopover(); };
       const mv = p.querySelector<HTMLButtonElement>('[data-act="move"]');
       if (mv) mv.onclick = () => { this.closePopover(); this.startMove(m); };
+      const rt = p.querySelector<HTMLButtonElement>('[data-act="rotate"]');
+      if (rt) rt.onclick = () => { this.game.rotateMachine(m); this.renderPopover(); };
       p.querySelectorAll<HTMLButtonElement>('[data-choice]').forEach((b) => {
         b.onclick = () => { f.setChoice(m, b.dataset.choice!); this.renderPopover(); };
       });
@@ -1858,6 +1895,11 @@ export class Hud implements GestureHandlers {
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(mm); };
       const del = this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close);
+      if (hasFixedPorts(mm.type)) {
+        const rt = h('button', 'btn', `${ICONS.rotate}Tourner`);
+        rt.onclick = () => { g.rotateMachine(mm); this.refreshSheet(); };
+        acts.append(rt);
+      }
       acts.append(mv, del);
       sheet.append(acts);
     }, true);
@@ -1949,14 +1991,32 @@ export class Hud implements GestureHandlers {
     if (def.kind === 'drill' && mm.ore) maxOut[mm.ore] = mm.rate ?? 0;
     // Le combustible : ce qu'elle brûle en travaillant, si elle n'est pas au courant.
     if (def.coal && !f.powered(mm)) for (const t of ['charbon', 'carburant']) if (maxIn[t] === undefined) maxIn[t] = 1 / (RULES.coalMachineSeconds * (t === 'carburant' ? RULES.carburantMult : 1));
-    type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number; x?: number; y?: number; lock?: boolean };
+    type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number; x?: number; y?: number; lock?: boolean; fuel?: boolean };
     const io = f.machineIO(mm);
+    const fixed = !!f.fixedPortsOf(mm);
     const entries: Entry[] = io.map((c) => ({ side: c.side, io: c.io, item: c.item, kind: c.planned ? 'planned' : 'belt', port: c.port, x: c.x, y: c.y, lock: c.lock }));
+    // Entrées et sorties imposées : l'entrée du charbon (chevron noir) a sa carte, et celles encore libres
+    // montrent ce qu'on attend d'y brancher (les ingrédients de la recette, dans l'ordre).
+    if (fixed) {
+      const sideOf = ['right', 'bottom', 'left', 'top'] as const;
+      if (!f.powered(mm)) for (const p of f.fuelPorts(mm)) {
+        const b = f.beltAt(p.x, p.y), nx = b ? f.next(b) : null;
+        const on = nx?.kind === 'machine' && nx.machine === mm;
+        entries.push({ side: sideOf[p.d], io: 'in', item: (mm.carb ?? 0) > 0 ? 'carburant' : 'charbon', kind: on ? 'belt' : 'planned', x: p.x, y: p.y, fuel: true });
+      }
+      const wantIn = Object.keys(maxIn).filter((k) => !(isFuel(k) && !rec?.in[k]) && !entries.some((e) => e.io === 'in' && e.item === k));
+      const wantOut = Object.keys(maxOut).filter((k) => !entries.some((e) => e.io === 'out' && e.item === k));
+      for (const e of entries) {
+        if (e.item || e.fuel) continue;
+        const k = (e.io === 'in' ? wantIn : wantOut).shift();
+        if (k) e.item = k;
+      }
+    }
     // Dans l'ordre du bord : de haut en bas sur les côtés, de gauche à droite en haut et en bas.
     entries.sort((p, q) => (p.side === 'left' || p.side === 'right' ? (p.y ?? 0) - (q.y ?? 0) : (p.x ?? 0) - (q.x ?? 0)));
     const has = (k: string, dir: 'in' | 'out') => entries.some((e) => e.io === dir && e.item === k);
-    for (const k of Object.keys(maxIn)) if (!has(k, 'in') && !(isFuel(k) && !rec?.in[k])) entries.push({ side: 'left', io: 'in', item: k, kind: 'ghost' });
-    for (const k of Object.keys(maxOut)) if (!has(k, 'out')) entries.push({ side: 'right', io: 'out', item: k, kind: 'ghost' });
+    if (!fixed) for (const k of Object.keys(maxIn)) if (!has(k, 'in') && !(isFuel(k) && !rec?.in[k])) entries.push({ side: 'left', io: 'in', item: k, kind: 'ghost' });
+    if (!fixed) for (const k of Object.keys(maxOut)) if (!has(k, 'out')) entries.push({ side: 'right', io: 'out', item: k, kind: 'ghost' });
     // Un coffre, une gare : une sortie à prévoir (on choisit ensuite ce qui en sort).
     if (store && !entries.some((e) => e.io === 'out' && e.kind !== 'belt')) entries.push({ side: 'right', io: 'out', kind: 'ghost' });
     // La hauteur suit ce qu'il y a autour : pas de vide en haut ni en bas sans raison.
@@ -1987,7 +2047,7 @@ export class Hud implements GestureHandlers {
           y = side === 'top' ? 2 : H - CH - 2;
         }
         // Le fil jusqu'au bord de la machine, et le chevron sur ce bord.
-        const cls = `mdiag-wire ${e.io} ${e.kind}`;
+        const cls = `mdiag-wire ${e.io} ${e.kind}${e.fuel ? ' fuel' : ''}`;
         let cx: number, cy: number;
         if (side === 'left' || side === 'right') {
           cy = Math.max(my + 12, Math.min(my + M - 12, y + CH / 2));
@@ -2002,17 +2062,23 @@ export class Hud implements GestureHandlers {
         }
         const out = side === 'left' ? 0 : side === 'right' ? 180 : side === 'top' ? 90 : 270;
         const rot = e.io === 'in' ? out : (out + 180) % 360;
-        const chev = h('span', `mdiag-chev ${e.io} ${e.kind}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`);
+        const chev = h('span', `mdiag-chev ${e.io} ${e.kind}${e.fuel ? ' fuel' : ''}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`);
         place(chev, cx - 10, cy - 10);
         // La carte : l'objet, son débit attendu, et « filtré » s'il est seul à passer là.
         const k = e.item;
         const exp = k ? (e.io === 'in' ? maxIn[k] : maxOut[k]) : undefined;
         const name = k ? esc(item(k).name) : e.kind === 'ghost' ? (e.io === 'in' ? 'Entrée' : 'Nouvelle sortie') : e.io === 'in' ? 'Tout ce qui arrive' : 'Tout ce qui est prêt';
         const ico = k ? `<img src="${this.itemIcons.get(k)}" alt="">` : '';
-        const tag = e.lock ? `<small class="mc-tag lock">${FUNNEL}filtrée</small>` : e.kind === 'planned' ? '<small class="mc-tag">prévue</small>' : e.kind === 'belt' ? '<small class="mc-tag auto">auto</small>' : '';
+        const tag = e.fuel ? `<small class="mc-tag fuel">${e.kind === 'belt' ? 'par tapis' : 'combustible'}</small>` : e.lock ? `<small class="mc-tag lock">${FUNNEL}filtrée</small>` : e.kind === 'planned' ? `<small class="mc-tag">${fixed ? 'à brancher' : 'prévue'}</small>` : e.kind === 'belt' ? '<small class="mc-tag auto">auto</small>' : '';
         const rate = exp !== undefined ? `<b>${Hud.rate(exp)}</b><small>/s</small>` : e.kind === 'ghost' && !k ? '<small>à glisser</small>' : store ? '' : '<b>—</b>';
-        const chip = h('div', `mchip ${e.io} ${e.kind}${e.lock ? ' locked' : ''}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span><span class="mc-rate">${rate}${tag}</span>`);
-        if (e.kind === 'planned' && e.port !== undefined) {
+        const chip = h('div', `mchip ${e.io} ${e.kind}${e.lock ? ' locked' : ''}${e.fuel ? ' fuel' : ''}`, `<span class="mc-name">${ico}<span class="mc-t">${name}</span></span><span class="mc-rate">${rate}${tag}</span>`);
+        if (e.fuel) {
+          // L'entrée du charbon : rien à filtrer, elle ne prend que du charbon ou du carburant.
+          chip.onclick = () => this.toast('Entrée du charbon : seuls le charbon et le carburant y entrent, pour la case carburant', 'info');
+          place(chip, x, y);
+          return;
+        }
+        if (e.kind === 'planned' && e.port !== undefined && !fixed) {
           const x0 = h('button', 'mc-x', '×');
           x0.setAttribute('aria-label', 'Retirer');
           const pi = e.port;
@@ -2027,7 +2093,9 @@ export class Hud implements GestureHandlers {
         place(chip, x, y);
       });
     });
-    const hint = entries.some((e) => e.kind === 'ghost')
+    const hint = fixed
+      ? 'Ses entrées et sa sortie sont imposées : tourne la machine pour les changer. Touche une entrée ou une sortie pour la filtrer.'
+      : entries.some((e) => e.kind === 'ghost')
       ? 'Glisse ce qui est en pointillés sur un côté du bâtiment pour le prévoir. Touche une entrée ou une sortie pour la filtrer.'
       : io.length ? 'Touche une entrée ou une sortie pour la filtrer (ou la remettre en auto) ; glisse-la pour la déplacer ou l’échanger.' : '';
     if (hint) box.append(h('p', 'mdiag-hint', hint));
@@ -2060,7 +2128,7 @@ export class Hud implements GestureHandlers {
     }
     // Les groupes dans l'ordre : ce qui sert d'abord.
     opts.sort((p, q) => (p.id === null ? -1 : q.id === null ? 1 : Number(p.group !== 'Ce qui sert ici') - Number(q.group !== 'Ce qui sert ici')));
-    if (e.kind === 'planned' && e.port !== undefined) opts.push({ id: '__remove', label: `Retirer cette ${e.io === 'in' ? 'entrée' : 'sortie'} prévue`, badge: `<span class="pick-ico">${ICONS.trash}</span>`, danger: true });
+    if (e.kind === 'planned' && e.port !== undefined && !this.game.view.fixedPortsOf(mm)) opts.push({ id: '__remove', label: `Retirer cette ${e.io === 'in' ? 'entrée' : 'sortie'} prévue`, badge: `<span class="pick-ico">${ICONS.trash}</span>`, danger: true });
     this.openPicker(`${e.io === 'in' ? 'Entrée' : 'Sortie'} ${sideName}`, `En auto, tout passe. Choisis un objet pour que lui seul ${e.io === 'in' ? 'entre par là (le reste attend sur le tapis)' : 'sorte par là (le reste sort ailleurs ou attend)'}.`, opts, (id) => {
       if (id === '__remove') { if (e.port !== undefined) g.removePort(mm, e.port); }
       else g.setPortFilter(mm, e.x!, e.y!, e.io, id);
@@ -2122,7 +2190,9 @@ export class Hud implements GestureHandlers {
   private portSlotAt(mm: Machine, sx: number, sy: number): { x: number; y: number } | null {
     const w = this.worldAt(sx, sy);
     let best: { x: number; y: number } | null = null, bd = 1.1;
-    for (const c of this.game.view.perimeter(mm)) {
+    // Entrées et sorties imposées : seulement leurs emplacements (pas celui du charbon).
+    const fixed = this.game.view.fixedPortsOf(mm)?.filter((p) => p.io !== 'fuel');
+    for (const c of fixed ?? this.game.view.perimeter(mm)) {
       const ex = c.x + 0.5 - DX[c.d] * 0.3, ey = c.y + 0.5 - DY[c.d] * 0.3;
       const d = Math.hypot(w.x - ex, w.y - ey);
       if (d < bd) { bd = d; best = { x: c.x, y: c.y }; }

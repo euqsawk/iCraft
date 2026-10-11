@@ -177,6 +177,14 @@ export class BeltTracer {
       const outY = cy < m.y ? m.y - cy : cy >= m.y + m.h ? cy - (m.y + m.h - 1) : 0;
       if (outX >= outY) x = cx < m.x ? m.x - 1 : m.x + m.w;
       else y = cy < m.y ? m.y - 1 : m.y + m.h;
+      // Sortie imposée : le tapis part toujours de là, quel que soit le côté où va le doigt.
+      const fixed = this.factory.fixedPortsOf(m);
+      if (fixed) {
+        const outs = fixed.filter((p) => p.io === 'out');
+        if (!outs.length) { this.blocked = true; return; }
+        const o = outs.reduce((a, b) => (Math.hypot(b.x - cx, b.y - cy) < Math.hypot(a.x - cx, a.y - cy) ? b : a));
+        x = o.x; y = o.y;
+      }
       const inside = { x: Math.min(Math.max(x, m.x), m.x + m.w - 1), y: Math.min(Math.max(y, m.y), m.y + m.h - 1) };
       this.startDir = dirBetween(inside.x, inside.y, x, y);
       // Une autre machine est collée à cet endroit : liaison directe.
@@ -247,7 +255,7 @@ export class BeltTracer {
           this.cells.push({ x: c.x + DX[step] * (j + 1), y: c.y + DY[step] * (j + 1) });
           continue;
         }
-        if (this.occupied(nx, ny)) this.endTarget = { x: nx, y: ny };
+        if (this.occupied(nx, ny) && this.factory.canFeed(c.x, c.y, nx, ny)) this.endTarget = { x: nx, y: ny };
         else this.blocked = true;
         break;
       }

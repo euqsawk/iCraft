@@ -759,6 +759,17 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 }
 .drop-trash svg { width: 18px; height: 18px; }
 .drop-trash.hot { background: var(--coral); color: #fff; transform: translateX(-50%) scale(1.08); }
+.rotate-btn {
+  position: absolute; left: 14px; bottom: calc(env(safe-area-inset-bottom, 0px) + 18px); z-index: 6;
+  width: 72px; height: 72px; border-radius: 24px; border: none; padding: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  background: #fff; color: var(--ink); font: inherit; font-size: 12px; font-weight: 900;
+  box-shadow: 0 5px 0 var(--shadow); touch-action: none; -webkit-user-select: none; user-select: none;
+  animation: rot-in .18s ease-out;
+}
+@keyframes rot-in { from { opacity: 0; transform: translateY(12px); } }
+.rotate-btn svg { width: 28px; height: 28px; }
+.rotate-btn:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--shadow); }
 @keyframes trash-in { from { opacity: 0; transform: translateX(-50%) translateY(12px); } }
 .gauge .g-carb { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; padding: 1px 6px 1px 3px; border-radius: 9px; background: #FFF1D6; font-weight: 800; font-size: 11px; color: var(--ink); }
 .gauge .g-carb img { width: 13px; height: 13px; }
@@ -949,3 +960,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .scan-btn .pl small { font-size: 12px; font-weight: 700; color: var(--ink2); }
 .scan-btn i { font-style: normal; font-size: 22px; font-weight: 900; color: var(--ink2); }
 .pick-modal .sheet-head .round { flex: none; }
+/* Entrée du charbon (entrées et sorties imposées) : chevron noir. */
+.mdiag-wire.fuel.belt, .mdiag-wire.fuel.planned { background: #16191d; }
+.mdiag-chev.fuel { background: #16191d; }
+.mchip.fuel { border-left: 4px solid #16191d; cursor: pointer; }
+.mc-tag.fuel { color: #16191d; }

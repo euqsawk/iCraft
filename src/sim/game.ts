@@ -1,4 +1,5 @@
 // L'état complet d'une partie : monde, usine, robot, drones, argent, paliers, laboratoire et commandes.
+import { hasFixedPorts } from '../data/ports.ts';
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
 import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
@@ -432,10 +433,10 @@ export class Game {
         if (inSel(x, y) || f.inside(m, x, y) || ((i < 0 || i >= m.w) && (j < 0 || j >= m.h))) continue;
         const b = f.beltAt(x, y);
         if (!b) continue;
-        if (f.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) === m || (b.feeds ?? []).some((d) => f.machineAt(b.x + DX[d], b.y + DY[d]) === m)) {
+        if ((f.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) === m || (b.feeds ?? []).some((d) => f.machineAt(b.x + DX[d], b.y + DY[d]) === m)) && f.canOutputAt(m, x, y)) {
           const p = port('sortie', x, y);
           im.links = [...(im.links ?? []).filter((id) => id !== p.id), p.id];
-        } else if (f.machineAt(b.x + DX[b.dir] * (1 + (b.jump ?? 0)), b.y + DY[b.dir] * (1 + (b.jump ?? 0))) === m || (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) === m)) {
+        } else if ((f.machineAt(b.x + DX[b.dir] * (1 + (b.jump ?? 0)), b.y + DY[b.dir] * (1 + (b.jump ?? 0))) === m || (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) === m)) && f.inputAt(m, x, y) !== null) {
           const p = port('entree', x, y);
           const ip = inner.machines.find((q) => q.id === p.id)!;
           ip.links = [...(ip.links ?? []).filter((id) => id !== m.id), m.id];
@@ -896,7 +897,7 @@ export class Game {
 
   // ---------- Construction ----------
 
-  placeMachine(type: string, x: number, y: number): Machine | null {
+  placeMachine(type: string, x: number, y: number, rot = 0): Machine | null {
     const def = machineDef(type);
     if (def.kind === 'meter') { this.placeMeter(x, y); return null; }
     if (def.gift) {
@@ -928,7 +929,7 @@ export class Game {
     // Posée sur un tapis : les cases de tapis dessous disparaissent (remboursées). Le tapis qui arrive
     // devient l'entrée de la machine, celui qui repart devient sa sortie.
     if (check.belts) this.earn(this.clearBeltsUnder(def.w, def.h, x, y));
-    const m = this.view.addMachine(type, x, y, false);
+    const m = this.view.addMachine(type, x, y, false, undefined, rot);
     if (def.kind === 'atelier') this.view.makeInner(m, this.atelierSize);
     this.finishPlacement(m);
     return m;
@@ -987,6 +988,8 @@ export class Game {
   /** Prévoit une entrée ou une sortie sur un côté d'une machine (case dehors, sans la prendre). */
   addPort(m: Machine, x: number, y: number, io: 'in' | 'out', item?: string): boolean {
     if (!this.view.perimeter(m).some((c) => c.x === x && c.y === y)) return false;
+    // Entrées et sorties imposées : on n'étiquette que les siennes.
+    if (this.view.fixedPortsOf(m) && !this.view.fixedPortAt(m, x, y, io)) return false;
     const rx = x - m.x, ry = y - m.y;
     const ports = (m.ports ??= []);
     // Une seule chose par emplacement : on remplace ce qui y était.
@@ -1009,6 +1012,7 @@ export class Game {
    */
   setPortFilter(m: Machine, x: number, y: number, io: 'in' | 'out', item: string | null): boolean {
     if (!this.view.perimeter(m).some((c) => c.x === x && c.y === y)) return false;
+    if (this.view.fixedPortsOf(m) && !this.view.fixedPortAt(m, x, y, io)) return false;
     const rx = x - m.x, ry = y - m.y;
     const ports = (m.ports ??= []);
     let p = ports.find((q) => q.rx === rx && q.ry === ry);
@@ -1035,6 +1039,8 @@ export class Game {
   movePort(m: Machine, from: { x: number; y: number }, to: { x: number; y: number }, io: 'in' | 'out', item?: string): boolean {
     const per = this.view.perimeter(m);
     if (!per.some((c) => c.x === to.x && c.y === to.y) || (from.x === to.x && from.y === to.y)) return false;
+    // Entrées et sorties imposées : on n'échange qu'entre deux des siennes, du même genre (deux entrées, par exemple).
+    if (this.view.fixedPortsOf(m) && (!this.view.fixedPortAt(m, from.x, from.y, io) || !this.view.fixedPortAt(m, to.x, to.y, io))) return false;
     const ports = (m.ports ??= []);
     const at = (c: { x: number; y: number }) => ports.find((q) => m.x + q.rx === c.x && m.y + q.ry === c.y);
     const src = at(from), dst = at(to);
@@ -1339,6 +1345,10 @@ export class Game {
   /** Relie deux machines collées : la production de la première passe directement dans la seconde. */
   linkMachines(from: Machine, to: Machine): boolean {
     if (from === to || !this.view.touching(from, to)) return false;
+    if (!this.view.linkVia(from, to)) {
+      this.emit({ type: 'toast', text: `La sortie de ${machineDef(from.type).name.toLowerCase()} ne donne pas dans une entrée de ${machineDef(to.type).name.toLowerCase()} : tourne une des deux machines`, tone: 'warn' });
+      return false;
+    }
     if (!from.links?.includes(to.id)) from.links = [...(from.links ?? []), to.id];
     this.view.markBuilt();
     this.emit({ type: 'factory' });
@@ -1357,6 +1367,10 @@ export class Game {
   linkMachineToBelt(b: Belt, dir: Dir): boolean {
     const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m) return false;
+    if (!this.view.canOutputAt(m, b.x, b.y)) {
+      this.emit({ type: 'toast', text: `Ce côté n’est pas la sortie de ${machineDef(m.type).name.toLowerCase()} : tourne-la pour placer sa sortie ici`, tone: 'warn' });
+      return false;
+    }
     this.view.addFeed(b, dir);
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${machineDef(m.type).name} reliée au tapis`, tone: 'good' });
@@ -1367,6 +1381,10 @@ export class Game {
   linkBeltToMachine(b: Belt, dir: Dir): boolean {
     const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m || dir === b.dir || dir === b.split || dir === b.split2) return false;
+    if (this.view.inputAt(m, b.x, b.y) === null) {
+      this.emit({ type: 'toast', text: `Ce côté n’est pas une entrée de ${machineDef(m.type).name.toLowerCase()} : tourne-la pour placer une entrée ici`, tone: 'warn' });
+      return false;
+    }
     // Le tapis nourrit déjà une machine d'un côté : il peut aussi nourrir celle de l'autre côté (un objet sur trois chacune).
     if (b.split !== undefined) {
       if (b.split2 !== undefined || b.splitJump || !this.view.machineAt(b.x + DX[b.split], b.y + DY[b.split])) return false;
@@ -1402,10 +1420,18 @@ export class Game {
     return refund;
   }
 
-  moveMachine(m: Machine, x: number, y: number): boolean {
+  /** Tourne une machine sur place (ses entrées et sa sortie imposées tournent avec elle). */
+  rotateMachine(m: Machine, rot = ((m.rot ?? 0) + 1) % 4): boolean {
+    if (!hasFixedPorts(m.type)) return false;
+    this.view.setRotation(m, rot);
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  moveMachine(m: Machine, x: number, y: number, rot?: number): boolean {
     const check = this.view.checkMachine(m.type, x, y, m, true);
     if (check.ok && check.belts) this.earn(this.clearBeltsUnder(m.w, m.h, x, y));
-    const ok = this.view.moveMachine(m, x, y);
+    const ok = this.view.moveMachine(m, x, y, rot);
     if (!ok) this.emit({ type: 'toast', text: 'Impossible ici', tone: 'warn' });
     else { if (!this.inAtelier) this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
     return ok;
