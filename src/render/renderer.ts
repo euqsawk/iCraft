@@ -6,7 +6,6 @@ const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
 import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
 import { PICKUP_TIME } from '../sim/game.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
-import { fixedPorts } from '../data/ports.ts';
 import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Line, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
@@ -50,15 +49,13 @@ function partialPolyline(pts: { x: number; y: number }[], frac: number): { x: nu
 
 /** Pixels de sol par case : assez pour des bords de biomes arrondis. */
 const GROUND_RES = 4;
-/** Couleur de l'entrée du charbon (chevron noir). */
-const FUEL_INK = 0x16191d;
 const FONT = "Nunito, ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 
 export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
   | { kind: 'cable'; tracer: CableTracer }
   | { kind: 'pipe'; tracer: CableTracer }
-  | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string; rot?: number }
+  | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
   | { kind: 'erase'; x: number; y: number }
   | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number; module?: boolean }
   /** On glisse une entrée ou une sortie vers un côté de la machine : ses emplacements, et celui visé. */
@@ -497,30 +494,6 @@ export class GameRenderer {
     this.drawPipes();
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
     this.pickLayer.removeChildren().forEach((c) => c.destroy());
-    // Entrées et sorties filtrées : un portillon en travers du tapis, et l'objet qui seul passe par là.
-    const fv = this.game.view;
-    for (const m of fv.machines.values()) for (const port of m.ports ?? []) {
-      if (!port.lock || !port.item) continue;
-      const x = m.x + port.rx, y = m.y + port.ry;
-      const per = fv.perimeter(m).find((c) => c.x === x && c.y === y);
-      if (!per) continue;
-      const b = fv.beltAt(x, y);
-      const dir = b?.dir ?? per.d;
-      const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
-      const px = -DY[dir], py = DX[dir];
-      const gate = new Graphics();
-      gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 6, color: PALETTE.ink, cap: 'round' });
-      gate.moveTo(cx + px * 10, cy + py * 10).lineTo(cx - px * 10, cy - py * 10).stroke({ width: 2.5, color: port.io === 'in' ? PALETTE.coral : 0x2e6b51, cap: 'round' });
-      const bx = cx, by = cy - 13;
-      gate.roundRect(bx - 8.5, by - 8.5, 17, 17, 8.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
-      this.pickLayer.addChild(gate);
-      const tex = this.itemTextures.get(port.item);
-      if (tex) {
-        const sp = new Sprite(tex);
-        sp.anchor.set(0.5); sp.scale.set(0.55); sp.position.set(bx, by);
-        this.pickLayer.addChild(sp);
-      }
-    }
     for (const b of this.game.view.belts.values()) {
       if (!b.filter || b.split === undefined) continue;
       const x = (b.x + 0.5) * CELL + DX[b.split] * 7, y = (b.y + 0.5) * CELL + DY[b.split] * 7;
@@ -550,13 +523,7 @@ export class GameRenderer {
     // Là où le tapis touche une machine, il file sous elle (la machine est dessinée par-dessus) :
     // pas de bout arrondi qui laisserait un vide contre ses coins arrondis.
     const f = this.game.view;
-    const under = (b: Belt, d: number) => {
-      const m = f.machineAt(b.x + DX[d], b.y + DY[d]);
-      if (!m) return 0;
-      // Entrées et sorties imposées : il ne file sous la machine que là où il est vraiment branché.
-      if (d === b.dir || d === b.split || d === b.split2) return f.inputAt(m, b.x, b.y) === null ? 0 : CELL / 2;
-      return f.canOutputAt(m, b.x, b.y) ? CELL / 2 : 0;
-    };
+    const under = (b: Belt, d: number) => (f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
     const line = (g: Graphics, list: Belt[], dy: number) => {
       for (const b of list) {
         const p = this.beltPath(b);
@@ -1028,7 +995,7 @@ export class GameRenderer {
     g.clear(); lg.clear();
     const f = this.game.view;
     // Raccord : un simple chevron là où le tapis touche la machine.
-    const port = (b: Belt, d: number, into: boolean, dist = 1, fuel = false) => {
+    const port = (b: Belt, d: number, into: boolean, dist = 1) => {
       const m = f.machineAt(b.x + DX[d] * dist, b.y + DY[d] * dist);
       const ghost = !b.built || !m?.built;
       const ex = (b.x + 0.5 + DX[d] * (dist - 0.5)) * CELL, ey = (b.y + 0.5 + DY[d] * (dist - 0.5)) * CELL;
@@ -1036,7 +1003,7 @@ export class GameRenderer {
       // Juste un chevron sur le bord : rouge pour une entrée, vert pour une sortie.
       const s = into ? 1 : -1, cx = ex + ax * 5, cy = ey + ay * 5;
       g.moveTo(cx - ax * 2.5 * s + px * 4.5, cy - ay * 2.5 * s + py * 4.5).lineTo(cx + ax * 2 * s, cy + ay * 2 * s).lineTo(cx - ax * 2.5 * s - px * 4.5, cy - ay * 2.5 * s - py * 4.5)
-        .stroke({ width: fuel ? 3 : 2.6, color: fuel ? FUEL_INK : into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
+        .stroke({ width: 2.6, color: into ? PALETTE.coral : PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
     };
     // Liaisons directes entre machines collées : un bout de tapis sur le bord commun, chevron vert.
     for (const a of f.machines.values()) {
@@ -1058,42 +1025,20 @@ export class GameRenderer {
       }
     }
     for (const b of f.belts.values()) {
-      // Entrée : le tapis donne vraiment dans une machine (par une de ses entrées, s'il y en a d'imposées).
+      // Entrée : le tapis donne dans une machine.
       const L = span(b);
-      const nx = f.next(b);
-      if (nx?.kind === 'machine') port(b, b.dir, true, L, nx.port === 'fuel');
-      for (const sd of [b.split, b.split2]) {
-        if (sd === undefined) continue;
-        const sm = f.machineAt(b.x + DX[sd], b.y + DY[sd]);
-        const via = sm ? f.inputAt(sm, b.x, b.y) : null;
-        if (sm && via !== null) port(b, sd, true, 1, via === 'fuel');
-      }
-      // Sortie : le tapis part d'une machine (de sa sortie, s'il y en a une d'imposée).
+      if (f.machineAt(b.x + DX[b.dir] * L, b.y + DY[b.dir] * L)) port(b, b.dir, true, L);
+      if (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split])) port(b, b.split, true);
+      if (b.split2 !== undefined && f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2])) port(b, b.split2, true);
+      // Sortie : le tapis part d'une machine.
       const back = (b.inDir + 2) % 4;
-      const bm = f.machineAt(b.x + DX[back], b.y + DY[back]);
-      if (bm && f.canOutputAt(bm, b.x, b.y) && !(nx?.kind === 'machine' && nx.machine === bm)) port(b, back, false);
+      if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
       // Liaison de côté : la machine voisine dépose sur ce tapis.
-      for (const fd of b.feeds ?? []) {
-        const lm = f.machineAt(b.x + DX[fd], b.y + DY[fd]);
-        if (fd !== back && lm && f.canOutputAt(lm, b.x, b.y)) port(b, fd, false);
-      }
-    }
-    // Entrées et sorties imposées encore libres : une pastille sur le bord (rouge : entrée, vert : sortie, noir : charbon).
-    for (const m of f.machines.values()) {
-      const fixed = f.fixedPortsOf(m);
-      if (!fixed) continue;
-      for (const p of fixed) {
-        if (f.machineAt(p.x, p.y)) continue;
-        const b = f.beltAt(p.x, p.y);
-        if (b && this.portLinked(m, p, b)) continue;
-        // Au courant, l'entrée du charbon ne sert plus : on ne la montre pas.
-        if (p.io === 'fuel' && f.powered(m)) continue;
-        this.drawFixedBadge(g, p, m.built ? 1 : 0.55);
-      }
+      for (const fd of b.feeds ?? []) if (fd !== back && f.machineAt(b.x + DX[fd], b.y + DY[fd])) port(b, fd, false);
     }
     // Entrées et sorties prévues (pas encore de tapis) : un chevron dans une pastille, sur le bord de la machine.
     for (const m of f.machines.values()) {
-      if (!m.ports?.length || f.fixedPortsOf(m)) continue;
+      if (!m.ports?.length) continue;
       const per = f.perimeter(m);
       for (const p of m.ports) {
         const x = m.x + p.rx, y = m.y + p.ry;
@@ -1103,26 +1048,6 @@ export class GameRenderer {
         this.drawPortBadge(g, c.x, c.y, c.d, p.io === 'in', 1);
       }
     }
-  }
-
-  /** Un emplacement imposé est-il déjà branché par ce tapis ? */
-  private portLinked(m: Machine, p: { x: number; y: number; d: number; io: string }, b: Belt): boolean {
-    const f = this.game.view;
-    if (p.io === 'out') return f.outputsOf(m).includes(b);
-    const nx = f.next(b);
-    if (nx?.kind === 'machine' && nx.machine === m) return true;
-    return [b.split, b.split2].some((d) => d !== undefined && f.machineAt(b.x + DX[d], b.y + DY[d]) === m);
-  }
-
-  /** Pastille d'un emplacement imposé : chevron vers la machine (entrée, rouge ; charbon, noir) ou vers dehors (sortie, vert). */
-  private drawFixedBadge(g: Graphics, p: { x: number; y: number; d: number; io: string }, alpha: number, r = 7.5): void {
-    const ax = DX[p.d], ay = DY[p.d], px = -ay, py = ax;
-    const ex = (p.x + 0.5 - ax * 0.5) * CELL, ey = (p.y + 0.5 - ay * 0.5) * CELL;
-    const color = p.io === 'fuel' ? FUEL_INK : p.io === 'in' ? PALETTE.coral : PALETTE.green;
-    g.circle(ex, ey, r).fill({ color: 0xffffff, alpha }).stroke({ width: 2, color, alpha });
-    const s = p.io === 'out' ? 1 : -1, k = r / 7.5;
-    g.moveTo(ex - ax * 2 * s * k + px * 3.5 * k, ey - ay * 2 * s * k + py * 3.5 * k).lineTo(ex + ax * 2 * s * k, ey + ay * 2 * s * k).lineTo(ex - ax * 2 * s * k - px * 3.5 * k, ey - ay * 2 * s * k - py * 3.5 * k)
-      .stroke({ width: 2.4 * k, color, alpha, cap: 'round', join: 'round' });
   }
 
   /** Une pastille sur le bord d'une machine, côté case (x, y) : chevron vers la machine (entrée) ou vers dehors (sortie). */
@@ -1755,9 +1680,7 @@ export class GameRenderer {
     if (pv?.kind === 'ports') {
       const m = this.game.view.machines.get(pv.id);
       if (m) {
-        // Entrées et sorties imposées : on ne peut échanger qu'entre emplacements du même genre.
-        const fixed = this.game.view.fixedPortsOf(m)?.filter((p) => p.io === pv.io);
-        for (const c of fixed ?? this.game.view.perimeter(m)) {
+        for (const c of this.game.view.perimeter(m)) {
           const hot = !!pv.slot && pv.slot.x === c.x && pv.slot.y === c.y;
           const ex = (c.x + 0.5 - DX[c.d] * 0.5) * CELL, ey = (c.y + 0.5 - DY[c.d] * 0.5) * CELL;
           if (hot) this.drawPortBadge(g, c.x, c.y, c.d, pv.io === 'in', 1, PALETTE.coral);
@@ -1825,8 +1748,6 @@ export class GameRenderer {
       g.roundRect(x + 1, y + 1, W - 2, H - 2, 15).fill({ color: pv.ok ? PALETTE.white : 0xffd9d0, alpha: 0.85 });
       dashedPolyline(g, roundRectPoints(x + 1, y + 1, W - 2, H - 2, 15), 6, 5, true);
       g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.6 });
-      // Ses entrées et sa sortie, déjà là pendant qu'on la glisse : elles tournent avec le bouton Tourner.
-      for (const p of fixedPorts(pv.type, pv.rot ?? 0, def.w, def.h)) this.drawFixedBadge(g, { ...p, x: pv.x + p.rx, y: pv.y + p.ry }, 1, 9.5);
     } else if (pv?.kind === 'eraseRect') {
       // Gomme en zone : le rectangle, et ce qui partira cerclé de corail.
       const x0 = Math.min(pv.x0, pv.x1) * CELL, y0 = Math.min(pv.y0, pv.y1) * CELL;

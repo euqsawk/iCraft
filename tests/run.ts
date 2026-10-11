@@ -236,8 +236,8 @@ function buildIronLine(g: Game): void {
   assert(g.placeMachine('four', -8, -5), 'four');
   // Fer → four
   assert(g.placeBelts(trace(g, [[-12.5, -4.5], [-8.5, -4.5], [-7.5, -4.5]]).result()), 'tapis fer');
-  // Charbon → entrée du charbon, en haut du four (par l'ouest, au-dessus de la foreuse de fer)
-  assert(g.placeBelts(trace(g, [[-10.5, 9.5], [-9.5, 8.5], [-13.5, 8.5], [-13.5, -5.5], [-7.5, -5.5], [-7.5, -4.5]]).result()), 'tapis charbon');
+  // Charbon → four (monte puis tourne)
+  assert(g.placeBelts(trace(g, [[-11.5, 9.5], [-9.5, 9.5], [-9.5, -3.5], [-7.5, -3.5]]).result()), 'tapis charbon');
   // Four → Noyau
   assert(g.placeBelts(trace(g, [[-7.5, -4.5], [-5.5, -4.5], [-5.5, 0.5], [0.5, 0.5]]).result()), 'tapis noyau');
 }
@@ -260,7 +260,7 @@ test('foreuse → four à charbon → Noyau : la mission du palier avance', () =
   assert(four.made > 0, `le four n'a rien fabriqué (état ${four.status}, entrées ${JSON.stringify(four.inBuf)})`);
   assert((g.palierDone.lingot_fer ?? 0) > 0 && g.palierProgress() > 0, `mission : ${JSON.stringify(g.palierDone)}`);
 });
-test('fiche machine : entrées et sorties imposées, étiquette sur la sortie, recette prévue sauvegardée', () => {
+test('fiche machine : entrées et sorties vues, sorties prévues sur un côté, recette prévue sauvegardée', () => {
   const g = new Game('TEST-6P');
   buildIronLine(g);
   run(g, 150);
@@ -270,24 +270,22 @@ test('fiche machine : entrées et sorties imposées, étiquette sur la sortie, r
   const io = g.view.machineIO(four);
   const ins = io.filter((c) => c.io === 'in' && !c.planned).map((c) => c.item).sort().join();
   const outs = io.filter((c) => c.io === 'out' && !c.planned).map((c) => c.item).join();
-  assert(ins === 'fer' && outs === 'lingot_fer' && io.length === 2, `vu : entrées ${ins}, sorties ${outs} (${io.length})`);
+  assert(ins === 'charbon,fer' && outs === 'lingot_fer', `vu : entrées ${ins}, sorties ${outs}`);
   assert(io.every((c) => c.side === (c.io === 'in' ? 'left' : 'right')), `côtés : ${JSON.stringify(io)}`);
-  // Le charbon arrive par sa propre entrée, en haut.
-  const fuel = g.view.fuelPorts(four);
-  assert(fuel.length === 1 && fuel[0].x === four.x && fuel[0].y === four.y - 1, `entrée du charbon : ${JSON.stringify(fuel)}`);
-  const coalBelt = g.factory.beltAt(four.x, four.y - 1)!;
-  const nx = g.factory.next(coalBelt);
-  assert(nx?.kind === 'machine' && nx.machine === four && nx.port === 'fuel', 'le tapis de charbon donne dans l’entrée du charbon');
   assert(!g.addPort(four, four.x, four.y, 'out'), 'une sortie prévue dans le bâtiment');
-  assert(!g.addPort(four, four.x, four.y - 1, 'out', 'lingot_fer'), 'pas de sortie en haut : les emplacements sont imposés');
-  assert(g.addPort(four, four.x + 2, four.y, 'out', 'lingot_fer') && four.ports!.length === 1, 'étiquette sur la sortie');
+  assert(!g.addPort(four, four.x - 1, four.y - 1, 'out'), 'un coin n’est pas un côté');
+  assert(g.addPort(four, four.x, four.y - 1, 'out', 'lingot_fer'), 'sortie prévue en haut');
+  assert(g.addPort(four, four.x + 1, four.y - 1, 'out', 'lingot_fer') && four.ports!.length === 1 && four.ports![0].rx === 1, 'le même objet est déplacé, pas doublé');
+  const planned = g.view.machineIO(four).filter((c) => c.planned);
+  assert(planned.length === 1 && planned[0].side === 'top' && planned[0].port === 0, `prévue : ${JSON.stringify(planned)}`);
+  assert(!g.factory.beltAt(four.x + 1, four.y - 1), 'une sortie prévue ne prend pas de case');
   g.setPlan(four, 0);
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
   const f2 = [...g2.factory.machines.values()].find((m) => m.type === 'four')!;
   assert(f2.plan === 0 && f2.ports?.length === 1 && Object.values(f2.seenIn ?? {}).includes('fer'), `rechargé : ${JSON.stringify({ plan: f2.plan, ports: f2.ports, seen: f2.seenIn })}`);
   g2.removePort(f2, 0);
-  assert(!f2.ports, 'étiquette retirée');
+  assert(!f2.ports, 'sortie prévue retirée');
 });
 test('une machine bouchée (ou d’une ancienne partie) connaît encore ses entrées et sorties', () => {
   const g = new Game('TEST-6Q');
@@ -444,58 +442,54 @@ test('une machine posée sur un tapis se branche : entrée et sortie', () => {
   assert(four.made > 0 && (chest.inBuf.lingot_fer ?? 0) + (g.palierDone.lingot_fer ?? 0) > 0, `four ${four.made}, coffre ${JSON.stringify(chest.inBuf)}`);
 });
 
-test('relier une machine au tapis qui la longe, par sa sortie seulement', () => {
+test('relier une machine au tapis qui la longe, sans nouvelle case', () => {
   const g = new Game('TEST-16');
   g.money = 10000; g.world.reveal(6, 6, 20);
-  const four = g.placeMachine('four', 6, 6, 1)!; // tourné d'un quart : sa sortie est en bas, en (7, 8)
-  const other = g.placeMachine('four', 10, 6)!; // pas tourné : sa sortie est à droite
+  const four = g.placeMachine('four', 6, 6)!;
   const chest = g.placeMachine('coffre', 14, 8)!;
-  // Un tapis passe sous les fours (rangée y = 8), de gauche à droite, jusqu'au coffre.
+  // Un tapis passe sous le four (rangée y = 8), de gauche à droite, jusqu'au coffre.
   assert(g.placeBelts(trace(g, [[4.5, 8.5], [12.5, 8.5], [13.5, 8.5]]).result()), 'tapis');
   run(g, 40);
   const t = new BeltTracer(g.factory, 6.5, 7.5); // depuis le four…
-  t.move(6.6, 8.6); // … vers le tapis juste dessous : le tracé part de sa sortie
-  assert(t.linkBelt === g.factory.beltAt(7, 8) && t.linkDir === 3 && t.newCount === 0, `liaison proposée : ${t.linkDir}`);
+  t.move(6.6, 8.6); // … vers le tapis juste dessous
+  assert(t.linkBelt && t.linkDir === 3 && t.newCount === 0, `liaison proposée : ${t.linkDir}`);
   const n0 = g.factory.belts.size;
   assert(g.linkMachineToBelt(t.linkBelt!, t.linkDir!) && g.factory.belts.size === n0, 'liaison sans case');
-  assert(!g.linkMachineToBelt(g.factory.beltAt(10, 8)!, 3), 'le dessous de l’autre four n’est pas sa sortie');
   four.outBuf.verre = 5; // (le verre : personne ne le réclame, il reste au coffre)
-  other.outBuf.verre = 5; // sa sortie ne donne sur rien : il le garde
   run(g, 20);
   assert((chest.inBuf.verre ?? 0) === 5, `coffre ${JSON.stringify(chest.inBuf)}`);
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
-  assert(JSON.stringify(g2.factory.beltAt(7, 8)!.feeds) === '[3]', 'liaison sauvegardée');
-  assert(g2.factory.machineAt(6, 6)!.rot === 1, 'orientation sauvegardée');
+  assert(JSON.stringify(g2.factory.beltAt(6, 8)!.feeds) === '[3]', 'liaison sauvegardée');
 });
 
-test('un tapis entre deux machines : leurs sorties s’y déposent, et il nourrit une entrée qui le touche', () => {
+test('un tapis entre deux machines : relié des deux côtés, et il peut nourrir une machine', () => {
   const g = new Game('TEST-17');
   g.money = 10000; g.world.reveal(6, 6, 20);
-  const haut = g.placeMachine('four', 6, 6, 1)!; // sortie en bas : (7, 8)
-  const bas = g.placeMachine('four', 6, 9, 3)!; // sortie en haut : (6, 8)
-  const cote = g.placeMachine('four', 9, 9, 1)!; // entrée en haut : (10, 8)
+  const haut = g.placeMachine('four', 6, 6)!; // au-dessus du tapis
+  const bas = g.placeMachine('four', 6, 9)!; // en dessous
   const chest = g.placeMachine('coffre', 14, 8)!;
   assert(g.placeBelts(trace(g, [[4.5, 8.5], [12.5, 8.5], [13.5, 8.5]]).result()), 'tapis');
   run(g, 50);
+  const belt = g.factory.beltAt(6, 8)!;
   const t1 = new BeltTracer(g.factory, 6.5, 7.5); t1.move(6.6, 8.6);
   const t2 = new BeltTracer(g.factory, 6.5, 9.5); t2.move(6.6, 8.4);
-  assert(t1.linkBelt === g.factory.beltAt(7, 8) && t2.linkBelt === g.factory.beltAt(6, 8), 'deux liaisons proposées, chacune sur une sortie');
-  assert(g.linkMachineToBelt(t1.linkBelt!, t1.linkDir!) && g.linkMachineToBelt(t2.linkBelt!, t2.linkDir!), 'reliées');
+  assert(t1.linkBelt === belt && t2.linkBelt === belt, 'deux liaisons proposées');
+  g.linkMachineToBelt(belt, t1.linkDir!); g.linkMachineToBelt(belt, t2.linkDir!);
+  assert(JSON.stringify([...belt.feeds!].sort()) === '[1,3]', `liaisons ${belt.feeds}`);
   haut.outBuf.verre = 3; bas.outBuf.verre = 3;
   run(g, 25);
   assert((chest.inBuf.verre ?? 0) === 6, `coffre ${JSON.stringify(chest.inBuf)}`);
-  // Dans l'autre sens : depuis le tapis vers une entrée qui le touche, le tapis nourrit la machine.
-  assert(!g.linkBeltToMachine(g.factory.beltAt(7, 8)!, 1), 'le haut du four du bas n’est pas une entrée');
-  const belt = g.factory.beltAt(10, 8)!;
-  const t3 = new BeltTracer(g.factory, 10.5, 8.5); t3.move(10.5, 9.6);
-  assert(t3.splitFrom === belt && t3.intoMachine === 1, `vers la machine : ${t3.intoMachine}`);
-  assert(g.linkBeltToMachine(belt, 1), 'liaison tapis → entrée');
-  const first = g.factory.beltAt(5, 8)!;
-  for (let i = 0; i < 4; i++) first.items.push({ t: 'fer', p: 0.1 * (3 - i) });
-  first.items.sort((a, c) => c.p - a.p);
+  // Dans l'autre sens : depuis le tapis vers la machine du bas, le tapis la nourrit.
+  g.unlinkBelt(belt);
+  const belt2 = g.factory.beltAt(7, 8)!;
+  const t3 = new BeltTracer(g.factory, 7.5, 8.5); t3.move(7.5, 9.6);
+  assert(t3.splitFrom === belt2 && t3.intoMachine === 1, `vers la machine : ${t3.intoMachine}`);
+  assert(g.linkBeltToMachine(belt2, 1), 'liaison tapis → machine');
+  for (let i = 0; i < 4; i++) belt.items.push({ t: 'fer', p: 0.1 * (3 - i) });
+  belt.items.sort((a, c) => c.p - a.p);
   run(g, 10);
-  assert((cote.inBuf.fer ?? 0) + cote.made > 0, `le four du côté n'a rien reçu : ${JSON.stringify(cote.inBuf)}`);
+  assert((bas.inBuf.fer ?? 0) + bas.made > 0, `la machine du bas n'a rien reçu : ${JSON.stringify(bas.inBuf)}`);
 });
 
 test('scanner : les 3 filons les plus proches, du plus proche au plus loin', () => {
@@ -759,152 +753,39 @@ test('les anciens tapis souterrains sont retirés et remboursés au chargement',
   assert(!g2.unlocks.has('souterrain'), 'le déblocage disparaît');
   assert(!('tunnels' in g2.serialize().factory), 'plus sauvegardé');
 });
-test('sortie filtrée : choisie sur le côté d’un coffre (même avant le tapis), seul cet objet en sort', () => {
-  const g = new Game('TEST-TR');
-  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
-  const chest = g.placeMachine('coffre', 2, 5)!;
-  chest.built = true; g.pending = []; g.factory.markBuilt();
-  g.factory.putInStorage(chest, 'fer', 20);
-  g.factory.putInStorage(chest, 'cuivre', 20);
-  assert(!g.setPortFilter(chest, 5, 5, 'out', 'cuivre'), 'pas loin du bâtiment');
-  assert(g.setPortFilter(chest, 3, 5, 'out', 'cuivre') && chest.ports?.[0].lock, 'filtre posé avant le tapis');
-  g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
-  for (const b of g.factory.belts.values()) b.built = true;
-  g.pending = []; g.factory.markBuilt();
-  run(g, 4);
-  const on = [...g.factory.belts.values()].flatMap((x) => x.items.map((i) => i.t));
-  assert(on.length > 0 && on.every((t) => t === 'cuivre') && chest.inBuf.fer === 20, `seul le cuivre sort : ${on.join(',')}`);
-  const io = g.view.machineIO(chest).find((c) => c.io === 'out')!;
-  assert(io.item === 'cuivre' && io.lock && !io.planned, `vu comme filtré : ${JSON.stringify(io)}`);
-  const g2 = new Game('TEST-TR', JSON.parse(JSON.stringify(g.serialize())));
-  const c2 = g2.factory.machineAt(2, 5)!;
-  assert(c2.ports?.[0].lock && c2.ports[0].item === 'cuivre', 'sauvegardé');
-  // Retour en auto : tout sort.
-  g.setPortFilter(chest, 3, 5, 'out', null);
-  assert(!chest.ports, 'en auto sur un tapis, plus rien à retenir');
-  for (const b of g.factory.belts.values()) b.items = [];
-  run(g, 6);
-  const all = new Set([...g.factory.belts.values()].flatMap((x) => x.items.map((i) => i.t)));
-  assert(all.has('fer'), `en auto, le fer sort aussi : ${[...all].join(',')}`);
-});
-
-test('entrée filtrée : seul l’objet choisi entre, le reste attend sur le tapis', () => {
+test('pas de filtre : une entrée prévue garde son étiquette, mais tout entre et tout sort', () => {
   const g = new Game('TEST-TRI');
   g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
   const src = g.placeMachine('coffre', 2, 5)!;
   const dst = g.placeMachine('coffre', 9, 5)!;
+  assert(g.addPort(dst, 8, 5, 'in', 'cuivre'), 'entrée prévue');
   g.placeBelts([...Array(6)].map((_, i) => ({ x: 3 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
   for (const b of g.factory.belts.values()) b.built = true;
   src.built = true; dst.built = true; g.pending = []; g.factory.markBuilt();
-  g.factory.putInStorage(src, 'fer', 30);
-  assert(g.setPortFilter(dst, 8, 5, 'in', 'cuivre'), 'filtre sur l’entrée');
-  run(g, 6);
-  assert(!dst.inBuf.fer && g.factory.beltAt(8, 5)!.items.length > 0, `rien n’entre : ${JSON.stringify(dst.inBuf)}`);
-  g.setPortFilter(dst, 8, 5, 'in', null);
-  run(g, 3);
-  assert((dst.inBuf.fer ?? 0) > 0, 'en auto, le fer entre');
+  g.factory.putInStorage(src, 'fer', 4);
+  g.factory.putInStorage(src, 'cuivre', 4);
+  run(g, 14);
+  assert((dst.inBuf.fer ?? 0) > 0 && (dst.inBuf.cuivre ?? 0) > 0, `tout entre : ${JSON.stringify(dst.inBuf)}`);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  s.factory.machines.find((m: { id: number }) => m.id === dst.id).ports = [{ rx: -1, ry: 0, io: 'in', item: 'cuivre', lock: true }];
+  const g2 = new Game(s.seed, s);
+  const d2 = g2.factory.machineAt(9, 5)!;
+  assert(d2.ports?.length === 1 && !('lock' in d2.ports[0]), `un ancien filtre redevient une étiquette : ${JSON.stringify(d2.ports)}`);
 });
 
-test('glisser une entrée sur l’autre entrée les échange (et les filtre)', () => {
+test('glisser une entrée prévue la déplace (et échange avec celle qui y était)', () => {
   const g = new Game('TEST-6S');
   g.money = 10000; g.world.reveal(6, 6, 20);
-  g.unlocks.add('assembleur');
-  const a = g.placeMachine('assembleur', 6, 6)!;
-  // Deux tapis dans ses deux entrées, à gauche : des plaques en haut, des vis en bas.
-  assert(g.placeBelts(trace(g, [[2.5, 6.5], [5.5, 6.5], [6.5, 6.5]]).result()), 'tapis du haut');
-  assert(g.placeBelts(trace(g, [[2.5, 7.5], [5.5, 7.5], [6.5, 7.5]]).result()), 'tapis du bas');
-  g.factory.markBuilt();
-  g.factory.beltAt(5, 6)!.items.push({ t: 'plaque_fer', p: 0.5 });
-  g.factory.beltAt(5, 7)!.items.push({ t: 'vis', p: 0.5 });
-  run(g, 3);
-  const ins = g.view.machineIO(a).filter((c) => c.io === 'in');
-  const top = ins.find((c) => c.item === 'plaque_fer')!, low = ins.find((c) => c.item === 'vis')!;
-  assert(top && low && ins.length === 2, `entrées : ${JSON.stringify(ins)}`);
-  assert(!g.movePort(a, top, { x: a.x, y: a.y - 1 }, 'in', 'plaque_fer'), 'pas d’entrée en haut : c’est celle du charbon');
-  assert(g.movePort(a, top, low, 'in', 'plaque_fer'), 'échangées');
-  const after = g.view.machineIO(a).filter((c) => c.io === 'in');
-  const at = (c: { x: number; y: number }) => after.find((q) => q.x === c.x && q.y === c.y)!;
-  assert(at(low).item === 'plaque_fer' && at(low).lock && at(top).item === 'vis' && at(top).lock, `après : ${JSON.stringify(after)}`);
-});
-
-test('entrées et sorties imposées : un tapis contre un autre côté ne branche rien', () => {
-  const g = new Game('TEST-FP1');
-  g.money = 10000; g.world.reveal(6, 6, 20);
-  const four = g.placeMachine('four', 6, 6)!; // entrée à gauche (5, 6), sortie à droite (8, 6), charbon en haut (6, 5)
-  const f = g.factory;
-  const left = f.addBelt(5, 6, 0, 0, true), bottom = f.addBelt(6, 8, 3, 3, true), top = f.addBelt(6, 5, 1, 1, true), side = f.addBelt(5, 7, 0, 0, true);
-  const n = (b: typeof left) => f.next(b);
-  assert(n(left)?.kind === 'machine' && n(left)?.kind === 'machine' && (n(left) as { port?: string }).port === 'in', 'à gauche, en haut : l’entrée');
-  assert(!n(bottom) && !n(side), 'le dessous et le bas de la gauche : rien');
-  assert((n(top) as { port?: string }).port === 'fuel', 'en haut à gauche : l’entrée du charbon');
-  g.drones.length = 0;
-  four.built = true;
-  top.items.push({ t: 'fer', p: 0.9 });
-  left.items.push({ t: 'charbon', p: 0.9 });
-  run(g, 2);
-  assert(top.items.length === 1 && left.items.length === 1 && !four.inBuf.fer && four.fuel === 0, 'le fer ne passe pas par l’entrée du charbon, ni le charbon par celle du fer');
-  top.items = [{ t: 'charbon', p: 0.9 }];
-  left.items = [{ t: 'fer', p: 0.9 }];
-  run(g, 0.5);
-  assert(four.fuel + (four.burn > 0 ? 1 : 0) === 1 && (four.inBuf.fer ?? 0) + (four.craft ? 1 : 0) === 1, `charbon ${four.fuel}, fer ${JSON.stringify(four.inBuf)}`);
-  // Sortie : seul un tapis qui part de la droite reçoit la production.
-  const out = f.addBelt(8, 6, 0, 0, true), wrong = f.addBelt(7, 8, 1, 1, true);
-  assert(f.outputsOf(four).includes(out) && !f.outputsOf(four).includes(wrong), 'seule la droite sort');
-});
-test('tourner une machine fait tourner ses entrées, sa sortie et ses filtres', () => {
-  const g = new Game('TEST-FP2');
-  g.money = 10000; g.world.reveal(6, 6, 20);
   const four = g.placeMachine('four', 6, 6)!;
-  const where = () => Object.fromEntries((g.factory.fixedPortsOf(four) ?? []).map((p) => [p.io, `${p.x},${p.y}`]));
-  assert(JSON.stringify(where()) === JSON.stringify({ in: '5,6', out: '8,6', fuel: '6,5' }), `orientation 0 : ${JSON.stringify(where())}`);
-  assert(g.setPortFilter(four, 8, 6, 'out', 'lingot_fer'), 'filtre sur la sortie');
-  assert(!g.setPortFilter(four, 6, 8, 'out', 'lingot_fer'), 'pas de filtre hors des emplacements');
-  assert(g.moveMachine(four, 6, 6, 1), 'tournée sur place');
-  assert(JSON.stringify(where()) === JSON.stringify({ in: '7,5', out: '7,8', fuel: '8,6' }), `orientation 1 : ${JSON.stringify(where())}`);
-  assert(four.ports?.length === 1 && four.x + four.ports[0].rx === 7 && four.y + four.ports[0].ry === 8, `le filtre suit la sortie : ${JSON.stringify(four.ports)}`);
-  g.unlocks.add('fabricant');
-  const fab = g.placeMachine('fabricant', 10, 6, 2)!;
-  const ios = (g.factory.fixedPortsOf(fab) ?? []).map((p) => p.io).sort().join();
-  assert(ios === 'fuel,in,in,in,out', `fabricant : ${ios}`);
-  assert(g.factory.fixedPortsOf(fab)!.find((p) => p.io === 'out')!.x === 9, 'à l’envers, sa sortie est à gauche');
-});
-test('ancienne partie : chaque machine prend l’orientation qui garde ses tapis branchés', () => {
-  const g = new Game('TEST-FP3');
-  g.money = 10000; g.world.reveal(6, 6, 20);
-  g.placeMachine('four', 6, 6);
-  const f = g.factory;
-  f.addBelt(7, 5, 1, 1, true); // arrive par le haut, à droite
-  f.addBelt(7, 8, 1, 1, true); // repart par le bas, à droite
-  const s = JSON.parse(JSON.stringify(g.serialize()));
-  for (const m of s.factory.machines) delete m.rot;
-  const g2 = new Game(s.seed, s);
-  const four = [...g2.factory.machines.values()].find((m) => m.type === 'four')!;
-  assert(four.rot === 1, `orientation choisie : ${four.rot}`);
-  const nx = g2.factory.next(g2.factory.beltAt(7, 5)!);
-  assert(nx?.kind === 'machine' && g2.factory.outputsOf(four).includes(g2.factory.beltAt(7, 8)!), 'les deux tapis restent branchés');
-});
-test('deux machines collées : reliées seulement si la sortie de l’une donne dans une entrée de l’autre', () => {
-  const g = new Game('TEST-FP4');
-  g.money = 10000; g.world.reveal(6, 6, 20);
-  g.unlocks.add('presse');
-  const four = g.placeMachine('four', 6, 6)!, presse = g.placeMachine('presse', 8, 6)!, below = g.placeMachine('presse', 6, 8)!;
-  assert(g.linkMachines(four, presse), 'four → presse, côte à côte');
-  assert(!g.linkMachines(four, below), 'four → presse du dessous : sa sortie n’y donne pas');
-  g.factory.markBuilt();
-  four.outBuf.lingot_fer = 3;
-  run(g, 4);
-  assert((presse.inBuf.lingot_fer ?? 0) + presse.made + (presse.craft ? 1 : 0) > 0 && !below.inBuf.lingot_fer, `la presse n'a rien reçu : ${JSON.stringify(presse.inBuf)}`);
-});
-test('le tracé depuis une machine part de sa sortie imposée', () => {
-  const g = new Game('TEST-FP5');
-  g.money = 10000; g.world.reveal(6, 6, 20);
-  g.placeMachine('four', 6, 6, 2); // à l'envers : sa sortie est à gauche, en (5, 7)
-  const t = new BeltTracer(g.factory, 6.5, 6.5);
-  t.move(6.5, 4.6); // le doigt part vers le haut
-  assert(t.cells[0]?.x === 5 && t.cells[0]?.y === 7, `première case : ${JSON.stringify(t.cells[0])}`);
+  assert(g.addPort(four, 5, 6, 'in', 'fer') && g.addPort(four, 6, 5, 'out', 'lingot_fer'), 'prévues');
+  assert(g.movePort(four, { x: 5, y: 6 }, { x: 6, y: 5 }), 'déplacée');
+  const io = g.view.machineIO(four);
+  const at = (x: number, y: number) => io.find((c) => c.x === x && c.y === y)!;
+  assert(at(6, 5).item === 'fer' && at(6, 5).io === 'in' && at(5, 6).item === 'lingot_fer', `après : ${JSON.stringify(io)}`);
+  assert(!g.movePort(four, { x: 7, y: 8 }, { x: 5, y: 7 }), 'rien de prévu là');
 });
 
-test('ancienne partie : un trieur devient une sortie filtrée, et il est remboursé', () => {
+test('ancienne partie : un trieur est remboursé', () => {
   const g = new Game('TEST-TRO');
   g.money = 10000; g.world.reveal(6, 6, 20);
   g.placeMachine('coffre', 2, 5);
@@ -912,8 +793,7 @@ test('ancienne partie : un trieur devient une sortie filtrée, et il est rembour
   s.factory.picks = [[key(3, 5), ['cuivre']]];
   const m0 = s.money;
   const g2 = new Game(s.seed, s);
-  const c = g2.factory.machineAt(2, 5)!;
-  assert(c.ports?.length === 1 && c.ports[0].io === 'out' && c.ports[0].item === 'cuivre' && c.ports[0].lock, `port : ${JSON.stringify(c.ports)}`);
+  assert(!g2.factory.machineAt(2, 5)!.ports, 'plus de sortie filtrée');
   assert(g2.money - m0 === 20, `remboursé : ${g2.money - m0}`);
 });
 

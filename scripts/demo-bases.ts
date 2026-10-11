@@ -110,63 +110,12 @@ export class BaseBuilder {
     return r;
   }
 
-  /** La machine n'a encore aucun tapis branché (on peut la tourner sans rien casser). */
-  private unwired(m: Machine): boolean {
-    const f = this.g.factory;
-    return !this.around(m).some((s) => f.beltAt(s.cell.x, s.cell.y));
-  }
-
-  /** Tourne une machine à entrées imposées pour que l'emplacement voulu regarde vers un point. */
-  private aim(m: Machine, io: 'in' | 'out' | 'fuel', toward: P): void {
-    const f = this.g.factory;
-    if (!f.fixedPortsOf(m) || !this.unwired(m)) return;
-    let best = m.rot ?? 0, bd = Infinity;
-    for (let r = 0; r < 4; r++) {
-      for (const p of f.fixedPortsOf({ ...m, rot: r })!) {
-        if (p.io !== io || !this.open(p.x, p.y, true)) continue;
-        const d = Math.hypot(p.x - toward.x, p.y - toward.y);
-        if (d < bd - 1e-9) { bd = d; best = r; }
-      }
-    }
-    f.setRotation(m, best);
-  }
-
-  /** Les cases d'où un tapis peut partir de la machine (sa sortie imposée, sinon tout autour). */
-  private exits(m: Machine): { cell: P; inside: P }[] {
-    const fp = this.g.factory.fixedPortsOf(m);
-    if (!fp) return this.around(m);
-    return fp.filter((p) => p.io === 'out').map((p) => ({ cell: { x: p.x, y: p.y }, inside: { x: p.x - (p.d === 0 ? 1 : p.d === 2 ? -1 : 0), y: p.y - (p.d === 1 ? 1 : p.d === 3 ? -1 : 0) } }));
-  }
-
-  /** Les cases d'où un tapis peut entrer dans la machine (ses entrées imposées du bon genre, sinon tout autour). */
-  private entries(m: Machine, io: 'in' | 'fuel'): { cell: P; inside: P }[] {
-    const fp = this.g.factory.fixedPortsOf(m);
-    if (!fp) return this.around(m);
-    return fp.filter((p) => p.io === io).map((p) => ({ cell: { x: p.x, y: p.y }, inside: { x: p.x - (p.d === 0 ? 1 : p.d === 2 ? -1 : 0), y: p.y - (p.d === 1 ? 1 : p.d === 3 ? -1 : 0) } }));
-  }
-
-  /** Un tapis de a vers b, routé autour de ce qui est déjà posé (de la sortie de a vers une entrée de b). */
-  belt(a: Machine, b: Machine, via: 'in' | 'fuel' = 'in'): number {
+  /** Un tapis de a vers b, routé autour de ce qui est déjà posé. */
+  belt(a: Machine, b: Machine): number {
     const g = this.g;
-    const ca = { x: a.x + a.w / 2, y: a.y + a.h / 2 }, cb = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-    this.aim(a, 'out', cb);
-    const exit = this.exits(a)[0]?.cell ?? ca;
-    this.aim(b, via, exit);
-    const starts = this.exits(a).filter((s) => this.open(s.cell.x, s.cell.y, true));
-    const goals = new Map(this.entries(b, via).filter((s) => this.open(s.cell.x, s.cell.y, true)).map((s) => [this.k(s.cell.x, s.cell.y), s]));
+    const starts = this.around(a).filter((s) => this.open(s.cell.x, s.cell.y, true));
+    const goals = new Map(this.around(b).filter((s) => this.open(s.cell.x, s.cell.y, true)).map((s) => [this.k(s.cell.x, s.cell.y), s]));
     if (!starts.length || !goals.size) throw new Error(`tapis ${a.type}→${b.type} : pas d'accès`);
-    // Les entrées et sorties des autres machines restent libres : le tapis passe à côté.
-    const reserved = new Set<string>();
-    // (et la case juste devant, pour qu'un autre tapis n'y fasse pas le tour en l'enfermant).
-    const ahead = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-    for (const m of g.factory.machines.values()) {
-      if (m === a || m === b) continue;
-      for (const p of g.factory.fixedPortsOf(m) ?? []) {
-        if (g.factory.beltAt(p.x, p.y)) continue;
-        reserved.add(this.k(p.x, p.y));
-        reserved.add(this.k(p.x + ahead[p.d][0], p.y + ahead[p.d][1]));
-      }
-    }
     // Parcours en largeur ; un virage coûte un peu (on préfère les lignes droites), via une file à deux niveaux.
     const prev = new Map<string, string | null>();
     const startOf = new Map<string, { cell: P; inside: P }>();
@@ -187,7 +136,7 @@ export class BaseBuilder {
         if (goals.has(key)) { end = key; break; }
         for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
           const nx = c.x + dx, ny = c.y + dy, nk = this.k(nx, ny);
-          if (nx < minX || nx > maxX || ny < minY || ny > maxY || prev.has(nk) || !this.open(nx, ny, true) || (reserved.has(nk) && !goals.has(nk))) continue;
+          if (nx < minX || nx > maxX || ny < minY || ny > maxY || prev.has(nk) || !this.open(nx, ny, true)) continue;
           prev.set(nk, key);
           next.push({ x: nx, y: ny });
         }

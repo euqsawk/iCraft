@@ -98,7 +98,7 @@ function buildBase(g: Game, palier: number): { name: string; m: Machine }[] {
     // Un générateur nourri au tapis par une troisième foreuse de charbon ; la ligne de fer passe au courant.
     const [c3] = b.drills('charbon', { x: -11, y: 10 }, 1);
     const gen = b.place('generateur', { x: -14, y: 3 });
-    b.belt(c3, gen, 'fuel');
+    b.belt(c3, gen);
     // Un second générateur sur le même réseau, rechargé par le drone de la station.
     const gen2 = b.place('generateur', { x: gen.x, y: gen.y - 4 });
     g.factory.addFuel(gen2, 10);
