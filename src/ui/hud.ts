@@ -39,6 +39,23 @@ const STATUS_TEXT: Record<string, string> = {
   nowater: 'Pas d’eau : relie-le par un tuyau à une pompe posée sur un lac',
 };
 
+/** L'état d'une machine en deux ou trois mots, pour la pastille. */
+const STATUS_SHORT: Record<string, string> = {
+  idle: 'En attente', working: 'En marche', blocked: 'Sortie pleine', nofuel: 'Plus de charbon',
+  noinput: 'Manque un ingrédient', noore: 'Pas de filon', nopower: 'Pas de courant', nowater: 'Pas d’eau',
+};
+
+/** La flèche entre ce qui entre et ce qui sort. */
+const MP_ARROW = '<svg class="mp-arrow" width="24" height="24" viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13 H22 M16 7 L22 13 L16 19"/></svg>';
+
+/** Une durée lisible : « 1,6 s », « 10 s », « 1 min 04 ». */
+function secs(t: number): string {
+  if (!isFinite(t) || t <= 0) return '0 s';
+  if (t < 60) return `${t < 10 && Math.abs(t - Math.round(t)) > 0.05 ? t.toFixed(1).replace('.', ',') : Math.round(t)} s`;
+  const m = Math.floor(t / 60), s = Math.round(t % 60);
+  return s ? `${m} min ${String(s).padStart(2, '0')}` : `${m} min`;
+}
+
 /** Le verbe d'une étape de fabrication à la main, selon la machine qu'on imite. */
 const MACHINE_VERB: Record<string, string> = {
   four: 'Fonte', presse: 'Pressage', tour: 'Tournage', trefileuse: 'Tréfilage', haut_fourneau: 'Fonte de l’acier',
@@ -1643,6 +1660,7 @@ export class Hud implements GestureHandlers {
     this.closePopover();
     this.invSel = null;
     this.machineId = m.id;
+    if (this.machTabOf !== m.id) { this.machTab = 'prod'; this.machTabOf = m.id; }
     this.openSheet((sheet, close) => {
       const g = this.game;
       const mm = g.view.machines.get(this.machineId);
@@ -1801,67 +1819,239 @@ export class Hud implements GestureHandlers {
         sheet.append(acts);
         return;
       }
+      // Four, presse, assembleur, foreuse… : une demi-fenêtre (la carte reste visible), trois onglets.
       sheet.classList.add('mach-sheet');
-      sheet.append(this.sheetHead(title, esc(status), close));
-      // Liste déroulante : la machine reste en auto, une recette choisie sert à prévoir les débits.
-      if (def.kind === 'crafter' && def.recipes.length) sheet.append(this.planSelect(mm));
-      if (mm.type === 'raffinerie') {
-        const cur = mm.choice ?? 'plastique';
-        const row = h('div', 'mrow seg-row', '<span>Le pétrole donne</span>');
-        for (const [id, label] of [['plastique', 'Plastique'], ['carburant', 'Carburant']]) {
-          const b = h('button', `btn ${cur === id ? 'primary' : ''}`, label);
-          b.onclick = () => { g.view.setChoice(mm, id); this.refreshSheet(); };
-          row.append(b);
-        }
-        sheet.append(row);
+      this.r.selection = { kind: 'machine', id: mm.id };
+      sheet.append(this.machHead(def.kind === 'drill' ? def.name : title, mm, close));
+      if (this.machTab === 'rec' && !def.recipes.length) this.machTab = 'prod';
+      const held = [...Object.values(mm.inBuf), ...Object.values(mm.outBuf)].reduce((a, n) => a + Math.max(0, n), 0);
+      const tabs = h('div', 'mtabs');
+      const tabList: ['prod' | 'inv' | 'rec', string][] = [['prod', 'Production'], ['inv', `Contenu${held ? ` <small>${fmt(held)}</small>` : ''}`]];
+      if (def.recipes.length) tabList.push(['rec', `Recettes${def.recipes.length > 1 ? ` <small>${def.recipes.length}</small>` : ''}`]);
+      for (const [id, label] of tabList) {
+        const b = h('button', `mtab${this.machTab === id ? ' on' : ''}`, label);
+        b.onclick = () => { if (this.machTab !== id) this.setMachTab(id); };
+        tabs.append(b);
       }
-      sheet.append(this.machineDiagram(mm));
-      // Énergie, sur une ligne
-      if (g.view.powered(mm)) {
-        sheet.append(h('div', 'mrow', `<span class="mrow-ico">${ICONS.cable}</span><span>Au courant</span><b>${kW(g.view.powerUse(mm))}</b>`));
-      } else if (def.coal) {
-        const gauge = h('div', 'mrow mgauge', this.gauge('Carburant', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb));
-        sheet.append(gauge);
-      }
-      // Ce que la machine contient, en petit : toucher une pile la rend au robot.
-      const slots = (buf: Record<string, number>, which: 'in' | 'out', min: number) => {
-        const list = Object.entries(buf).filter(([, n]) => n > 0);
-        let html = list.map(([t, n]) => `<button class="mslot" data-which="${which}" data-item="${t}" aria-label="${esc(item(t).name)} : ${n}"><img src="${this.itemIcons.get(t)}" alt=""><b>${n}</b></button>`).join('');
-        for (let i = list.length; i < min; i++) html += '<span class="mslot empty"></span>';
-        return html;
-      };
-      const inv = h('div', 'minv', `${def.kind === 'crafter' ? `<div class="minv-g"><small>En attente</small><div class="minv-s">${slots(mm.inBuf, 'in', 2)}</div></div><span class="minv-sep"></span>` : ''}
-        <div class="minv-g"><small>Prêt à sortir</small><div class="minv-s">${slots(mm.outBuf, 'out', 1)}</div></div>
-        <span class="minv-hint">${[...Object.values(mm.inBuf), ...Object.values(mm.outBuf)].some((n) => n > 0) ? 'Touche une pile<br>pour la reprendre' : 'Vide'}</span>`);
-      inv.querySelectorAll<HTMLButtonElement>('.mslot[data-item]').forEach((b) => {
-        b.onclick = () => {
-          const which = b.dataset.which as 'in' | 'out', t = b.dataset.item!;
-          const n = g.machineToRobot(mm, which, t, (which === 'in' ? mm.inBuf : mm.outBuf)[t] ?? 0);
-          if (!n) this.toast(`L’inventaire de ${g.look.name} est plein`, 'warn');
-          this.refreshSheet();
-        };
-      });
-      sheet.append(inv);
-      // Liaisons directes avec des machines collées
-      const links = (mm.links ?? []).map((id) => g.view.machines.get(id)).filter((x): x is Machine => !!x);
-      for (const to of links) {
-        const row = h('div', 'mrow', `<span>Reliée directement à ${esc(machineDef(to.type).name.toLowerCase())}</span>`);
-        const cut = h('button', 'btn small', 'Couper');
-        cut.onclick = () => { g.unlinkMachines(mm, to.id); this.refreshSheet(); };
-        row.append(cut);
-        sheet.append(row);
-      }
-      const give = h('button', 'btn primary big mgive', `${ICONS.robot ?? ''}Donner depuis ${esc(g.look.name)}`);
+      sheet.append(tabs);
+      const body = h('div', 'mtab-body');
+      if (this.machTab === 'prod') this.machProduction(body, mm);
+      else if (this.machTab === 'inv') this.machContents(body, mm);
+      else this.machRecipes(body, mm);
+      sheet.append(body);
+      const acts = h('div', 'macts');
+      const give = h('button', 'btn primary', 'Donner');
       give.onclick = () => this.openGive(mm);
-      sheet.append(give);
-      const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(mm); };
-      const del = this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close);
-      acts.append(mv, del);
+      acts.append(give, mv, this.deleteButton(mm, 'Supprimer', 'Confirmer', close));
       sheet.append(acts);
     }, true);
     this.sheetKind = 'machine';
+    const def = machineDef(m.type);
+    if (def.kind === 'crafter' || def.kind === 'drill') {
+      this.overlay?.classList.add('see-map');
+      this.frameMachine(m);
+    }
+  }
+
+  /** Onglet ouvert dans la fenêtre d'une machine (gardé quand on revient sur la même machine). */
+  private machTab: 'prod' | 'inv' | 'rec' = 'prod';
+  private machTabOf = -1;
+
+  private setMachTab(id: 'prod' | 'inv' | 'rec'): void {
+    this.machTab = id;
+    const body = this.overlay?.querySelector('.mtab-body');
+    if (body) body.scrollTop = 0;
+    this.refreshSheet();
+  }
+
+  /** La caméra place la machine au milieu de ce qui reste visible au-dessus de la fenêtre. */
+  private frameMachine(m: Machine): void {
+    const sheet = this.overlay?.firstElementChild as HTMLElement | null;
+    if (!sheet) return;
+    const cam = this.r.camera;
+    // Entre le bas du bandeau du haut (mission) et le haut de la fenêtre.
+    const top = this.root.querySelector('.order-card')?.getBoundingClientRect().bottom ?? 120;
+    const ys = (Math.min(top, cam.height * 0.3) + cam.height - sheet.offsetHeight) / 2;
+    const zoom = Math.min(2.2, Math.max(1, cam.zoom));
+    this.r.focusOn(m.x + m.w / 2, m.y + m.h / 2 + (cam.height / 2 - ys) / (zoom * CELL), zoom, 0.45);
+  }
+
+  /** Nom, pastille d'état, bouton fermer. */
+  private machHead(title: string, mm: Machine, close: () => void): HTMLElement {
+    const tone = mm.status === 'working' ? 'ok' : mm.status === 'idle' ? 'idle' : 'warn';
+    const head = h('div', 'sheet-head mhead');
+    head.innerHTML = `<h2>${esc(title)}</h2><span class="mpill ${tone}"><i></i>${esc(STATUS_SHORT[mm.status] ?? STATUS_TEXT[mm.status] ?? '')}</span>`;
+    const x = h('button', 'round', ICONS.close);
+    x.setAttribute('aria-label', 'Fermer');
+    x.onclick = close;
+    head.append(x);
+    return head;
+  }
+
+  /** Une case de la ligne de production : l'objet, son débit, son nom. */
+  private mpItem(k: string, rate: number | null, out: boolean, n = 1, sub?: string): string {
+    return `<div class="mp-it${out ? ' out' : ''}"><span class="mp-ico"><img src="${this.itemIcons.get(k)}" alt="">${n > 1 ? `<i>${n}</i>` : ''}</span>`
+      + `<b>${rate !== null ? `${Hud.rate(rate)}<small>/s</small>` : '&nbsp;'}</b><span class="mp-n">${esc(sub ?? item(k).name.toLowerCase())}</span></div>`;
+  }
+
+  /** Onglet Production : ce qui entre → ce qui sort, l'avancement, le charbon. */
+  private machProduction(body: HTMLElement, mm: Machine): void {
+    const g = this.game, f = g.view, def = machineDef(mm.type);
+    if (mm.type === 'raffinerie') {
+      const cur = mm.choice ?? 'plastique';
+      const row = h('div', 'mrow seg-row', '<span>Le pétrole donne</span>');
+      for (const [id, label] of [['plastique', 'Plastique'], ['carburant', 'Carburant']]) {
+        const b = h('button', `btn ${cur === id ? 'primary' : ''}`, label);
+        b.onclick = () => { f.setChoice(mm, id); this.refreshSheet(); };
+        row.append(b);
+      }
+      body.append(row);
+    }
+    const card = h('div', 'card mprod');
+    let flow = '', cap = '', foot = '';
+    if (def.kind === 'drill') {
+      const patch = g.world.patchAt(mm.x, mm.y) ?? g.world.patchAt(mm.x + 1, mm.y + 1);
+      const ore = mm.ore;
+      cap = ore ? `Extrait du ${esc(item(ore).name.toLowerCase())}` : 'Pas de filon dessous';
+      if (ore) {
+        flow = `${this.mpItem(ore, null, false, 1, `filon ${patch ? RICHNESS_LABEL[patch.richness] : ''}`)}${MP_ARROW}${this.mpItem(ore, mm.rate ?? 0, true)}`;
+        foot = `<span>${(mm.rate ?? 0) > 0 ? `1 toutes les ${secs(1 / (mm.rate ?? 1))}` : ''}</span>`;
+      }
+    } else {
+      const ri = this.ratesRecipe(mm), auto = this.autoRecipe(mm);
+      const rec = ri >= 0 ? def.recipes[ri] : null;
+      if (rec) {
+        const outs = Object.entries(rec.out);
+        const main = outs[0]?.[0];
+        if (mm.plan !== undefined) cap = `Débits prévus pour : ${esc(item(main).name.toLowerCase())}`;
+        else if (auto >= 0) cap = `Fait des ${esc(item(main).plural)}`;
+        else cap = 'Fait ce qu’on lui apporte · exemple :';
+        flow = `<div class="mp-ins">${Object.entries(rec.in).map(([k, n]) => this.mpItem(k, n / rec.time, false, n)).join('<span class="mp-plus">+</span>')}</div>${MP_ARROW}`
+          + `<div class="mp-ins">${outs.map(([k, n]) => this.mpItem(k, n / rec.time, true, n)).join('<span class="mp-plus">+</span>')}</div>`;
+        foot = `<span>${secs(rec.time)} par ${esc(item(main).name.toLowerCase())}</span>`;
+      }
+    }
+    if (mm.made > 0) foot += `<span>${fmt(mm.made)} ${def.kind === 'drill' ? 'extrait' : 'fabriqué'}${mm.made > 1 ? 's' : ''}</span>`;
+    const many = def.recipes.length > 1;
+    card.innerHTML = `<div class="mp-cap"><span>${cap}</span>${many ? `<button class="mp-more">${def.recipes.length} recettes ›</button>` : ''}</div>
+      ${flow ? `<div class="mp-flow">${flow}</div>` : ''}
+      <span class="mp-bar"><span data-mp="${mm.id}" style="width:${this.machProgress(mm) * 100}%"></span></span>
+      ${foot ? `<div class="mp-foot">${foot}</div>` : ''}
+      ${mm.status !== 'working' && mm.status !== 'idle' && mm.status !== 'noinput' ? `<p class="mp-warn">${esc(STATUS_TEXT[mm.status] ?? '')}</p>` : ''}`;
+    card.querySelector<HTMLButtonElement>('.mp-more')?.addEventListener('click', () => this.setMachTab('rec'));
+    // Énergie : le charbon (stock + celui qui brûle), ou le courant.
+    if (f.powered(mm)) {
+      card.append(h('div', 'mfuel power', `<span class="mf-ico">${ICONS.cable}</span><span class="mf-l">Au courant</span><b>${kW(f.powerUse(mm))}</b>`));
+    } else if (def.coal && f.selfFed(mm)) {
+      card.append(h('div', 'mfuel', `<span class="mf-ico"><img src="${this.itemIcons.get(mm.ore === 'charbon' ? 'charbon' : 'carburant')}" alt=""></span><span class="mf-l">Se sert dans ce qu’elle produit</span><b>${mm.fuel}/${f.fuelCap(mm)}</b>`));
+    } else if (def.coal && !f.freeEnergy) {
+      card.append(this.fuelBar(mm));
+    }
+    body.append(card);
+  }
+
+  /** Avancement de la pièce en cours (0 à 1). */
+  private machProgress(mm: Machine): number {
+    const def = machineDef(mm.type);
+    if (def.kind === 'drill') return Math.max(0, Math.min(1, mm.drillT));
+    if (!mm.craft) return 0;
+    const rec = def.recipes[mm.craft.ri];
+    return rec ? Math.max(0, Math.min(1, mm.craft.t / rec.time)) : 0;
+  }
+
+  /**
+   * La barre du charbon : une case qui se vide pour le morceau en train de brûler, puis le stock en cases.
+   * Dessous, ce qu'elle consomme et combien de temps elle tiendra.
+   */
+  private fuelBar(mm: Machine): HTMLElement {
+    const f = this.game.view;
+    const cap = f.fuelCap(mm), n = Math.max(0, mm.fuel), carb = mm.carb ?? 0;
+    const per = RULES.coalMachineSeconds;
+    const burnMax = mm.burn > per ? per * RULES.carburantMult : per;
+    const left = (n - carb) * per + carb * per * RULES.carburantMult + Math.max(0, mm.burn);
+    let cells = '';
+    for (let i = 0; i < cap; i++) cells += `<i class="${i < carb ? 'carb' : i < n ? 'on' : ''}"></i>`;
+    const low = f.lowFuel(mm);
+    const el = h('div', `mfuel${low ? ' low' : ''}`);
+    el.innerHTML = `<span class="mf-ico"><img src="${this.itemIcons.get(carb > 0 ? 'carburant' : 'charbon')}" alt=""></span>
+      <span class="mf-main">
+        <span class="mf-bar"><span class="mf-burn" title="En train de brûler"><span data-burn="${mm.id}" style="width:${Math.min(1, Math.max(0, mm.burn) / burnMax) * 100}%"></span></span><span class="mf-cells">${cells}</span></span>
+        <small>1 toutes les ${secs(carb > 0 ? per * RULES.carburantMult : per)} · ${left > 0 ? `tient encore ${secs(left)}` : 'vide'}</small>
+      </span>
+      <b>${n}/${cap}</b>`;
+    return el;
+  }
+
+  /** Onglet Contenu : ce qui attend dedans (touchable pour le reprendre), les tapis branchés, les liaisons. */
+  private machContents(body: HTMLElement, mm: Machine): void {
+    const g = this.game, f = g.view, def = machineDef(mm.type);
+    const slots = (buf: Record<string, number>, which: 'in' | 'out', min: number) => {
+      const list = Object.entries(buf).filter(([, n]) => n > 0);
+      let html = list.map(([t, n]) => `<button class="mslot" data-which="${which}" data-item="${t}" aria-label="${esc(item(t).name)} : ${n}"><img src="${this.itemIcons.get(t)}" alt=""><b>${n}</b></button>`).join('');
+      for (let i = list.length; i < min; i++) html += '<span class="mslot empty"></span>';
+      return html;
+    };
+    const any = [...Object.values(mm.inBuf), ...Object.values(mm.outBuf)].some((n) => n > 0);
+    const inv = h('div', 'card minv2', `${def.kind === 'crafter' ? `<div class="minv-g"><small>En attente</small><div class="minv-s">${slots(mm.inBuf, 'in', 3)}</div></div>` : ''}
+      <div class="minv-g"><small>Prêt à sortir</small><div class="minv-s">${slots(mm.outBuf, 'out', 2)}</div></div>
+      <p class="muted small">${any ? `Touche une pile pour la rendre à ${esc(g.look.name)}.` : 'Rien dedans pour l’instant.'}</p>`);
+    inv.querySelectorAll<HTMLButtonElement>('.mslot[data-item]').forEach((b) => {
+      b.onclick = () => {
+        const which = b.dataset.which as 'in' | 'out', t = b.dataset.item!;
+        const n = g.machineToRobot(mm, which, t, (which === 'in' ? mm.inBuf : mm.outBuf)[t] ?? 0);
+        if (!n) this.toast(`L’inventaire de ${g.look.name} est plein`, 'warn');
+        this.refreshSheet();
+      };
+    });
+    body.append(inv);
+    // Les tapis branchés : on entre et on sort par où l'on veut, on les compte seulement.
+    const io = f.machineIO(mm);
+    const nin = io.filter((c) => !c.planned && c.io === 'in').length, nout = io.filter((c) => !c.planned && c.io === 'out').length;
+    const belts = h('div', 'mrow', `<span class="mrow-ico">${ICONS.tapis}</span><span>${nin || nout ? `${nin} tapis entre${nin > 1 ? 'nt' : ''} · ${nout} sort${nout > 1 ? 'ent' : ''}` : 'Aucun tapis branché'}</span>`);
+    body.append(belts);
+    // Restes d'une ancienne partie : des entrées ou sorties prévues sans tapis. On peut les effacer.
+    const planned = io.filter((c) => c.planned && c.port !== undefined);
+    if (planned.length) {
+      const row = h('div', 'mrow', `<span>${planned.length} emplacement${planned.length > 1 ? 's' : ''} prévu${planned.length > 1 ? 's' : ''} sans tapis</span>`);
+      const clear = h('button', 'btn small', 'Effacer');
+      clear.onclick = () => {
+        for (const p of [...planned].sort((a, b) => b.port! - a.port!)) g.removePort(mm, p.port!);
+        this.refreshSheet();
+      };
+      row.append(clear);
+      body.append(row);
+    }
+    for (const to of (mm.links ?? []).map((id) => f.machines.get(id)).filter((x): x is Machine => !!x)) {
+      const row = h('div', 'mrow', `<span>Reliée directement à ${esc(machineDef(to.type).name.toLowerCase())}</span>`);
+      const cut = h('button', 'btn small', 'Couper');
+      cut.onclick = () => { g.unlinkMachines(mm, to.id); this.refreshSheet(); };
+      row.append(cut);
+      body.append(row);
+    }
+  }
+
+  /** Onglet Recettes : tout ce qu'elle sait faire ; en toucher une sert à prévoir ses débits. */
+  private machRecipes(body: HTMLElement, mm: Machine): void {
+    const g = this.game, def = machineDef(mm.type);
+    const auto = this.autoRecipe(mm);
+    const list = h('div', 'card mrecs');
+    const autoRow = h('button', `mrec-row${mm.plan === undefined ? ' on' : ''}`, `<span class="plan-auto">Auto</span><span class="mrec-name">Selon ce qui arrive</span>${mm.plan === undefined ? '<span class="mrec-tick">✓</span>' : ''}`);
+    autoRow.onclick = () => { g.setPlan(mm, undefined); this.refreshSheet(); };
+    list.append(autoRow);
+    def.recipes.forEach((r, i) => {
+      const outs = Object.keys(r.out);
+      if (!outs.length) return;
+      const o = outs[0];
+      const ins = Object.entries(r.in).map(([k, n]) => `<span class="mrec-i"><img src="${this.itemIcons.get(k)}" alt="">${n > 1 ? `<i>${n}</i>` : ''}</span>`).join('<b class="mp-plus">+</b>');
+      const tag = auto === i && mm.status === 'working' ? '<span class="mrec-tag">en cours</span>' : '';
+      const row = h('button', `mrec-row${mm.plan === i ? ' on' : ''}`, `${ins}<b class="mp-plus">→</b><span class="mrec-i out"><img src="${this.itemIcons.get(o)}" alt=""></span><span class="mrec-name">${esc(item(o).name)}${tag}</span><span class="mrec-t">${secs(r.time)}</span>`);
+      row.onclick = () => { g.setPlan(mm, mm.plan === i ? undefined : i); this.setMachTab('prod'); };
+      list.append(row);
+    });
+    body.append(list);
+    body.append(h('p', 'muted small mrec-hint', 'Elle fabrique toute seule selon ce qu’on lui apporte. Toucher une recette affiche ses débits dans Production.'));
   }
 
   /** Une entrée ou une sortie est en train d'être glissée vers la carte (la fenêtre attend). */
@@ -1897,35 +2087,6 @@ export class Hud implements GestureHandlers {
 
   private static rate(x: number): string {
     return x < 0.005 ? '0' : x >= 10 ? x.toFixed(1).replace('.', ',') : x.toFixed(2).replace('.', ',').replace(/0$/, '');
-  }
-
-  /** « Auto · fait des engrenages » ; touchée, la grande liste des recettes pour prévoir les débits. */
-  private planSelect(mm: Machine): HTMLElement {
-    const g = this.game, def = machineDef(mm.type);
-    const wrap = h('div', 'plan');
-    const auto = this.autoRecipe(mm);
-    const shown = this.ratesRecipe(mm);
-    const outOf = (ri: number) => Object.keys(def.recipes[ri].out)[0];
-    let text: string;
-    if (mm.plan !== undefined) text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(mm.plan))}" alt=""> ${esc(item(outOf(mm.plan)).name.toLowerCase())}</small>`;
-    else if (auto >= 0) text = `<b>fait des <img src="${this.itemIcons.get(outOf(auto))}" alt=""> ${esc(item(outOf(auto)).plural)}</b>`;
-    else text = `<b>Fait ce qu’on lui apporte</b><small>Débits prévus pour <img src="${this.itemIcons.get(outOf(shown))}" alt=""> ${esc(item(outOf(shown)).name.toLowerCase())}</small>`;
-    const btn = h('button', 'plan-btn', `<span class="plan-auto">Auto</span><span class="plan-txt">${text}</span><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6 L8 11 L13 6"/></svg>`);
-    btn.onclick = () => {
-      const opts: PickOpt[] = [{ id: null, label: 'Selon ce qui arrive', sub: 'La machine choisit sa recette d’après ce qu’on lui apporte', badge: '<span class="plan-auto">Auto</span>', on: mm.plan === undefined }];
-      def.recipes.forEach((r, i) => {
-        if (!r || !Object.keys(r.out).length) return;
-        const o = Object.keys(r.out)[0];
-        const ins = Object.entries(r.in).map(([k, n]) => `<img src="${this.itemIcons.get(k)}" alt="">${n > 1 ? `${n} ` : ''}${esc(item(k).name.toLowerCase())}`).join(' + ');
-        opts.push({ id: String(i), label: item(o).name, sub: `<span class="pick-ins">${ins}</span> · ${Hud.rate(r.out[o] / r.time)} /s`, icon: this.itemIcons.get(o), on: mm.plan === i, group: 'Prévoir les débits pour' });
-      });
-      this.openPicker(machineDef(mm.type).name, 'La machine reste en auto : elle fabrique selon ce qu’on lui apporte. Choisir une recette sert seulement à prévoir ses débits.', opts, (id) => {
-        g.setPlan(mm, id === null ? undefined : Number(id));
-        this.refreshSheet();
-      });
-    };
-    wrap.append(btn);
-    return wrap;
   }
 
   /**
@@ -2666,11 +2827,13 @@ export class Hud implements GestureHandlers {
     back.addEventListener('click', (e) => {
       if (performance.now() - opened < 450) { e.stopPropagation(); e.preventDefault(); }
     }, true);
-    build(sheet, close);
+    // La languette : on voit qu'on peut tirer la fenêtre vers le bas pour la fermer.
+    const full = (s: HTMLElement, c: () => void) => { s.append(h('div', 'sheet-grab')); build(s, c); };
+    full(sheet, close);
     swipeToClose(sheet, back, () => { if (this.overlay === back) close(); });
     this.root.append(back);
     this.overlay = back;
-    this.sheetBuild = live ? build : null;
+    this.sheetBuild = live ? full : null;
     this.sheetDirty = false;
   }
 
@@ -2681,15 +2844,18 @@ export class Hud implements GestureHandlers {
     const sheet = back.firstElementChild as HTMLElement;
     // Pas pendant qu'on la tire vers le bas : le doigt perdrait son élément (et la fin du geste).
     if (sheet.dataset.dragging || this.portDragging) { this.sheetDirty = true; return; }
-    const top = sheet.scrollTop;
+    const top = sheet.scrollTop, inner = sheet.querySelector('.mtab-body')?.scrollTop ?? 0;
     sheet.innerHTML = '';
     build(sheet, () => this.closeSheet());
     sheet.scrollTop = top;
+    const body = sheet.querySelector('.mtab-body');
+    if (body) body.scrollTop = inner;
   }
 
   private closeSheet(): void {
     this.closeModal();
     this.r.rangeOf = null;
+    if (this.sheetKind === 'machine' && this.popover.classList.contains('hidden')) this.r.selection = null;
     this.overlay?.remove();
     this.overlay = null;
     this.sheetBuild = null;
@@ -3039,6 +3205,7 @@ export class Hud implements GestureHandlers {
     back.onclick = (e) => { if (e.target === back) close(); };
     exportPanel(this.game.serialize(), close).then((panel) => {
       panel.classList.add('sheet');
+      panel.prepend(h('div', 'sheet-grab'));
       swipeToClose(panel, back, () => { if (this.overlay === back) close(); });
       back.append(panel);
     }).catch(() => { close(); this.toast('Export impossible sur ce navigateur', 'warn'); });
@@ -3253,6 +3420,17 @@ export class Hud implements GestureHandlers {
         const job = this.game.craftQueue[Number(row.dataset.i)];
         const bar = row.querySelector<HTMLElement>('.cj-bar > span');
         if (job && bar) bar.style.width = `${(job.t / job.total) * 100}%`;
+      });
+      // Fenêtre d'une machine : la pièce en cours et le charbon qui brûle avancent en continu.
+      this.overlay.querySelectorAll<HTMLElement>('[data-mp]').forEach((bar) => {
+        const mm = this.game.view.machines.get(Number(bar.dataset.mp));
+        if (mm) bar.style.width = `${this.machProgress(mm) * 100}%`;
+      });
+      this.overlay.querySelectorAll<HTMLElement>('[data-burn]').forEach((bar) => {
+        const mm = this.game.view.machines.get(Number(bar.dataset.burn));
+        if (!mm) return;
+        const per = RULES.coalMachineSeconds, max = mm.burn > per ? per * RULES.carburantMult : per;
+        bar.style.width = `${Math.min(1, Math.max(0, mm.burn) / max) * 100}%`;
       });
       this.liveTimer += dt;
       if (this.liveTimer > 1 && (this.sheetKind === 'robot' || this.sheetKind === 'sell' || this.sheetKind === 'machine' || this.sheetKind === 'line' || this.sheetKind === 'chest')) { this.liveTimer = 0; this.sheetDirty = true; }
