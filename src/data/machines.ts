@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'filter';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'filter' | 'base';
 
 export interface MachineDef {
   id: string;
@@ -191,6 +191,10 @@ export const MACHINES: Record<string, MachineDef> = {
   entrepot: {
     id: 'entrepot', name: 'Entrepôt', kind: 'storage', coal: false, w: 3, h: 3, cost: 300, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde 900 objets, rangés par sorte · 3 × 3',
+  },
+  base_robot: {
+    id: 'base_robot', name: 'Base du robot', kind: 'base', coal: false, unique: true, w: 2, h: 2, cost: 400, unlock: 1, recipes: [], buildable: true,
+    hint: 'Une seule par partie · depuis le menu du robot, il s’y téléporte',
   },
   lampadaire: {
     id: 'lampadaire', name: 'Lampadaire', kind: 'lamp', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,

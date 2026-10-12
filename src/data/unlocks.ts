@@ -119,6 +119,7 @@ export const BRANCHES: Branch[] = [
       n('chenilles', 'Chenilles', 'chenilles', 1, 1, 2, { vis: 30, plaque_fer: 30 }, ['robot'], 'Le robot roule 1,25 fois plus vite.', { kind: 'robotSpeed', mult: 1.25 }),
       n('chenilles2', 'Chenilles II', 'chenilles', 2, 1, 3, { engrenage: 30, acier: 20 }, ['chenilles'], 'Le robot roule 1,5 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 1.5 }),
       n('chenilles3', 'Chenilles III', 'chenilles', 3, 1, 5, { moteur: 10, engrenage: 40 }, ['chenilles2'], 'Le robot roule 2 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 2 }),
+      n('base_robot', 'Base du robot', 'base_robot', 3, 2, 5, { circuit: 20, moteur: 5 }, ['robot'], 'La Base du robot (2 × 2, une seule par partie) : pose-la où tu veux. Depuis le menu du robot, « Retour à la base » le téléporte juste à côté, d’où qu’il soit.', m('base_robot')),
     ],
   },
   {

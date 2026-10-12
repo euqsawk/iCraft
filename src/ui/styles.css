@@ -948,6 +948,10 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .scan-btn .pl b { font-size: 15px; font-weight: 900; }
 .scan-btn .pl small { font-size: 12px; font-weight: 700; color: var(--ink2); }
 .scan-btn i { font-style: normal; font-size: 22px; font-weight: 900; color: var(--ink2); }
+.home-btn { margin-top: 10px; }
+.home-btn .scan-ico img { width: 34px; height: 34px; }
+.home-btn.off { opacity: .55; }
+.home-btn.off i { visibility: hidden; }
 .pick-modal .sheet-head .round { flex: none; }
 
 /* La languette en haut des fenêtres du bas : on peut les tirer vers le bas. */

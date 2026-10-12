@@ -404,6 +404,31 @@ test('supprimer rembourse', () => {
   g.removeMachine(m);
   assert(g.money === m0, 'remboursement');
 });
+test('Base du robot : palier 5, une seule, le robot s’y téléporte', () => {
+  const g = new Game('TEST-BASE');
+  g.money = 100000;
+  assert(NODE.base_robot?.palier === 5, 'débloquée au palier 5');
+  const spot = (): [number, number] => {
+    for (let y = -6; y < 14; y++) for (let x = -6; x < 14; x++) if (g.view.checkMachine('base_robot', x, y, undefined, true).ok) return [x, y];
+    throw new Error('pas de place');
+  };
+  let [x, y] = spot();
+  assert(!g.placeMachine('base_robot', x, y), 'pas avant le déblocage');
+  assert(!g.teleportRobot(), 'pas de téléportation sans base');
+  g.unlocks.add('base_robot');
+  const b = g.placeMachine('base_robot', x, y)!;
+  assert(b && b.built, 'posée et construite tout de suite');
+  [x, y] = spot();
+  assert(!g.placeMachine('base_robot', x, y), 'une seule par partie');
+  g.robot.x = 40; g.robot.y = -30; g.sendRobot(80, 80);
+  assert(g.teleportRobot(), 'téléportation');
+  assert(Math.abs(g.robot.x - (b.x + 1)) < 0.01 && Math.abs(g.robot.y - (b.y + 3.2)) < 0.01, `à côté de la base : ${g.robot.x}, ${g.robot.y}`);
+  assert(!g.robot.target && !g.robot.moving, 'il s’arrête');
+  assert((g.baseDistance() ?? 9) < 0.01, 'distance nulle');
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.robotBase?.type === 'base_robot', 'la base se sauvegarde');
+});
 test('sauvegarde et rechargement', () => {
   const g = new Game('TEST-10');
   buildIronLine(g);

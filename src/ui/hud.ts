@@ -22,6 +22,7 @@ import { exportPanel, playTime } from './title.ts';
 import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS, UNLOCK_ICON } from './nodeIcons.ts';
+import { buildingSvgUrl } from '../render/buildingIcons.ts';
 import { swipeToClose } from './swipe.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'transport';
@@ -418,7 +419,7 @@ export class Hud implements GestureHandlers {
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const inside = !!this.game.inAtelier;
-    const OUTSIDE_ONLY = ['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre'];
+    const OUTSIDE_ONLY = ['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre', 'base_robot'];
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id))
       // Dans un atelier : ni foreuse, ni station, ni générateur, ni dépôt ; les entrées et sorties, seulement là.
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
@@ -1338,10 +1339,32 @@ export class Hud implements GestureHandlers {
       const speed = g.robotSpeedMult > 1 ? ` · chenilles : ×${String(g.robotSpeedMult).replace('.', ',')}` : '';
       sheet.append(this.sheetHead(g.look.name, esc(`${r.moving ? 'Il roule.' : 'À l’arrêt.'} Touche le sol pour l’envoyer explorer : sa lampe dissipe le brouillard${speed}.`), close));
       sheet.append(this.scanCard(close));
+      const home = this.homeCard(close);
+      if (home) sheet.append(home);
     }, true);
     this.sheetKind = 'robot';
   }
 
+
+  /** Retour à la base : le robot se téléporte à côté de sa base (débloquée au palier 5, posée une fois). */
+  private homeCard(close: () => void): HTMLElement | null {
+    const g = this.game;
+    if (!g.hasMachine('base_robot')) return null;
+    const d = g.baseDistance();
+    const icon = buildingSvgUrl('base_robot', 0, 96);
+    const sub = d === null ? 'Pose ta Base du robot (palette) pour pouvoir t’y téléporter'
+      : d < 1.5 ? 'Il est déjà à sa base'
+      : `Téléporte le robot à côté de sa base · à ${Math.round(d)} case${Math.round(d) > 1 ? 's' : ''}`;
+    const btn = h('button', `card scan-btn home-btn${d === null || d < 1.5 ? ' off' : ''}`, `<span class="scan-ico">${icon ? `<img src="${icon}" alt="">` : ''}</span><span class="pl"><b>Retour à la base</b><small>${esc(sub)}</small></span><i>›</i>`);
+    btn.onclick = () => {
+      if (d !== null && d < 1.5) return;
+      if (!g.teleportRobot()) return;
+      close();
+      this.r.centerOnRobot();
+      this.toast('Le robot est rentré à sa base', 'good');
+    };
+    return btn;
+  }
 
   /** Scanner : choisir une matière, des flèches montrent les 3 filons les plus proches pendant 10 s. */
   private scanCard(close: () => void): HTMLElement {

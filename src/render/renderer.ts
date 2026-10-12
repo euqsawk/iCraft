@@ -206,6 +206,8 @@ export class GameRenderer {
   /** La fusée : debout sur sa rampe pendant le compte à rebours, puis le décollage. */
   private rocketG = new Graphics();
   private rocketAnim: { x: number; y: number; t: number } | null = null;
+  /** Téléportation du robot vers sa base : d'où il part, et depuis combien de temps. */
+  private tpAnim: { fx: number; fy: number; t: number } | null = null;
   /** Tri : l'objet trié, en petit, sur la case du séparateur. */
   private filterLayer = new Container();
   /** Les trieurs, par-dessus les machines (leur pastille déborde du tapis). */
@@ -243,6 +245,7 @@ export class GameRenderer {
     game.on((e) => {
       if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
       if (e.type === 'deliver' && e.at === 'noyau' && this.noyauView) this.noyauView.pulse = 1;
+      if (e.type === 'teleport') this.tpAnim = { fx: e.fromX * CELL, fy: e.fromY * CELL, t: 0 };
       if (e.type === 'rocket') {
         const m = game.factory.machines.get(e.id);
         if (m) {
@@ -1501,6 +1504,9 @@ export class GameRenderer {
     v.beam.alpha = 0.5 + 0.35 * pulse;
     v.glow.alpha = 0.4 + 0.6 * pulse;
     v.glow.scale.set(1);
+    const tp = this.tpAnim ? Math.min(1, Math.max(0, (this.tpAnim.t - 0.3) / 0.35)) : 1;
+    v.root.scale.set(0.6 + 0.4 * tp, tp);
+    v.root.alpha = tp;
   }
 
   /** Machine qu'on est en train de déplacer. */
@@ -2073,6 +2079,31 @@ export class GameRenderer {
     if (a.t > 6) this.rocketAnim = null;
   }
 
+  /** Téléportation : une colonne de lumière là où il était, des anneaux qui se resserrent à l'arrivée. */
+  private drawTeleport(dt: number): void {
+    const g = this.fx;
+    g.clear();
+    const a = this.tpAnim;
+    if (!a || this.game.inAtelier) return;
+    a.t += dt;
+    const k = Math.min(1, a.t / 0.7);
+    const r = this.game.robot, x = r.x * CELL, y = r.y * CELL;
+    // Départ : la lumière monte et s'efface.
+    if (k < 1) {
+      g.roundRect(a.fx - 12, a.fy - 46 - k * 30, 24, 50 + k * 30, 12).fill({ color: 0x7ce0f0, alpha: 0.5 * (1 - k) });
+      g.ellipse(a.fx, a.fy, 22 * (1 + k), 7 * (1 + k)).stroke({ width: 3, color: 0x3bb3c9, alpha: 1 - k });
+    }
+    // Arrivée : trois anneaux qui se resserrent sur le robot, puis un éclat.
+    for (let i = 0; i < 3; i++) {
+      const p = Math.min(1, Math.max(0, (a.t - i * 0.1) / 0.5));
+      if (p <= 0 || p >= 1) continue;
+      g.ellipse(x, y, 40 * (1 - p) + 8, (40 * (1 - p) + 8) * 0.35).stroke({ width: 3, color: 0x3bb3c9, alpha: 0.9 * (1 - p * 0.5) });
+    }
+    const flash = Math.max(0, 1 - Math.abs(a.t - 0.55) / 0.25);
+    if (flash > 0) g.circle(x, y - 16, 26).fill({ color: 0xbff4ff, alpha: 0.55 * flash });
+    if (a.t > 1) this.tpAnim = null;
+  }
+
   /** Le voile de pollution, morceau de carte par morceau de carte. */
   private drawSmog(dt: number): void {
     this.smogT += dt;
@@ -2158,6 +2189,7 @@ export class GameRenderer {
     this.drawItems();
     this.updateActors();
     this.drawRockets(dt);
+    this.drawTeleport(dt);
     this.drawSmog(dt);
     this.drawNight();
     this.drawWeather();

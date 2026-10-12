@@ -43,7 +43,9 @@ export type GameEvent =
   | { type: 'view' }
   | { type: 'rocket'; id: number; n: number }
   | { type: 'gift'; building: GiftType; id: number; again?: boolean }
-  | { type: 'unlock'; id: string };
+  | { type: 'unlock'; id: string }
+  /** Le robot s'est téléporté à sa base (d'où il partait). */
+  | { type: 'teleport'; fromX: number; fromY: number };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
 export interface OfflineReport {
@@ -102,7 +104,7 @@ export interface GameSave {
 }
 
 /** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte). */
-const NOT_IN_ATELIER = new Set(['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre']);
+const NOT_IN_ATELIER = new Set(['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre', 'base_robot']);
 
 export class Game {
   readonly world: World;
@@ -1313,6 +1315,40 @@ export class Game {
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     this.robot.target = { x, y };
     this.robot.manual = true;
+  }
+
+  /** La base du robot (bâtiment unique, sur la carte), si elle est posée. */
+  get robotBase(): Machine | null {
+    for (const m of this.factory.machines.values()) if (m.type === 'base_robot' && m.built) return m;
+    return null;
+  }
+
+  /** Distance du robot à sa base, en cases (null sans base). */
+  baseDistance(): number | null {
+    const b = this.robotBase;
+    if (!b) return null;
+    const p = this.baseSpot(b);
+    return Math.hypot(p.x - this.robot.x, p.y - this.robot.y);
+  }
+
+  /** Où le robot apparaît : juste sous la base, au milieu. */
+  private baseSpot(b: Machine): { x: number; y: number } {
+    return { x: b.x + b.w / 2, y: b.y + b.h + 1.2 };
+  }
+
+  /** « Retour à la base » : le robot se téléporte à côté de sa base, d'où qu'il soit. */
+  teleportRobot(): boolean {
+    const b = this.robotBase;
+    if (!b) {
+      this.emit({ type: 'toast', text: this.hasMachine('base_robot') ? 'Pose d’abord la Base du robot' : 'Base du robot : à débloquer dans l’arbre (Robot, palier 5)', tone: 'warn' });
+      return false;
+    }
+    const r = this.robot, from = { x: r.x, y: r.y };
+    const p = this.baseSpot(b);
+    r.x = p.x; r.y = p.y; r.target = null; r.manual = false; r.moving = false;
+    this.revealRobot(true);
+    this.emit({ type: 'teleport', fromX: from.x, fromY: from.y });
+    return true;
   }
 
   private revealRobot(force = false): void {
