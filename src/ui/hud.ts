@@ -4,7 +4,7 @@ import { FLUIDS, isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/ite
 import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
-import { ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
+import { Factory, ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
 import { Game, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
@@ -1137,7 +1137,9 @@ export class Hud implements GestureHandlers {
       const isSplit = b.split !== undefined && !f.machineAt(b.x + DX[b.split], b.y + DY[b.split]);
       const splitter = !isSplit ? '' : b.filter
         ? `<p><b>Tri</b> : seul ${esc(item(b.filter).name.toLowerCase())} part dans la dérivation ; tout le reste continue tout droit.</p>`
-        : '<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.</p>';
+        : b.split2 !== undefined && !f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2])
+          ? '<p>Séparateur à 3 sorties : un objet sur trois part de chaque côté, un sur trois continue tout droit.</p>'
+          : `<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.${this.game.isUnlocked('separateur2') ? ' Glisse depuis lui de l’autre côté pour une troisième sortie.' : ''}</p>`;
       // Un compteur sur la chaîne : son débit, matière par matière.
       const mb = chain.find((c) => c.meter);
       let meter = '';
@@ -1161,7 +1163,7 @@ export class Hud implements GestureHandlers {
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
       const sortBtn = isSplit ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : this.game.isUnlocked('tri') ? 'Trier un objet' : 'Voir le séparateur'}</button></div>` : '';
       const upBtn = !bup ? '' : bup.locked
-        ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Niveau ${bup.to} : ${bup.to <= 3 ? 'Tapis rapide' : 'Tapis express'}</button></div>`
+        ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Tapis niveau ${bup.to} : à débloquer (Niveaux)</button></div>`
         : `<div class="row"><button class="btn primary" data-act="lvl"${this.game.money < bup.price ? ' disabled' : ''}>Niveau ${bup.to} · ${bup.cells.length} case${bup.cells.length > 1 ? 's' : ''} · ${ICONS.coinSm}${fmt(bup.price)}</button></div>`;
       const actions = `${upBtn}${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
       if (!this.setPopover(`b${sel.x},${sel.y}:${lmin}-${lmax}:${bup ? `${bup.price}${bup.locked ? 'L' : ''}${this.game.money >= bup.price ? '$' : ''}` : ''}`, info + linkInfo, actions)) return;
@@ -1650,9 +1652,11 @@ export class Hud implements GestureHandlers {
         if (mm.plan !== undefined) cap = `Débits prévus pour : ${esc(item(main).name.toLowerCase())}`;
         else if (auto >= 0) cap = `Fait des ${esc(item(main).plural)}`;
         else cap = 'Fait ce qu’on lui apporte · exemple :';
-        flow = `<div class="mp-ins">${Object.entries(rec.in).map(([k, n]) => this.mpItem(k, n / rec.time, false, n)).join('<span class="mp-plus">+</span>')}</div>${MP_ARROW}`
-          + `<div class="mp-ins">${outs.map(([k, n]) => this.mpItem(k, n / rec.time, true, n)).join('<span class="mp-plus">+</span>')}</div>`;
-        foot = `<span>${secs(rec.time)} par ${esc(item(main).name.toLowerCase())}</span>`;
+        // Le niveau de la machine accélère tout : débits et temps par pièce.
+        const sp = Factory.levelSpeed(mm), tt = rec.time / sp;
+        flow = `<div class="mp-ins">${Object.entries(rec.in).map(([k, n]) => this.mpItem(k, n / tt, false, n)).join('<span class="mp-plus">+</span>')}</div>${MP_ARROW}`
+          + `<div class="mp-ins">${outs.map(([k, n]) => this.mpItem(k, n / tt, true, n)).join('<span class="mp-plus">+</span>')}</div>`;
+        foot = `<span>${secs(tt)} par ${esc(item(main).name.toLowerCase())}</span>`;
       }
     }
     if (mm.made > 0 && crew.length < 2) foot += `<span>${fmt(mm.made)} ${def.kind === 'drill' ? 'extrait' : 'fabriqué'}${mm.made > 1 ? 's' : ''}</span>`;
@@ -1674,26 +1678,29 @@ export class Hud implements GestureHandlers {
       card.append(this.fuelBar(mm));
     }
     body.append(card);
-    if (def.kind === 'drill') body.append(this.levelCard(mm));
+    if (def.kind === 'drill' || def.kind === 'crafter') body.append(this.levelCard(mm));
   }
 
   /** Niveau d'une foreuse (de tout son groupe) : ce qu'il apporte, et le bouton pour monter d'un niveau. */
   private levelCard(mm: Machine): HTMLElement {
     const g = this.game, f = g.view;
-    const crew = f.drillGroup(mm), all = crew.length > 1 ? crew : [mm];
+    const crafter = machineDef(mm.type).kind === 'crafter';
+    const crew = crafter ? [mm] : f.drillGroup(mm), all = crew.length > 1 ? crew : [mm];
     const up = g.drillUpgrade(mm);
     const lv = Math.min(...all.map((x) => x.lvl ?? 1));
     const mixed = all.some((x) => (x.lvl ?? 1) !== lv);
-    const pips = [1, 2, 3, 4, 5].map((i) => `<i class="${i <= lv ? 'on' : i <= g.drillMaxLevel ? '' : 'lock'}"></i>`).join('');
+    const top = crafter ? 3 : 5, max = crafter ? g.machineMaxLevel : g.drillMaxLevel;
+    const table = crafter ? RULES.machineLevelSpeed : RULES.drillLevelSpeed;
+    const pips = Array.from({ length: top }, (_, i) => `<i class="l${i + 1} ${i + 1 <= lv ? 'on' : i + 1 <= max ? '' : 'lock'}"></i>`).join('');
     const card = h('div', 'card lvlcard');
-    const speed = (n: number) => `×${String(RULES.drillLevelSpeed[n - 1]).replace('.', ',')}`;
-    card.innerHTML = `<div class="lv-row"><div class="lv-t"><b>Niveau ${lv}${mixed ? '+' : ''}</b><small>${speed(lv)} de minerai${all.length > 1 ? ` · ${all.length} foreuses` : ''}</small></div><span class="lv-pips">${pips}</span></div>`;
+    const speed = (n: number) => `×${String(table[n - 1]).replace('.', ',')}`;
+    card.innerHTML = `<div class="lv-row"><div class="lv-t"><b>Niveau ${lv}${mixed ? '+' : ''}</b><small>${speed(lv)} ${crafter ? 'plus vite' : 'de minerai'}${all.length > 1 ? ` · ${all.length} foreuses` : ''}</small></div><span class="lv-pips">${pips}</span></div>`;
     if (up) {
       const b = h('button', `btn ${up.locked ? '' : 'primary'} lv-btn`, up.locked
-        ? `${ICONS.lock}Niveau ${up.to} : Forage profond`
+        ? `${ICONS.lock}Niveau ${up.to} : à débloquer (Niveaux)`
         : `Niveau ${up.to} · ${speed(up.to)}<span class="lv-price">${ICONS.coinSm}${fmt(up.price)}</span>`);
       b.disabled = up.locked || g.money < up.price;
-      b.onclick = () => { if (g.upgradeDrills(mm)) { this.toast(`${up.drills.length > 1 ? `${up.drills.length} foreuses` : 'Foreuse'} au niveau ${up.to}`, 'good'); this.refreshSheet(); } };
+      b.onclick = () => { if (g.upgradeDrills(mm)) { this.toast(`${up.drills.length > 1 ? `${up.drills.length} foreuses` : crafter ? machineDef(mm.type).name : 'Foreuse'} au niveau ${up.to}`, 'good'); this.refreshSheet(); } };
       card.append(b);
     } else card.append(h('p', 'muted small', 'Niveau le plus haut.'));
     return card;
@@ -2356,20 +2363,26 @@ export class Hud implements GestureHandlers {
       const b = f.beltAt(at.x, at.y);
       if (!b || b.split === undefined) { close(); return; }
       const tri = g.isUnlocked('tri');
+      // Séparateur à 3 sorties : une seconde dérivation vers un tapis, de l'autre côté.
+      const three = b.split2 !== undefined && !f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2]);
+      const tri2 = three && g.isUnlocked('tri2');
+      const sorted = !!(b.filter || (three && b.filter2));
       sheet.classList.add('mach-sheet');
-      sheet.append(this.sheetHead('Séparateur', b.filter ? `Trie : seul ${esc(item(b.filter).name.toLowerCase())} part dans la dérivation` : 'Auto : un objet sur deux de chaque côté', close));
+      sheet.append(this.sheetHead(three ? 'Séparateur à 3 sorties' : 'Séparateur', sorted
+        ? `Trie : ${[b.filter, three ? b.filter2 : undefined].filter(Boolean).map((t) => esc(item(t!).name.toLowerCase())).join(' d’un côté, ')}${b.filter && three && b.filter2 ? ' de l’autre' : ''} ; le reste continue tout droit`
+        : three ? 'Auto : un objet sur trois de chaque côté' : 'Auto : un objet sur deux de chaque côté', close));
       // Ce qui arrive : les objets sur la chaîne de tapis (le plus fréquent d'abord).
       const count = new Map<string, number>();
       for (const c of f.chainOf(b)) for (const it of c.items) count.set(it.t, (count.get(it.t) ?? 0) + 1);
       const seen = [...count.entries()].sort((p, q) => q[1] - p[1]).map(([t]) => t);
-      const W = 340, H = 214, M = 80, CW = 118, CH = 52;
+      const W = 340, H = three ? 300 : 214, M = 80, CW = 118, CH = 52;
       const box = h('div', 'mdiag');
       const inner = h('div', 'mdiag-in');
       inner.style.height = `${H}px`;
       box.append(inner);
       const rel = (b.split - b.dir + 4) % 4;
       const down = rel === 1;
-      const mx = (W - M) / 2, my = down ? 20 : H - M - 20;
+      const mx = (W - M) / 2, my = three ? (H - M) / 2 : down ? 20 : H - M - 20;
       const place = (el: HTMLElement, x: number, y: number) => { el.style.left = `${x}px`; el.style.top = `${y}px`; inner.append(el); };
       // La case du séparateur : un tapis qui se divise.
       const fork = `<svg width="80" height="80" viewBox="0 0 80 80" aria-hidden="true"><rect x="2" y="2" width="76" height="76" rx="18" fill="#fff"/><rect x="2" y="2" width="76" height="76" rx="18" fill="none" stroke="#BCD2C6" stroke-width="3"/>
@@ -2388,28 +2401,51 @@ export class Hud implements GestureHandlers {
       chev('in belt', mx, midY, 0);
       chev('out belt', mx + M, midY, 0);
       chev('out belt', W / 2, down ? my + M : my, down ? 90 : 270);
+      if (three) {
+        const ey0 = down ? CH + 2 : my + M, ey1 = down ? my : H - CH - 2;
+        wire('out belt v', W / 2 - 2, ey0, 4, ey1 - ey0);
+        chev('out belt', W / 2, down ? my : my + M, down ? 270 : 90);
+      }
       // Les cartes
       const icons = seen.slice(0, 3).map((t) => `<img src="${this.itemIcons.get(t)}" alt="">`).join('');
       const cIn = h('div', 'mchip in belt', `<span class="mc-name">${icons || ''}<span class="mc-t">${seen.length === 1 ? esc(item(seen[0]).name) : seen.length ? `${seen.length} sortes` : 'Rien encore'}</span></span><span class="mc-rate"><small>arrive</small></span>`);
       place(cIn, 0, midY - CH / 2);
-      const straight = b.filter ? 'Tout le reste' : 'Un sur deux';
-      const cStraight = h('div', 'mchip out belt', `<span class="mc-name"><span class="mc-t">Tout droit</span></span><span class="mc-rate"><b>${b.filter ? '' : '½'}</b><small>${straight.toLowerCase()}</small></span>`);
+      const frac = three ? '⅓' : '½', each = three ? 'un sur trois' : 'un sur deux';
+      const straight = sorted ? 'Tout le reste' : each;
+      const cStraight = h('div', 'mchip out belt', `<span class="mc-name"><span class="mc-t">Tout droit</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${straight.toLowerCase()}</small></span>`);
       place(cStraight, W - CW, midY - CH / 2);
       const cSide = h('div', `mchip out belt${b.filter ? ' locked' : ''}`, b.filter
         ? `<span class="mc-name"><img src="${this.itemIcons.get(b.filter)}" alt=""><span class="mc-t">${esc(item(b.filter).name)}</span></span><span class="mc-rate"><small>seulement</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
-        : `<span class="mc-name"><span class="mc-t">Dérivation</span></span><span class="mc-rate"><b>½</b><small>un sur deux</small><small class="mc-tag auto">auto</small></span>`);
+        : `<span class="mc-name"><span class="mc-t">Dérivation</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${sorted ? 'rien' : each}</small><small class="mc-tag auto">auto</small></span>`);
       place(cSide, W / 2 - CW / 2, down ? H - CH - 2 : 2);
       cSide.onclick = () => {
         if (!tri) { this.toast('Débloque Tri dans l’arbre (Logistique) pour choisir ce qui part ici', 'info'); return; }
         const opts: PickOpt[] = [{ id: null, label: 'Un objet sur deux', sub: 'Rien n’est trié', badge: '<span class="plan-auto">Auto</span>', on: !b.filter }];
         const order = [...new Set([...seen, ...Object.keys(g.factory.stats.made), ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
         for (const t of order) opts.push({ id: t, label: `Seulement ${item(t).name.toLowerCase()}`, icon: this.itemIcons.get(t), on: b.filter === t, group: seen.includes(t) ? 'Sur ce tapis' : 'Autres objets' });
-        this.openPicker('Dérivation', 'En auto, un objet sur deux part de chaque côté. Choisis un objet pour que lui seul parte ici : tout le reste continue tout droit.', opts, (t) => {
+        this.openPicker('Dérivation', 'En auto, les objets se partagent entre les sorties. Choisis un objet pour que lui seul parte ici : tout le reste continue tout droit.', opts, (t) => {
           g.setBeltFilter(b, t);
           this.refreshSheet();
         });
       };
-      box.append(h('p', 'mdiag-hint', tri ? 'Touche la dérivation pour choisir ce qui y part.' : 'En auto, un objet sur deux de chaque côté. Avec Tri (arbre, Logistique), tu choisis ce qui part dans la dérivation.'));
+      if (three) {
+        const f2 = b.filter2;
+        const cSide2 = h('div', `mchip out belt${f2 ? ' locked' : ''}`, f2
+          ? `<span class="mc-name"><img src="${this.itemIcons.get(f2)}" alt=""><span class="mc-t">${esc(item(f2).name)}</span></span><span class="mc-rate"><small>seulement</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
+          : `<span class="mc-name"><span class="mc-t">2ᵉ dérivation</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${sorted ? 'rien' : each}</small><small class="mc-tag auto">auto</small></span>`);
+        place(cSide2, W / 2 - CW / 2, down ? 2 : H - CH - 2);
+        cSide2.onclick = () => {
+          if (!tri2) { this.toast('Débloque le Trieur à 2 objets dans l’arbre (Logistique) pour choisir ce qui part ici', 'info'); return; }
+          const opts: PickOpt[] = [{ id: null, label: 'Rien de trié ici', sub: 'Sans tri, un objet sur trois part de chaque côté', badge: '<span class="plan-auto">Auto</span>', on: !f2 }];
+          const order = [...new Set([...seen, ...Object.keys(g.factory.stats.made), ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
+          for (const t of order) opts.push({ id: t, label: `Seulement ${item(t).name.toLowerCase()}`, icon: this.itemIcons.get(t), on: f2 === t, group: seen.includes(t) ? 'Sur ce tapis' : 'Autres objets' });
+          this.openPicker('Seconde dérivation', 'Choisis l’objet qui part de ce côté-ci ; tout le reste continue tout droit.', opts, (t) => {
+            g.setBeltFilter(b, t, 2);
+            this.refreshSheet();
+          });
+        };
+      }
+      box.append(h('p', 'mdiag-hint', tri ? `Touche ${three ? 'une dérivation' : 'la dérivation'} pour choisir ce qui y part.` : `En auto, ${three ? 'un objet sur trois' : 'un objet sur deux'} de chaque côté. Avec Tri (arbre, Logistique), tu choisis ce qui part dans la dérivation.`));
       sheet.append(box);
       const acts = h('div', 'row');
       const del = h('button', 'btn danger', `${ICONS.trash}Supprimer le tapis`);

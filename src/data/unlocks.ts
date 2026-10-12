@@ -9,12 +9,18 @@ export type UnlockEffect =
   | { kind: 'splitter' }
   /** Le séparateur peut trier : un seul type d'objet part dans la dérivation. */
   | { kind: 'sorter' }
+  /** Séparateur à trois sorties : une seconde dérivation de l'autre côté, vers un tapis. */
+  | { kind: 'splitter3' }
+  /** Trieur à deux objets : chacun sa dérivation, le reste tout droit. */
+  | { kind: 'sorter2' }
   | { kind: 'bridge' }
   | { kind: 'vehicle'; id: 'camion' | 'train' }
   /** Les tapis peuvent monter jusqu'à ce niveau (chaque tapis s'améliore et se paie à part). */
   | { kind: 'beltLevel'; max: number }
   /** Les foreuses peuvent monter jusqu'à ce niveau. */
   | { kind: 'drillLevel'; max: number }
+  /** Les machines (four, presse, assembleur…) peuvent monter jusqu'à ce niveau. */
+  | { kind: 'machineLevel'; max: number }
   | { kind: 'chestSlots'; slots: number }
   | { kind: 'robotSpeed'; mult: number }
   /** Modules : prix d'une copie d'atelier (fraction du prix de ce qu'il contient). */
@@ -75,7 +81,6 @@ export const BRANCHES: Branch[] = [
       n('assembleur', 'Assembleur', 'assembleur', 3, 1, 3, { vis: 60, acier: 40 }, ['tour'], 'Combine deux pièces en une pièce travaillée.', m('assembleur'), ['Plaque de fer + Vis → Engrenage', 'Engrenage + Fil → Rotor']),
       n('centrifugeuse', 'Centrifugeuse', 'centrifugeuse', 4, 2, 6, { moteur: 20, processeur: 30 }, ['haut_fourneau'], 'Enrichit l’uranium des cratères.', m('centrifugeuse'), ['Uranium → Uranium enrichi']),
       n('fabricant', 'Fabricant', 'fabricant', 4, 1, 4, { engrenage: 60, beton: 60 }, ['assembleur'], 'Assemble trois composants en machine.', m('fabricant'), ['Rotor + Stator + Vis → Moteur']),
-      n('forage', 'Forage profond', 'super_foreuse', 4, 0, 6, { moteur: 20, acier: 100 }, ['raffinerie'], 'Tes foreuses peuvent monter jusqu’au niveau 5 (quatre fois plus de minerai qu’au niveau 1) : touche un groupe de foreuses pour l’améliorer.', { kind: 'drillLevel', max: 5 }),
       n('rampe', 'Rampe de lancement', 'rampe', 5, 1, 10, { alliage: 40, guidage: 2 }, ['fabricant'], 'La Rampe de lancement (4 × 4) : remplis-la de 20 structures, 8 moteurs de fusée, 4 guidages et 100 carburants. La fusée décolle : c’est la fin du voyage (et on peut recommencer).', m('rampe')),
     ],
   },
@@ -83,14 +88,29 @@ export const BRANCHES: Branch[] = [
     id: 'logistique', label: 'Logistique', nodes: [
       n('tapis', 'Tapis', 'tapis', 0, 1, 1, {}, [], 'Tracés au doigt, droits et rangés.', base),
       n('separateur', 'Séparateur', 'separateur', 1, 0, 1, { lingot_fer: 20 }, ['tapis'], 'Glisse depuis le milieu d’un tapis : un objet sur deux part dans la dérivation.', { kind: 'splitter' }),
-      n('rapide', 'Tapis rapide', 'rapide', 1, 1, 2, { plaque_fer: 30, fil_cuivre: 30 }, ['tapis'], 'Tes tapis peuvent monter jusqu’au niveau 3 (deux fois plus vite) : touche un tapis pour l’améliorer.', { kind: 'beltLevel', max: 3 }),
       n('pont', 'Ponts', 'pont', 1, 2, 3, { acier: 40 }, ['tapis'], 'En traçant un tapis, continue tout droit par-delà un autre tapis : il passe par-dessus (jusqu’à 4 cases).', { kind: 'bridge' }),
+      n('separateur2', 'Séparateur à 3 sorties', 'separateur', 2, 1, 2, { engrenage: 20, plaque_fer: 40 }, ['separateur'], 'Depuis un séparateur, glisse aussi de l’autre côté : une seconde dérivation. Un objet sur trois part de chaque côté, un sur trois continue tout droit.', { kind: 'splitter3' }),
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 0, 2, { plaque_fer: 60 }, ['separateur'], 'Un coffre de 2 × 2 qui garde 300 objets (un coffre simple en garde 100).', m('grand_coffre')),
-      n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tes tapis peuvent monter jusqu’au niveau 5 (trois fois plus vite qu’au départ).', { kind: 'beltLevel', max: 5 }),
       n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Le Dépôt : pose-en deux, remplis-les par tapis comme un coffre, puis relie-les depuis la fenêtre d’un dépôt. Un camion fait les allers-retours (20 objets à la fois) ; on peut ajouter des camions et un troisième arrêt.', m('depot')),
       n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Un séparateur qui choisit : touche un séparateur et choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', { kind: 'sorter' }),
+      n('tri2', 'Trieur à 2 objets', 'tri', 3, 1, 4, { circuit: 20, engrenage: 40 }, ['tri', 'separateur2'], 'Sur un séparateur à 3 sorties : choisis un objet pour chaque dérivation ; tout le reste continue tout droit.', { kind: 'sorter2' }),
       n('entrepot', 'Entrepôt', 'entrepot', 4, 0, 6, { cadre: 20, acier: 100 }, ['tri'], 'Un grand bâtiment de 3 × 3 qui garde 900 objets et les range par sorte (il montre ce qu’il garde le plus).', m('entrepot')),
       n('train', 'Trains', 'train', 3, 2, 5, { moteur: 40 }, ['camion'], 'La Gare : comme le dépôt, mais pour un train, plus rapide, qui emporte 80 objets à la fois. Pour aller chercher l’or et l’uranium au loin.', m('gare')),
+    ],
+  },
+  {
+    // Les niveaux : chaque tapis, groupe de foreuses ou machine se paie ensuite à part pour monter.
+    id: 'niveaux', label: 'Niveaux', nodes: [
+      n('tapis2', 'Tapis niveau 2', 'rapide', 0, 0, 1, { plaque_fer: 20 }, [], 'Tes tapis peuvent monter au niveau 2 (1,5 fois plus vite) : touche un tapis pour l’améliorer, case par case.', { kind: 'beltLevel', max: 2 }),
+      n('rapide', 'Tapis niveau 3', 'rapide', 1, 0, 2, { plaque_fer: 30, fil_cuivre: 30 }, ['tapis2'], 'Tes tapis peuvent monter au niveau 3 (deux fois plus vite qu’au départ).', { kind: 'beltLevel', max: 3 }),
+      n('tapis4', 'Tapis niveau 4', 'express', 2, 0, 3, { engrenage: 40, vis: 60 }, ['rapide'], 'Tes tapis peuvent monter au niveau 4 (2,5 fois plus vite qu’au départ).', { kind: 'beltLevel', max: 4 }),
+      n('express', 'Tapis niveau 5', 'express', 3, 0, 4, { engrenage: 80, acier: 40 }, ['tapis4'], 'Tes tapis peuvent monter au niveau 5 (trois fois plus vite qu’au départ).', { kind: 'beltLevel', max: 5 }),
+      n('foreuse2', 'Foreuses niveau 2', 'foreuse', 0, 1, 1, { lingot_fer: 30 }, [], 'Tes foreuses peuvent monter au niveau 2 (1,5 fois plus de minerai) : touche un groupe de foreuses.', { kind: 'drillLevel', max: 2 }),
+      n('foreuse3', 'Foreuses niveau 3', 'foreuse', 1, 1, 2, { plaque_fer: 60, vis: 20 }, ['foreuse2'], 'Tes foreuses peuvent monter au niveau 3 (deux fois plus de minerai qu’au niveau 1).', { kind: 'drillLevel', max: 3 }),
+      n('foreuse4', 'Foreuses niveau 4', 'super_foreuse', 2, 1, 4, { engrenage: 60, acier: 60 }, ['foreuse3'], 'Tes foreuses peuvent monter au niveau 4 (trois fois plus de minerai qu’au niveau 1).', { kind: 'drillLevel', max: 4 }),
+      n('forage', 'Foreuses niveau 5', 'super_foreuse', 3, 1, 6, { moteur: 20, acier: 100 }, ['foreuse4'], 'Tes foreuses peuvent monter au niveau 5 (quatre fois plus de minerai qu’au niveau 1).', { kind: 'drillLevel', max: 5 }),
+      n('machine2', 'Machines niveau 2', 'assembleur', 0, 2, 2, { plaque_fer: 60, fil_cuivre: 40 }, [], 'Fours, presses, assembleurs… peuvent monter au niveau 2 (1,5 fois plus vite) : touche une machine pour l’améliorer.', { kind: 'machineLevel', max: 2 }),
+      n('machine3', 'Machines niveau 3', 'fabricant', 1, 2, 4, { engrenage: 80, circuit: 30 }, ['machine2'], 'Les machines peuvent monter au niveau 3 (deux fois plus vite qu’au départ).', { kind: 'machineLevel', max: 3 }),
     ],
   },
   {

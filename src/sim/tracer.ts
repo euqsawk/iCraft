@@ -56,7 +56,7 @@ export class BeltTracer {
       if (!n || (n.kind !== 'belt' && !(n.kind === 'machine' && b.built && !b.jump))) {
         this.extend = b;
         this.cells = [{ x: sx, y: sy }];
-      } else if (b.built && !b.jump && (b.split === undefined || (b.split2 === undefined && !b.splitJump && factory.machineAt(b.x + DX[b.split], b.y + DY[b.split])))) {
+      } else if (b.built && !b.jump && (b.split === undefined || (b.split2 === undefined && !b.splitJump && (factory.thirdOutput || factory.machineAt(b.x + DX[b.split], b.y + DY[b.split]))))) {
         // Un séparateur qui nourrit déjà une machine peut encore nourrir celle d'en face.
         this.splitFrom = b;
       } else {
@@ -148,8 +148,8 @@ export class BeltTracer {
       if (d === sb.dir || d === opposite(sb.inDir) || d === sb.split) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
       if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
-      // Seconde dérivation : seulement vers une machine collée.
-      if (sb.split !== undefined) { this.blocked = true; return; }
+      // Seconde dérivation : vers une machine collée, ou vers un tapis avec le séparateur à 3 sorties (pas en pont).
+      if (sb.split !== undefined && (!this.factory.thirdOutput || sb.split2 !== undefined || sb.splitJump || !this.usable(x, y))) { this.blocked = true; return; }
       if (!this.usable(x, y)) {
         // Un tapis collé sur ce côté : avec les ponts, la dérivation passe par-dessus quand le doigt va au-delà.
         const k = this.bridges && this.factory.beltAt(x, y) ? this.landing(sb.x, sb.y, d) : 0;

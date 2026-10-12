@@ -1067,6 +1067,11 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .popover p.lv-line, .lv-line { display: block; }
 .lv-line .lv-dot { display: inline-block; vertical-align: -1px; margin-right: 5px; }
 .lv-dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
-.lv-dot.l1 { background: #9FB3A9; } .lv-dot.l2 { background: #E0A82E; } .lv-dot.l3 { background: #F47C64; } .lv-dot.l4 { background: #6B4FA0; } .lv-dot.l5 { background: #4B8BD1; }
+.lv-dot.l1 { background: #fff; box-shadow: inset 0 0 0 2px #C9D8D0; } .lv-dot.l2 { background: #FFE49A; box-shadow: inset 0 0 0 2px #E0A82E; } .lv-dot.l3 { background: #FFC2AE; box-shadow: inset 0 0 0 2px #E0674D; } .lv-dot.l4 { background: #D8C7F2; box-shadow: inset 0 0 0 2px #6B4FA0; } .lv-dot.l5 { background: #B8D6F6; box-shadow: inset 0 0 0 2px #3F7FC9; }
 .popover .btn svg.lock { width: 11px; height: 11px; }
 .macts.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.lv-pips i.on.l1 { background: #fff; box-shadow: inset 0 0 0 2.5px #9FB3A9; }
+.lv-pips i.on.l2 { background: #FFE49A; box-shadow: inset 0 0 0 2.5px #E0A82E; }
+.lv-pips i.on.l3 { background: #FFC2AE; box-shadow: inset 0 0 0 2.5px #E0674D; }
+.lv-pips i.on.l4 { background: #D8C7F2; box-shadow: inset 0 0 0 2.5px #6B4FA0; }
+.lv-pips i.on.l5 { background: #B8D6F6; box-shadow: inset 0 0 0 2.5px #3F7FC9; }

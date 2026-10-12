@@ -364,7 +364,7 @@ export function drawMachineIcon(g: Graphics, type: string, ore?: string): void {
 }
 
 /** Corps blanc arrondi d'une machine, avec son ombre pleine décalée vers le bas. */
-export function drawMachineBody(g: Graphics, w: number, h: number, r: number): void {
+export function drawMachineBody(g: Graphics, w: number, h: number, r: number, fill: number = PALETTE.white): void {
   g.roundRect(-w / 2, -h / 2 + 4, w, h, r).fill(PALETTE.shadow);
-  g.roundRect(-w / 2, -h / 2, w, h, r).fill(PALETTE.white);
+  g.roundRect(-w / 2, -h / 2, w, h, r).fill(fill);
 }

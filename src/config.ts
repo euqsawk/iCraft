@@ -5,6 +5,13 @@ export const CELL = 24;
 /** Taille d'un chunk, en cases. */
 export const CHUNK = 32;
 
+/** Couleurs des niveaux (1 à 5) : fond des machines, tapis, chevrons. Le niveau 1 garde le blanc d'origine. */
+export const LEVEL_COLORS = {
+  body: [0xffffff, 0xfff0c2, 0xffd9cc, 0xe7dcf7, 0xd3e6f9],
+  belt: [0xffffff, 0xffe49a, 0xffc2ae, 0xd8c7f2, 0xb8d6f6],
+  mark: [0xd5e5dc, 0xe0a82e, 0xe0674d, 0x6b4fa0, 0x3f7fc9],
+};
+
 export const PALETTE = {
   ground: 0xdcebe3,
   dots: 0xc4d9ce,
@@ -121,9 +128,13 @@ export const RULES = {
   /** Niveaux de foreuses : extraction (× celle du niveau 1) et prix par foreuse pour monter à ce niveau. */
   drillLevelSpeed: [1, 1.5, 2, 3, 4],
   drillLevelCost: [0, 20, 40, 80, 160],
-  /** Niveau le plus haut sans rien débloquer (tapis, foreuses). */
-  beltBaseMax: 2,
-  drillBaseMax: 3,
+  /** Niveaux de machines (fours, presses…) : vitesse, et prix (× le prix de la machine) pour monter à ce niveau. */
+  machineLevelSpeed: [1, 1.5, 2],
+  machineLevelCost: [0, 1, 2],
+  /** Niveau le plus haut sans rien débloquer (tapis, foreuses, machines) : chaque niveau est dans l'arbre. */
+  beltBaseMax: 1,
+  drillBaseMax: 1,
+  machineBaseMax: 1,
   /** Écart minimal entre deux objets sur un tapis, en cases. */
   beltGap: 0.5,
   robotSpeed: 4.5,

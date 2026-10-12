@@ -32,6 +32,8 @@ export interface Belt {
   split2?: Dir;
   /** Tri : seul cet objet part dans la dérivation, tout le reste continue tout droit. */
   filter?: string;
+  /** Trieur à 2 objets : celui-ci part dans la seconde dérivation (split2). */
+  filter2?: string;
   /** Alternance du séparateur. */
   toggle?: number;
   /** Liaisons de côté : les machines voisines dans ces sens y déposent leur production (sans case de tapis). */
@@ -254,6 +256,8 @@ export class Factory {
   speedMult = 1;
   /** Cases d'un coffre (déblocage Grand coffre). */
   chestSlots = RULES.chestSlots;
+  /** Séparateur à 3 sorties débloqué : le tracé accepte une seconde dérivation vers un tapis. */
+  thirdOutput = false;
   /** Les types de machines qui peuvent marcher au courant (nœuds « électriques » de la branche Énergie). */
   private electric = new Set<string>();
 
@@ -274,9 +278,8 @@ export class Factory {
     if (machineDef(m.type).kind === 'filter') return RULES.filterKw;
     if (m.inner) return this.electric.size ? this.innerKw(m) : 0;
     if (!this.electric.has(m.type)) return 0;
-    // Une foreuse améliorée extrait plus : elle consomme d'autant plus.
-    const lv = machineDef(m.type).kind === 'drill' ? RULES.drillLevelSpeed[Math.max(0, Math.min(4, (m.lvl ?? 1) - 1))] : 1;
-    return Math.round((machineDef(m.type).kw ?? 100) * lv);
+    // Une foreuse ou une machine améliorée va plus vite : elle consomme d'autant plus.
+    return Math.round((machineDef(m.type).kw ?? 100) * Factory.levelSpeed(m));
   }
 
   /** Ce que consomment au courant les machines d'un atelier (et des ateliers qu'il contient), en kW. */
@@ -323,6 +326,7 @@ export class Factory {
     f.freeEnergy = true;
     f.speedMult = this.speedMult;
     f.chestSlots = this.chestSlots;
+    f.thirdOutput = this.thirdOutput;
     f.electric = this.electric;
     f.stats = this.stats;
     m.inner = f;
@@ -467,7 +471,7 @@ export class Factory {
     return null;
   }
 
-  /** Seconde dérivation : vers une machine collée de l'autre côté. */
+  /** Seconde dérivation : vers une machine collée de l'autre côté, ou un tapis (séparateur à 3 sorties). */
   setSplit2(b: Belt, dir: Dir): void {
     b.split2 = dir;
     this.dirty = true;
@@ -475,7 +479,7 @@ export class Factory {
 
   /** Retire la dérivation d'un séparateur. */
   clearSplit(b: Belt): void {
-    delete b.split; delete b.splitJump; delete b.split2; delete b.filter;
+    delete b.split; delete b.splitJump; delete b.split2; delete b.filter; delete b.filter2;
     this.dirty = true;
   }
 
@@ -1215,7 +1219,12 @@ export class Factory {
   /** Un objet entre dans une case : sur un séparateur, il prend une sortie sur deux. */
   private enter(b: Belt, it: BeltItem): void {
     if (b.split === undefined) { delete it.o; return; }
-    if (b.filter) { if (it.t === b.filter) it.o = 1; else delete it.o; return; }
+    if (b.filter || b.filter2) {
+      if (b.filter && it.t === b.filter) it.o = 1;
+      else if (b.split2 !== undefined && b.filter2 && it.t === b.filter2) it.o = 2;
+      else delete it.o;
+      return;
+    }
     // Deux sorties : un sur deux ; trois sorties (deux machines de part et d'autre) : un sur trois.
     const n = b.split2 !== undefined ? 3 : 2;
     b.toggle = ((b.toggle ?? 0) + 1) % n;
@@ -1458,7 +1467,7 @@ export class Factory {
           if (k > 0) it.o = k as 1 | 2; else delete it.o;
         }
         // Le premier objet d'un séparateur prend une autre sortie si la sienne est bouchée.
-        if (i === 0 && branch && !b.filter) {
+        if (i === 0 && branch && !b.filter && !b.filter2) {
           const want = outs[it.o ?? 0];
           if (!this.canTake(want, it.t)) {
             const k = outs.findIndex((o) => !!o && o !== want && this.canTake(o, it.t));
@@ -1556,7 +1565,15 @@ export class Factory {
 
   /** Ce qu'une foreuse extrait par seconde, avec son niveau. */
   drillRate(m: Machine): number {
-    return (m.rate ?? 0) * RULES.drillLevelSpeed[Math.max(0, Math.min(4, (m.lvl ?? 1) - 1))];
+    return (m.rate ?? 0) * Factory.levelSpeed(m);
+  }
+
+  /** Vitesse due au niveau : foreuses (1 à 5), machines qui fabriquent (1 à 3) ; 1 pour le reste. */
+  static levelSpeed(m: Machine): number {
+    const kind = machineDef(m.type).kind, lv = (m.lvl ?? 1) - 1;
+    if (kind === 'drill') return RULES.drillLevelSpeed[Math.max(0, Math.min(4, lv))];
+    if (kind === 'crafter') return RULES.machineLevelSpeed[Math.max(0, Math.min(2, lv))];
+    return 1;
   }
 
   /** Une foreuse 1 × 1 : elle se relie toute seule à celles qui la touchent par un côté. */
@@ -1685,7 +1702,7 @@ export class Factory {
         if (k <= 0 && this.selfFed(m)) k = 1;
         if (k <= 0) { m.status = this.noEnergy(m); return; }
         // Un mélangeur arrosé (tuyau d'eau) travaille moitié plus vite.
-        m.craft.t += dt * k * this.pollutionMult(m) * (m.type === 'melangeur' && (m.water ?? 0) > 0 ? 1 + 0.5 * m.water! : 1);
+        m.craft.t += dt * k * Factory.levelSpeed(m) * this.pollutionMult(m) * (m.type === 'melangeur' && (m.water ?? 0) > 0 ? 1 + 0.5 * m.water! : 1);
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
       // Le carburant qu'elle produit remplit d'abord sa propre case carburant.
@@ -1847,6 +1864,7 @@ export class Factory {
     if (!f) { m.status = 'idle'; return; }
     f.speedMult = this.speedMult;
     f.chestSlots = this.chestSlots;
+    f.thirdOutput = this.thirdOutput;
     f.electric = this.electric;
     let busy = 0, any = 0;
     for (const x of f.machines.values()) {
@@ -1918,7 +1936,7 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', 0, b.lvl ?? 1]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', 0, b.lvl ?? 1, b.filter2 ?? '']),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -1940,13 +1958,14 @@ export class Factory {
     // Parties d'avant : les trieurs (retirés) sont remboursés.
     const oldPicks = new Map<number, string[]>();
     for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) oldPicks.set(k, v.filter((t) => typeof t === 'string'));
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick, lvl] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick, lvl, filter2] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
       if (typeof lvl === 'number' && lvl > 1) b.lvl = Math.min(5, Math.floor(lvl));
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
       if (split2 !== undefined && split2 >= 0 && b.split !== undefined) b.split2 = split2 as Dir;
       if (filter && b.split !== undefined) b.filter = filter;
+      if (filter2 && b.split2 !== undefined) b.filter2 = filter2;
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
       if (splitJump && b.split !== undefined) b.splitJump = Math.min(splitJump, RULES.bridgeSpan);
       if (meter) this.addMeter(b);
@@ -2026,8 +2045,8 @@ export class Factory {
         const cx = sm.x + i, cy = sm.y + j;
         if (!this.checkMachine('foreuse', cx, cy).ok) continue;
         const m = this.addMachine('foreuse', cx, cy, sm.built, first ? undefined : sm.id);
-        m.lvl = RULES.drillBaseMax;
-        spent += small.cost + RULES.drillLevelCost.slice(1, RULES.drillBaseMax).reduce((a, n) => a + n, 0);
+        m.lvl = 3;
+        spent += small.cost + RULES.drillLevelCost[1] + RULES.drillLevelCost[2];
         if (!first) {
           first = m;
           Object.assign(m, { outBuf: sm.outBuf ?? {}, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, made: sm.made ?? 0 });
@@ -2051,7 +2070,7 @@ export interface FactorySave {
   tunnels?: { cells: number[] }[];
   /** Foreuses 1 × 1 (sans ce drapeau : une ancienne partie, ses foreuses 2 × 2 sont coupées en quatre). */
   drills1?: 1;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?][];
   /** Tapis à niveaux (sans ce drapeau : une partie d'avant, où la vitesse était la même pour tous). */
   levels?: 1;
   machines: {

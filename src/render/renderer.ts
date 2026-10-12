@@ -3,7 +3,7 @@ import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, 
 
 /** Les types DOM et ceux de PixiJS divergent sur getContext('webgpu') : simple conversion. */
 const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
-import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
+import { BIOME_COLORS, CELL, CHUNK, LEVEL_COLORS, PALETTE, RULES } from '../config.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Line, type Machine } from '../sim/factory.ts';
@@ -86,13 +86,20 @@ interface MachineView {
   /** Foreuse 1 × 1 : côtés où une foreuse voisine du même groupe est collée (masque), et texte du nom. */
   link?: number;
   labelText?: string;
+  /** Niveau dessiné (couleur du socle). */
+  lvl?: number;
   made: number;
   pop: number;
   status: string;
 }
 
 /** Couleur des chevrons d'un tapis selon son niveau (1 discret, puis jaune, corail, violet, bleu). */
-const BELT_LEVEL_COLORS = [PALETTE.roller, 0xe0a82e, 0xf47c64, 0x6b4fa0, 0x4b8bd1];
+const BELT_LEVEL_COLORS = LEVEL_COLORS.mark;
+
+/** Le socle d'une machine prend la couleur de son niveau (blanc au niveau 1). */
+function levelFill(m: { lvl?: number }): number {
+  return LEVEL_COLORS.body[Math.max(0, Math.min(4, (m.lvl ?? 1) - 1))];
+}
 
 /** La variante du dessin d'un bâtiment : le minerai d'une foreuse, une forme d'arbre selon sa place. */
 function iconVariant(m: Machine): number | string {
@@ -496,12 +503,16 @@ export class GameRenderer {
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
     this.pickLayer.removeChildren().forEach((c) => c.destroy());
     for (const b of this.game.view.belts.values()) {
-      if (!b.filter || b.split === undefined) continue;
-      const x = (b.x + 0.5) * CELL + DX[b.split] * 7, y = (b.y + 0.5) * CELL + DY[b.split] * 7;
-      const badge = new Graphics().circle(x, y, 7.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
-      const sp = new Sprite(this.itemTextures.get(b.filter)!);
-      sp.anchor.set(0.5); sp.scale.set(0.5); sp.position.set(x, y);
-      this.filterLayer.addChild(badge, sp);
+      if (b.split === undefined) continue;
+      // Une pastille par dérivation triée : l'objet qui y part.
+      for (const [t, d] of [[b.filter, b.split], [b.filter2, b.split2]] as [string | undefined, number | undefined][]) {
+        if (!t || d === undefined) continue;
+        const x = (b.x + 0.5) * CELL + DX[d] * 7, y = (b.y + 0.5) * CELL + DY[d] * 7;
+        const badge = new Graphics().circle(x, y, 7.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
+        const sp = new Sprite(this.itemTextures.get(t)!);
+        sp.anchor.set(0.5); sp.scale.set(0.5); sp.position.set(x, y);
+        this.filterLayer.addChild(badge, sp);
+      }
     }
     const gg = this.ghostBeltG;
     gg.clear();
@@ -560,8 +571,13 @@ export class GameRenderer {
       gs.clear(); g.clear();
       line(gs, list, 3);
       gs.stroke({ width: 14, color: PALETTE.shadow, cap: 'round', join: 'round' });
-      line(g, list, 0);
-      g.stroke({ width: 14, color: PALETTE.white, cap: 'round', join: 'round' });
+      // Le tapis prend la couleur de son niveau.
+      for (let lv = 1; lv <= 5; lv++) {
+        const part = list.filter((b) => (b.lvl ?? 1) === lv);
+        if (!part.length) continue;
+        line(g, part, 0);
+        g.stroke({ width: 14, color: LEVEL_COLORS.belt[lv - 1], cap: 'round', join: 'round' });
+      }
       // Rouleaux discrets : un chevron par case, dans le sens du tapis, à la couleur de son niveau
       // (deux chevrons à partir du niveau 4).
       for (let lv = 1; lv <= 5; lv++) {
@@ -1229,9 +1245,9 @@ export class GameRenderer {
         if (link & 4 && link & 8) body.rect(x0, y0 + dy, -x0, -y0);
       };
       shapes(4); body.fill(PALETTE.shadow);
-      shapes(0); body.fill(PALETTE.white);
+      shapes(0); body.fill(levelFill(m));
     } else if (m.built) {
-      drawMachineBody(body, bw, bh, br);
+      drawMachineBody(body, bw, bh, br, levelFill(m));
     } else {
       body.roundRect(-bw / 2, -bh / 2, bw, bh, br).fill({ color: PALETTE.white, alpha: 0.45 });
       dashedPolyline(body, roundRectPoints(-bw / 2, -bh / 2, bw, bh, br), 6, 5, true);
@@ -1261,7 +1277,7 @@ export class GameRenderer {
     root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
-    return { root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '', ...(small ? { link: this.drillLink(m) } : {}) };
+    return { root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '', lvl: m.lvl ?? 1, ...(small ? { link: this.drillLink(m) } : {}) };
   }
 
   private buildNoyau(m: Machine): void {
@@ -1291,7 +1307,7 @@ export class GameRenderer {
         continue;
       }
       let v = this.machineViews.get(m.id);
-      if (v && (v.built !== m.built || v.ore !== m.ore || (v.link !== undefined && v.link !== this.drillLink(m)))) {
+      if (v && (v.built !== m.built || v.ore !== m.ore || v.lvl !== (m.lvl ?? 1) || (v.link !== undefined && v.link !== this.drillLink(m)))) {
         v.root.destroy({ children: true });
         this.machineViews.delete(m.id);
         v = undefined;

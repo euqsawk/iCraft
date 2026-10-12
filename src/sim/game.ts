@@ -648,6 +648,7 @@ export class Game {
   /** Niveau le plus haut où l'on peut monter un tapis, une foreuse (selon l'arbre). */
   beltMaxLevel = RULES.beltBaseMax;
   drillMaxLevel = RULES.drillBaseMax;
+  machineMaxLevel = RULES.machineBaseMax;
 
   /**
    * Monter tout un tapis d'un niveau : les cases du niveau le plus bas passent au suivant.
@@ -665,7 +666,7 @@ export class Game {
   upgradeBelt(b: Belt): boolean {
     const up = this.beltUpgrade(b);
     if (!up) return false;
-    if (up.locked) { this.emit({ type: 'toast', text: `Niveau ${up.to} : à débloquer dans l’arbre (${up.to <= 3 ? 'Tapis rapide' : 'Tapis express'})`, tone: 'warn' }); return false; }
+    if (up.locked) { this.emit({ type: 'toast', text: `Tapis niveau ${up.to} : à débloquer dans l’arbre (branche Niveaux)`, tone: 'warn' }); return false; }
     if (this.money < up.price) { this.emit({ type: 'toast', text: `Il faut ${up.price} pièces`, tone: 'warn' }); return false; }
     this.money -= up.price;
     for (const c of up.cells) c.lvl = up.to;
@@ -674,8 +675,18 @@ export class Game {
     return true;
   }
 
-  /** Monter tout un groupe de foreuses d'un niveau (celles du niveau le plus bas). */
+  /**
+   * Monter d'un niveau : tout un groupe de foreuses (celles du niveau le plus bas, jusqu'au 5),
+   * ou une machine qui fabrique (jusqu'au 3, au prix de la machine puis du double).
+   */
   drillUpgrade(m: Machine): { from: number; to: number; drills: Machine[]; price: number; locked: boolean } | null {
+    const kind = machineDef(m.type).kind;
+    if (kind === 'crafter') {
+      const from = m.lvl ?? 1;
+      if (from >= 3) return null;
+      const to = from + 1;
+      return { from, to, drills: [m], price: machineDef(m.type).cost * RULES.machineLevelCost[to - 1], locked: to > this.machineMaxLevel };
+    }
     const group = this.view.drillGroup(m);
     if (!group.length) return null;
     const from = Math.min(...group.map((x) => x.lvl ?? 1));
@@ -688,13 +699,20 @@ export class Game {
   upgradeDrills(m: Machine): boolean {
     const up = this.drillUpgrade(m);
     if (!up) return false;
-    if (up.locked) { this.emit({ type: 'toast', text: `Niveau ${up.to} : à débloquer dans l’arbre (Forage profond)`, tone: 'warn' }); return false; }
+    if (up.locked) { this.emit({ type: 'toast', text: `Niveau ${up.to} : à débloquer dans l’arbre (branche Niveaux)`, tone: 'warn' }); return false; }
     if (this.money < up.price) { this.emit({ type: 'toast', text: `Il faut ${up.price} pièces`, tone: 'warn' }); return false; }
     this.money -= up.price;
     for (const x of up.drills) x.lvl = up.to;
     this.emit({ type: 'money' });
     this.emit({ type: 'factory' });
     return true;
+  }
+
+  /** Ce qu'on a payé pour les niveaux d'une foreuse ou d'une machine. */
+  levelPaid(m: Machine): number {
+    const def = machineDef(m.type);
+    if (def.kind === 'crafter') return Game.levelValue(RULES.machineLevelCost.map((k) => k * def.cost), m.lvl);
+    return def.kind === 'drill' ? Game.levelValue(RULES.drillLevelCost, m.lvl) : 0;
   }
 
   /** Ce qu'on a payé pour monter un tapis ou une foreuse jusqu'à son niveau (rendu quand on le supprime). */
@@ -710,13 +728,14 @@ export class Game {
   private applyUnlocks(): void {
     const speed = 1;
     let slots = RULES.chestSlots, copy = 1, size = 20, nest = false;
-    let beltMax = RULES.beltBaseMax, drillMax = RULES.drillBaseMax;
+    let beltMax = RULES.beltBaseMax, drillMax = RULES.drillBaseMax, machineMax = RULES.machineBaseMax;
     this.robotSpeedMult = 1;
     for (const id of this.unlocks) {
       const e = NODE[id]?.effect;
       if (e?.kind === 'robotSpeed') this.robotSpeedMult = Math.max(this.robotSpeedMult, e.mult);
       if (e?.kind === 'beltLevel') beltMax = Math.max(beltMax, e.max);
       if (e?.kind === 'drillLevel') drillMax = Math.max(drillMax, e.max);
+      if (e?.kind === 'machineLevel') machineMax = Math.max(machineMax, e.max);
       if (e?.kind === 'chestSlots') slots = Math.max(slots, e.slots);
       if (e?.kind === 'copyRate') copy = Math.min(copy, e.rate);
       if (e?.kind === 'atelierSize') size = Math.max(size, e.size);
@@ -726,6 +745,7 @@ export class Game {
     this.nesting = nest;
     this.beltMaxLevel = beltMax;
     this.drillMaxLevel = drillMax;
+    this.machineMaxLevel = machineMax;
     if (size !== this.atelierSize) {
       this.atelierSize = size;
       // Les ateliers déjà posés s'agrandissent aussi.
@@ -734,6 +754,7 @@ export class Game {
     }
     this.factory.speedMult = speed;
     this.factory.chestSlots = slots;
+    this.factory.thirdOutput = this.unlocks.has('separateur2');
     this.factory.setElectric([...this.unlocks].flatMap((id) => { const e = NODE[id]?.effect; return e?.kind === 'electric' ? [e.id] : []; }));
   }
 
@@ -822,8 +843,15 @@ export class Game {
       this.emit({ type: 'toast', text: 'Ponts : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
     }
+    // Une seconde dérivation (de l'autre côté d'un séparateur) : le séparateur à 3 sorties.
+    const third = !!split && split.from.split !== undefined && split.from.split !== split.dir;
+    if (third && !this.isUnlocked('separateur2')) {
+      this.emit({ type: 'toast', text: 'Séparateur à 3 sorties : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
+      return false;
+    }
     if (!this.spend(cost)) return false;
-    if (split) this.view.setSplit(split.from, split.dir, split.jump ?? 0);
+    if (split && third) this.view.setSplit2(split.from, split.dir);
+    else if (split) this.view.setSplit(split.from, split.dir, split.jump ?? 0);
     for (const c of cells) {
       if (c.existing) {
         const b = this.view.beltAt(c.x, c.y);
@@ -1143,7 +1171,7 @@ export class Game {
     this.view.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
     // Un atelier rend aussi ce qu'il contient (ce qui y circulait est perdu).
-    this.earn(def.cost + (m.inner ? this.contentValue(m.inner) : 0) + Game.levelValue(RULES.drillLevelCost, m.lvl));
+    this.earn(def.cost + (m.inner ? this.contentValue(m.inner) : 0) + this.levelPaid(m));
     this.emit({ type: 'factory' });
     return true;
   }
@@ -1440,9 +1468,12 @@ export class Game {
   }
 
   /** Change ce que trie un séparateur (null : il ne trie plus, un objet sur deux de chaque côté). */
-  setBeltFilter(b: Belt, item: string | null): boolean {
+  setBeltFilter(b: Belt, item: string | null, which: 1 | 2 = 1): boolean {
     if (!this.isUnlocked('tri') || b.split === undefined) return false;
-    if (item) b.filter = item; else delete b.filter;
+    if (which === 2) {
+      if (!this.isUnlocked('tri2') || b.split2 === undefined) return false;
+      if (item) b.filter2 = item; else delete b.filter2;
+    } else if (item) b.filter = item; else delete b.filter;
     this.view.markBuilt();
     this.emit({ type: 'factory' });
     return true;
@@ -1550,6 +1581,11 @@ export class Game {
     }
     // La Grande foreuse est devenue « Forage profond » (foreuses jusqu'au niveau 5).
     if (this.unlocks.delete('super_foreuse')) this.unlocks.add('forage');
+    // Un déblocage acquis emporte ceux qui le précèdent (les niveaux de tapis et de foreuses ont maintenant leurs étapes).
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const x of ALL_NODES) if (this.unlocks.has(x.id)) for (const pa of x.parents) if (!this.unlocks.has(pa) && NODE[pa]) { this.unlocks.add(pa); changed = true; }
+    }
     // Les déblocages retirés du jeu (tapis souterrains) disparaissent de la partie.
     for (const id of [...this.unlocks]) if (!NODE[id]) this.unlocks.delete(id);
     this.applyUnlocks();
