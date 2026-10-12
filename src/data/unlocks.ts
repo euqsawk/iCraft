@@ -16,9 +16,7 @@ export type UnlockEffect =
   /** Les foreuses peuvent monter jusqu'à ce niveau. */
   | { kind: 'drillLevel'; max: number }
   | { kind: 'chestSlots'; slots: number }
-  | { kind: 'drone' }
   | { kind: 'robotSpeed'; mult: number }
-  | { kind: 'droneRange'; mult: number }
   /** Modules : prix d'une copie d'atelier (fraction du prix de ce qu'il contient). */
   | { kind: 'copyRate'; rate: number }
   /** Modules : côté de l'intérieur d'un atelier, en cases. */
@@ -66,7 +64,7 @@ export const BRANCHES: Branch[] = [
     id: 'production', label: 'Production', nodes: [
       n('foreuse', 'Foreuse', 'foreuse', 0, 0, 1, {}, [], 'Posée sur une case de filon, elle en extrait la matière. Collées, les foreuses font un seul groupe, qui sort tout par ses tapis.', m('foreuse'), ['Filon → Minerai']),
       n('four', 'Four', 'four', 0, 1, 1, {}, [], 'Fond le minerai en lingots.', m('four'), ['Fer → Lingot de fer', 'Cuivre → Lingot de cuivre', 'Sable → Verre']),
-      n('coffre', 'Coffre', 'coffre', 0, 2, 1, {}, [], 'Garde 100 objets. Les drones y prennent le charbon et ce que demandent le Noyau, le Comptoir et le Laboratoire.', m('coffre')),
+      n('coffre', 'Coffre', 'coffre', 0, 2, 1, {}, [], 'Garde 100 objets : un tapis le remplit, un tapis qui en part le vide. Pratique pour stocker avant le Noyau, le Comptoir ou le Laboratoire.', m('coffre')),
       n('broyeur', 'Broyeur', 'broyeur', 1, 0, 2, { plaque_fer: 40 }, ['foreuse'], 'Réduit les roches en poudre.', m('broyeur'), ['Calcaire → Ciment', 'Quartz → Cristal']),
       n('presse', 'Presse', 'presse', 1, 1, 1, { lingot_fer: 20 }, ['four'], 'Aplatit les lingots en plaques.', m('presse'), ['Lingot de fer → Plaque de fer', 'Aluminium → Tôle d’alu', 'Acier → Poutre d’acier']),
       n('trefileuse', 'Tréfileuse', 'trefileuse', 1, 2, 1, { lingot_cuivre: 20 }, ['four'], 'Étire les lingots en fil, enroulé en bobines.', m('trefileuse'), ['Lingot de cuivre → Fil de cuivre', 'Lingot d’or → Fil d’or']),
@@ -97,23 +95,15 @@ export const BRANCHES: Branch[] = [
   },
   {
     id: 'robot', label: 'Robot', nodes: [
-      n('robot', 'Robot', 'robot', 0, 1, 1, {}, [], 'Ton robot construit, mine à l’arrêt sur un filon et emmène ses drones.', base),
-      n('drone2', 'Deuxième drone', 'drone', 1, 0, 2, { plaque_fer: 40, fil_cuivre: 30 }, ['robot'], 'Un drone de plus pour construire, recharger et livrer.', { kind: 'drone' }),
-      n('station', 'Station', 'station', 1, 1, 1, { lingot_fer: 30, lingot_cuivre: 10 }, ['robot'], 'Une station avec son propre drone : il construit, recharge et livre dans un rayon de 12 cases autour d’elle.', m('station')),
-      n('antenne', 'Antenne', 'antenne', 1, 2, 2, { fil_cuivre: 40, plaque_fer: 20 }, ['robot'], 'Les drones du robot vont 1,5 fois plus loin autour de lui (construire et livrer).', { kind: 'droneRange', mult: 1.5 }),
-      n('drone3', 'Troisième drone', 'drone', 2, 0, 3, { vis: 40, acier: 30, fil_cuivre: 30 }, ['drone2'], 'Un drone de plus.', { kind: 'drone' }),
-      n('chenilles', 'Chenilles', 'chenilles', 2, 1, 2, { vis: 30, plaque_fer: 30 }, ['station'], 'Le robot roule 1,25 fois plus vite.', { kind: 'robotSpeed', mult: 1.25 }),
-      n('antenne2', 'Antenne II', 'antenne', 2, 2, 3, { fil_cuivre: 80, acier: 30 }, ['antenne'], 'Les drones du robot vont 2 fois plus loin qu’au départ.', { kind: 'droneRange', mult: 2 }),
-      n('chenilles2', 'Chenilles II', 'chenilles', 3, 1, 3, { engrenage: 30, acier: 20 }, ['chenilles'], 'Le robot roule 1,5 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 1.5 }),
-      n('antenne3', 'Antenne III', 'antenne', 3, 2, 5, { circuit: 30, cable: 30 }, ['antenne2'], 'Les drones du robot vont 2,5 fois plus loin qu’au départ.', { kind: 'droneRange', mult: 2.5 }),
-      n('hangar', 'Hangar', 'station', 3, 0, 4, { moteur: 10, acier: 60 }, ['drone3'], 'Le Hangar (3 × 3) : une station à trois drones, qui construisent, rechargent et livrent autour de lui.', m('hangar')),
-      n('recharge', 'Recharge des drones', 'drone', 4, 2, 5, { batterie: 10, circuit: 20 }, ['antenne3'], 'La Recharge : reliée au courant (80 kW), les drones autour d’elle viennent s’y recharger au lieu de brûler du charbon.', m('recharge')),
-      n('chenilles3', 'Chenilles III', 'chenilles', 4, 1, 5, { moteur: 10, engrenage: 40 }, ['chenilles2'], 'Le robot roule 2 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 2 }),
+      n('robot', 'Robot', 'robot', 0, 1, 1, {}, [], 'Ton robot explore la carte : envoie-le où tu veux, sa lampe dissipe le brouillard.', base),
+      n('chenilles', 'Chenilles', 'chenilles', 1, 1, 2, { vis: 30, plaque_fer: 30 }, ['robot'], 'Le robot roule 1,25 fois plus vite.', { kind: 'robotSpeed', mult: 1.25 }),
+      n('chenilles2', 'Chenilles II', 'chenilles', 2, 1, 3, { engrenage: 30, acier: 20 }, ['chenilles'], 'Le robot roule 1,5 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 1.5 }),
+      n('chenilles3', 'Chenilles III', 'chenilles', 3, 1, 5, { moteur: 10, engrenage: 40 }, ['chenilles2'], 'Le robot roule 2 fois plus vite qu’au départ.', { kind: 'robotSpeed', mult: 2 }),
     ],
   },
   {
     id: 'energie', label: 'Énergie', nodes: [
-      n('charbon', 'Charbon', 'charbon', 0, 1, 1, {}, [], 'Au début, tout tourne au charbon : machines, robot et drones.', base),
+      n('charbon', 'Charbon', 'charbon', 0, 1, 1, {}, [], 'Au début, tout tourne au charbon, apporté aux machines par tapis.', base),
       n('lampadaire', 'Lampadaire', 'lampadaire', 1, 0, 2, { lingot_fer: 20, fil_cuivre: 10 }, ['charbon'], 'Un lampadaire d’une case : la nuit, il éclaire loin autour de lui (sans courant ni charbon).', m('lampadaire')),
       n('arbre', 'Arbres', 'arbre', 1, 2, 2, { lingot_fer: 10 }, ['charbon'], 'Les Arbres (une case) : ils nettoient doucement la pollution des générateurs et des machines au charbon.', m('arbre')),
       n('generateur', 'Générateur', 'generateur', 1, 1, 4, { moteur: 10, cable: 40 }, ['charbon'], 'Brûle du charbon et fournit 600 kW (une presse consomme 60 kW, un fabricant 300 kW ; débloque ensuite chaque type de machine au courant). Débloque aussi les câbles : trace-les au doigt : un câble alimente les machines à 5 cases autour de lui.', m('generateur')),

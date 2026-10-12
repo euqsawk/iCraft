@@ -4,7 +4,6 @@ import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, 
 /** Les types DOM et ceux de PixiJS divergent sur getContext('webgpu') : simple conversion. */
 const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
 import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
-import { PICKUP_TIME } from '../sim/game.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Line, type Machine } from '../sim/factory.ts';
@@ -18,7 +17,6 @@ import { Camera } from './camera.ts';
 import { buildingTexture } from './buildingIcons.ts';
 import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
 import { PROPELLER, robotShapes, type Shape } from './robotShapes.ts';
-import { robotColor } from '../data/look.ts';
 
 /** Contour d'un rectangle arrondi qui part du milieu du bord haut, dans le sens des aiguilles d'une montre. */
 function trackPoints(x: number, y: number, w: number, h: number, r: number): { x: number; y: number }[] {
@@ -136,8 +134,6 @@ export class GameRenderer {
   /** Câbles et machines du réseau, par-dessus le voile, en mode électricité. */
   private powerG = new Graphics();
   /** La portée des drones du robot, très pâle, sous tout le reste (construction, puis charbon et livraisons). */
-  private droneRangeG = new Graphics();
-  private droneRangeSig = '';
   /** Voile du mode électricité, sur la surface. */
   private modeTint = new Graphics();
   /** Câbles électriques : au sol, sous les tapis et les machines. */
@@ -172,7 +168,6 @@ export class GameRenderer {
   private itemTextures = new Map<string, Texture>();
   private itemPool: Sprite[] = [];
   private robotView!: { root: Container; shadow: Graphics; body: Container; beam: Graphics; glow: Graphics; flip: Container; shape: Graphics; spin: Graphics; look: string };
-  private droneViews: Container[] = [];
   private beltsDirty = true;
   private time = 0;
   preview: Preview = null;
@@ -223,7 +218,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.droneRangeG, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -1416,20 +1411,7 @@ export class GameRenderer {
       });
     }
     // Comptoir : un « ! » quand il attend qu'on choisisse une commande.
-    // Revente : une jauge de remplissage.
     for (const m of this.game.view.machines.values()) {
-      if (m.type === 'revente') {
-        const v = this.machineViews.get(m.id);
-        if (!v || !m.built || !v.root.visible) continue;
-        const fill = Math.min(1, this.game.sellCount(m) / RULES.sellCap);
-        if (Math.abs(fill - (v.fill ?? -1)) < 0.004) continue;
-        v.fill = fill;
-        v.badge.clear();
-        const W = 2 * CELL - 14, y = CELL - 9;
-        v.badge.roundRect(-W / 2, y, W, 5, 2.5).fill(PALETTE.roller);
-        if (fill > 0) v.badge.roundRect(-W / 2, y, Math.max(5, W * fill), 5, 2.5).fill(fill >= 1 ? PALETTE.coral : PALETTE.green);
-        continue;
-      }
       if (m.type !== 'comptoir') continue;
       const v = this.machineViews.get(m.id);
       if (!v || !v.root.visible) continue;
@@ -1478,77 +1460,10 @@ export class GameRenderer {
     for (const sh of body) drawShape(v.shape, sh, 0, 0);
     v.spin.clear();
     for (const sh of spin) drawShape(v.spin, sh, PROPELLER.x, PROPELLER.y);
-    // Les drones prennent la couleur du robot.
-    for (const d of this.droneViews) d.destroy({ children: true });
-    this.droneViews = [];
-  }
-
-  /** Un drone : petit corps de la couleur du robot, visière, deux bras à hélice, pattes pour se poser. */
-  private makeDroneView(): Container {
-    const d = new Container();
-    const ink = PALETTE.ink, col = robotColor(this.game.look);
-    const body = new Container();
-    body.label = 'body';
-    const g = new Graphics();
-    // Bras et moyeux
-    g.moveTo(-12, -4).lineTo(12, -4).stroke({ width: 2.5, color: ink, cap: 'round' });
-    g.circle(-12, -4, 2).circle(12, -4, 2).fill(ink);
-    // Pattes
-    g.moveTo(-5, 5).lineTo(-7, 9).moveTo(5, 5).lineTo(7, 9).moveTo(-9, 9).lineTo(-5, 9).moveTo(5, 9).lineTo(9, 9)
-      .stroke({ width: 2, color: ink, cap: 'round', join: 'round' });
-    // Corps et visière
-    g.roundRect(-8, -8, 16, 14, 6).fill(col.main).stroke({ width: 2, color: ink });
-    g.roundRect(-5.5, -5, 11, 6, 3).fill(0xffffff).stroke({ width: 1.5, color: ink });
-    g.circle(2, -2, 1.7).fill(ink);
-    // Hélices (elles tournent en vol)
-    const rotors: Graphics[] = [];
-    for (const x of [-12, 12]) {
-      const rg = new Graphics().ellipse(0, 0, 7.5, 1.8).fill({ color: ink, alpha: 0.6 });
-      rg.position.set(x, -7);
-      rg.label = 'rotor';
-      rotors.push(rg);
-    }
-    body.addChild(g, ...rotors);
-    const cargo = new Sprite();
-    cargo.anchor.set(0.5);
-    cargo.position.set(0, 15);
-    cargo.label = 'cargo';
-    d.addChild(cargo, body);
-    this.actorLayer.addChild(d);
-    return d;
-  }
-
-  /** Anime un drone : hélices qui tournent en vol ; posé, il est plus petit et ses hélices s'arrêtent. */
-  private styleDrone(v: Container, down: boolean, seed: number): void {
-    const body = v.getChildByLabel('body') as Container;
-    const k = down ? 0.68 : 1;
-    body.scale.set(k);
-    for (const c of body.children) if (c.label === 'rotor') c.scale.x = down ? 1 : Math.cos(this.time * 32 + seed);
-    const cargo = v.getChildByLabel('cargo') as Sprite;
-    cargo.y = down ? 10 : 15;
-    cargo.scale.set(k);
-  }
-
-  /** Un disque centré sur le robot : la portée de ses drones (construction, charbon, livraisons). */
-  private updateDroneRange(): void {
-    const g = this.droneRangeG, game = this.game;
-    g.visible = !game.inAtelier;
-    if (!g.visible) return;
-    const r = RULES.droneRange * game.droneRangeMult * CELL;
-    const sig = `${r}`;
-    if (sig !== this.droneRangeSig) {
-      this.droneRangeSig = sig;
-      g.clear();
-      g.circle(0, 0, r).fill({ color: 0x4a8f73, alpha: 0.045 }).stroke({ width: 2, color: 0x4a8f73, alpha: 0.16 });
-    }
-    g.position.set(game.robot.x * CELL, game.robot.y * CELL);
   }
 
   private updateActors(): void {
-    while (this.droneViews.length < this.game.drones.length) this.droneViews.push(this.makeDroneView());
-    while (this.droneViews.length > this.game.drones.length) this.droneViews.pop()!.destroy({ children: true });
     const r = this.game.robot, v = this.robotView;
-    this.updateDroneRange();
     v.root.position.set(r.x * CELL, r.y * CELL);
     v.shadow.position.set(r.x * CELL, r.y * CELL);
     v.spin.scale.x = Math.cos(this.time * 18);
@@ -1570,185 +1485,10 @@ export class GameRenderer {
     v.beam.alpha = 0.5 + 0.35 * pulse;
     v.glow.alpha = 0.4 + 0.6 * pulse;
     v.glow.scale.set(1);
-    // Le robot mine : il tremble un peu, et chaque objet trouvé saute au-dessus de lui.
-    v.body.x = r.mining ? Math.sin(this.time * 40) * 0.8 : 0;
-    if (r.mined !== this.lastMined) {
-      if (r.mined > this.lastMined && r.mining) this.spawnPop(r.mining, r.x * CELL, r.y * CELL - 36);
-      this.lastMined = r.mined;
-    }
-    this.updatePops();
-    this.game.drones.forEach((d, i) => {
-      const dv = this.droneViews[i];
-      if (d.state === 'parked' || d.state === 'rest') {
-        // Posé sur le robot : en panne de charbon (pâle), ou simplement au repos.
-        dv.position.set(r.x * CELL + (i - (this.game.drones.length - 1) / 2) * 17, r.y * CELL + v.body.y - 38);
-        dv.alpha = d.state === 'parked' ? 0.75 : 1;
-      } else {
-        dv.position.set(d.x * CELL, d.y * CELL - 22 + Math.sin(this.time * 4 + i) * 2.5);
-        dv.alpha = 1;
-      }
-      dv.visible = this.inView(dv.x, dv.y, CELL);
-      this.styleDrone(dv, d.state === 'parked' || d.state === 'rest', i);
-      const cargo = dv.getChildByLabel('cargo') as Sprite;
-      cargo.visible = !!d.cargo;
-      if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
-    });
-    // Faisceaux de construction : pointillés du drone vers le chantier.
-    const fx = this.fx;
-    fx.clear();
-    for (const d of this.game.allDrones()) {
-      if (d.state !== 'work' || d.task?.kind !== 'build') continue;
-      const p = this.game.jobPos(d.task.job);
-      if (!p) continue;
-      dashedPolyline(fx, [{ x: d.x * CELL, y: d.y * CELL - 14 }, { x: p.x * CELL, y: p.y * CELL }], 3, 3);
-    }
-    fx.stroke({ width: 2, color: PALETTE.ink, alpha: 0.35 });
-    // Le robot construit lui-même : faisceau jaune depuis son phare.
-    if (this.game.robotBuilding && this.game.robotJob) {
-      const p = this.game.jobPos(this.game.robotJob);
-      if (p) {
-        const lx = r.x * CELL + 10 * v.flip.scale.x, ly = r.y * CELL - 20 + v.body.y;
-        dashedPolyline(fx, [{ x: lx, y: ly }, { x: p.x * CELL, y: p.y * CELL }], 4, 3);
-        fx.stroke({ width: 3, color: PALETTE.yellow, alpha: 0.9, cap: 'round' });
-        const pulse = 0.5 + 0.5 * Math.sin(this.time * 12);
-        fx.circle(p.x * CELL, p.y * CELL, 5 + pulse * 3).fill({ color: PALETTE.yellow, alpha: 0.5 });
-      }
-    }
   }
 
-  // ---------- Gros drone de revente ----------
-
-  private skyLayer: Container | null = null;
-  private pickupViews = new Map<number, { root: Container; rotors: Graphics[]; crate: Graphics; shadow: Graphics }>();
-
-  private makeCargoDrone(): { root: Container; rotors: Graphics[]; crate: Graphics; shadow: Graphics } {
-    if (!this.skyLayer) {
-      this.skyLayer = new Container();
-      this.worldLayer.addChildAt(this.skyLayer, this.worldLayer.getChildIndex(this.fogLayer) + 1);
-    }
-    const ink = PALETTE.ink;
-    const shadow = new Graphics().ellipse(0, 0, 26, 7).fill({ color: PALETTE.shadow, alpha: 0.8 });
-    this.skyLayer.addChild(shadow);
-    const root = new Container();
-    const crate = new Graphics();
-    crate.moveTo(-8, 8).lineTo(-12, 22).moveTo(8, 8).lineTo(12, 22).stroke({ width: 2, color: ink, cap: 'round' });
-    crate.roundRect(-16, 20, 32, 20, 4).fill(0xc98a4b).stroke({ width: 2.5, color: ink });
-    crate.rect(-16, 28, 32, 3).fill(0x8a5a2b);
-    const body = new Graphics();
-    body.moveTo(-34, -4).lineTo(34, -4).stroke({ width: 4, color: ink, cap: 'round' });
-    body.roundRect(-22, -12, 44, 22, 9).fill(0xffffff).stroke({ width: 3, color: ink });
-    body.roundRect(-14, -6, 28, 9, 4).fill(PALETTE.yellow);
-    body.circle(0, 14, 4).fill(ink);
-    const rotors: Graphics[] = [];
-    for (const x of [-34, 34]) {
-      const r = new Graphics().ellipse(0, 0, 15, 3.2).fill({ color: ink, alpha: 0.55 });
-      r.position.set(x, -8);
-      rotors.push(r);
-      body.addChild(r);
-    }
-    root.addChild(crate, body);
-    this.skyLayer.addChild(root);
-    return { root, rotors, crate, shadow };
-  }
-
-  private updatePickups(): void {
-    const seen = new Set<number>();
-    for (const p of this.game.pickups) {
-      seen.add(p.id);
-      let v = this.pickupViews.get(p.id);
-      if (!v) { v = this.makeCargoDrone(); this.pickupViews.set(p.id, v); }
-      // Arrivée depuis le haut à droite, vol stationnaire au-dessus de la benne, départ vers le haut à gauche.
-      const T = PICKUP_TIME, half = T / 2, t = p.t;
-      const bx = p.x * CELL, by = (p.y - 1.4) * CELL;
-      const far = CELL * 26;
-      const smooth = (u: number) => u * u * (3 - 2 * u);
-      let x: number, y: number, k: number;
-      if (t < half - 0.6) { k = 1 - smooth(Math.min(1, t / (half - 0.6))); x = bx + far * k; y = by - far * 0.8 * k; }
-      else if (t < half + 0.6) { k = 0; x = bx; y = by + Math.sin((t - half + 0.6) / 1.2 * Math.PI) * CELL * 0.6; }
-      else { k = smooth(Math.min(1, (t - half - 0.6) / (half - 0.6))); x = bx - far * k; y = by - far * 0.8 * k; }
-      v.root.position.set(x, y + Math.sin(this.time * 5) * 2);
-      v.root.rotation = t < half - 0.6 || t > half + 0.6 ? -0.12 : 0;
-      v.root.scale.set(1.25);
-      v.crate.visible = p.done;
-      for (const r of v.rotors) r.scale.x = Math.cos(this.time * 30);
-      v.shadow.position.set(x, p.y * CELL + CELL * 0.6);
-      v.shadow.alpha = Math.max(0, 1 - Math.abs(x - bx) / (CELL * 8)) * 0.8;
-    }
-    for (const [id, v] of this.pickupViews) {
-      if (seen.has(id)) continue;
-      v.root.destroy({ children: true });
-      v.shadow.destroy();
-      this.pickupViews.delete(id);
-    }
-  }
-
-  /** Station dont on montre le rayon d'action (fenêtre ouverte). */
-  rangeOf: number | null = null;
   /** Machine qu'on est en train de déplacer. */
   movingId: number | null = null;
-
-  private drawRange(g: Graphics, cx: number, cy: number): void {
-    const R = RULES.stationRange * CELL;
-    // Les machines à portée du drone de la station se teintent en vert.
-    for (const m of this.game.view.machines.values()) {
-      if (machineDef(m.type).kind === 'station') continue;
-      const mx = (m.x + m.w / 2) * CELL, my = (m.y + m.h / 2) * CELL;
-      if (Math.hypot(mx - cx, my - cy) > R) continue;
-      const r = m.w === 1 ? 8 : m.type === 'noyau' ? 18 : 15;
-      g.roundRect(m.x * CELL + 1, m.y * CELL + 1, m.w * CELL - 2, m.h * CELL - 2, r).fill({ color: 0x6cc7a0, alpha: 0.45 }).stroke({ width: 2.5, color: PALETTE.green, alpha: 0.8 });
-    }
-    g.circle(cx, cy, R).fill({ color: PALETTE.yellow, alpha: 0.1 });
-    dashedPolyline(g, Array.from({ length: 97 }, (_, i) => ({ x: cx + Math.cos(i / 96 * Math.PI * 2) * R, y: cy + Math.sin(i / 96 * Math.PI * 2) * R })), 10, 7);
-    g.stroke({ width: 3, color: PALETTE.ink, alpha: 0.35, cap: 'round' });
-  }
-
-  // Drones des stations
-  private stationViews = new Map<number, Container>();
-
-  private updateStationDrones(): void {
-    const seen = new Set<number>();
-    for (const [id, d] of this.game.stationDrones) {
-      seen.add(id);
-      let v = this.stationViews.get(id);
-      if (!v) { v = this.makeDroneView(); this.stationViews.set(id, v); }
-      const down = d.state === 'parked' || d.state === 'rest';
-      v.position.set(d.x * CELL, d.y * CELL - (down ? 10 : 22) + (down ? 0 : Math.sin(this.time * 4 + id) * 2.5));
-      v.alpha = d.state === 'parked' ? 0.75 : 1;
-      v.visible = this.inView(v.x, v.y, CELL);
-      this.styleDrone(v, down, id);
-      const cargo = v.getChildByLabel('cargo') as Sprite;
-      cargo.visible = !!d.cargo;
-      if (d.cargo) cargo.texture = this.itemTextures.get(d.cargo.t)!;
-    }
-    for (const [id, v] of this.stationViews) {
-      if (!seen.has(id)) { v.destroy({ children: true }); this.stationViews.delete(id); }
-    }
-  }
-
-  private lastMined = 0;
-  private pops: { s: Sprite; t: number }[] = [];
-
-  private spawnPop(itemId: string, x: number, y: number): void {
-    const s = new Sprite(this.itemTextures.get(itemId)!);
-    s.anchor.set(0.5);
-    s.position.set(x, y);
-    this.actorLayer.addChild(s);
-    this.pops.push({ s, t: 0 });
-  }
-
-  private updatePops(): void {
-    for (const p of this.pops) {
-      p.t += 1 / 60;
-      p.s.y -= 0.5;
-      p.s.alpha = Math.max(0, 1 - p.t / 0.9);
-      p.s.scale.set(1 + p.t * 0.4);
-    }
-    this.pops = this.pops.filter((p) => {
-      if (p.t < 0.9) return true;
-      p.s.destroy();
-      return false;
-    });
-  }
 
   // ---------- Superpositions : tracé en cours, pose, gomme, sélection ----------
 
@@ -1822,8 +1562,6 @@ export class GameRenderer {
         dashedPolyline(g, [{ x: gd.x0, y: gd.y0 }, { x: gd.x1, y: gd.y1 }], 5, 5);
       }
       g.stroke({ width: 2, color: PALETTE.coral, alpha: 0.8 });
-      // Une station : son rayon d'action, en pointillés, pendant qu'on la pose ou la déplace.
-      if (pv.type === 'station' || pv.type === 'hangar') this.drawRange(g, x + W / 2, y + H / 2);
       g.roundRect(x + 1, y + 1, W - 2, H - 2, 15).fill({ color: pv.ok ? PALETTE.white : 0xffd9d0, alpha: 0.85 });
       dashedPolyline(g, roundRectPoints(x + 1, y + 1, W - 2, H - 2, 15), 6, 5, true);
       g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.6 });
@@ -1861,13 +1599,7 @@ export class GameRenderer {
           .moveTo(cx - t, cy - a + t).lineTo(cx, cy - a).lineTo(cx + t, cy - a + t)
           .moveTo(cx - t, cy + a - t).lineTo(cx, cy + a).lineTo(cx + t, cy + a - t)
           .stroke({ width: 2, color: 0xffffff, cap: 'round', join: 'round' });
-        if (machineDef(m.type).kind === 'station' && !(this.preview?.kind === 'place')) this.drawRange(g, (m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
       }
-    }
-    // Fenêtre d'une station ouverte : son rayon d'action.
-    if (this.rangeOf !== null) {
-      const st = this.game.view.machines.get(this.rangeOf);
-      if (st) this.drawRange(g, (st.x + st.w / 2) * CELL, (st.y + st.h / 2) * CELL);
     }
     const sel = this.selection;
     if (sel?.kind === 'robot') {
@@ -2409,8 +2141,6 @@ export class GameRenderer {
     this.updateMachines(dt);
     this.drawItems();
     this.updateActors();
-    this.updateStationDrones();
-    this.updatePickups();
     this.drawRockets(dt);
     this.drawSmog(dt);
     this.drawNight();

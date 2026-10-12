@@ -8,7 +8,6 @@ import { item, ITEM_LIST } from '../src/data/items.ts';
 import { PALIERS } from '../src/data/paliers.ts';
 import { NODE } from '../src/data/unlocks.ts';
 import { decodeSave, encodeSave } from '../src/save/code.ts';
-import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
 import { ROCKET_NEEDS, type Machine } from '../src/sim/factory.ts';
@@ -249,13 +248,13 @@ function buildIronLine(g: Game): void {
   assert(g.placeBelts(trace(g, [[-7.5, -4.5], [-5.5, -4.5], [-5.5, 0.5], [0.5, 0.5]]).result()), 'tapis noyau');
 }
 
-test('au départ, un drone avec 10 charbons ; robot et drones construisent tout', () => {
+test('tout se construit tout de suite (plus de drones ni de chantiers)', () => {
   const g = new Game('TEST-5');
-  assert(g.drones.length === 1 && g.drones[0].cargo?.t === 'charbon' && g.drones[0].cargo.n === 10, `drone de départ : ${JSON.stringify(g.drones[0]?.cargo)}`);
   buildIronLine(g);
-  assert(g.pending.length > 10, `chantiers : ${g.pending.length}`);
-  run(g, 150);
-  assert(g.pending.length === 0, `chantiers restants : ${g.pending.length}`);
+  assert(g.pending.length === 0, `chantiers : ${g.pending.length}`);
+  assert([...g.factory.machines.values()].every((m) => m.built) && [...g.factory.belts.values()].every((b) => b.built), 'tout est construit');
+  const s = g.serialize() as unknown as Record<string, unknown>;
+  assert(!('crew' in s) && !('drones' in s), 'plus de drones dans la sauvegarde');
 });
 test('foreuse → four à charbon → Noyau : la mission du palier avance', () => {
   const g = new Game('TEST-6');
@@ -331,7 +330,7 @@ test('sans charbon, le four attend', () => {
   g.placeMachine('foreuse', -13, -5);
   g.placeMachine('four', -8, -5);
   g.placeBelts(trace(g, [[-12.5, -4.5], [-8.5, -4.5], [-7.5, -4.5]]).result());
-  g.drones[0].cargo = null; // pas de cadeau dans ce test
+  // pas de cadeau dans ce test
   run(g, 60);
   for (const m of g.factory.machines.values()) if (m.type === 'foreuse') g.factory.addFuel(m, 10);
   run(g, 40);
@@ -429,7 +428,6 @@ test('une ancienne sauvegarde (sans charbon, drones ni séparateurs) se charge',
   s.factory.belts = s.factory.belts.map((b: unknown[]) => b.slice(0, 6));
   const g2 = new Game(s.seed, s);
   assert(g2.factory.belts.size === g.factory.belts.size, 'tapis');
-  assert(g2.drones.length === 1 && g2.drones[0].cargo?.n === 10, 'un drone avec le cadeau de départ');
 });
 
 test('une machine posée sur un tapis se branche : entrée et sortie', () => {
@@ -507,26 +505,7 @@ test('scanner : les 3 filons les plus proches, du plus proche au plus loin', () 
   assert(g.scan('licorne').length === 0, 'matière inconnue');
 });
 
-test('un drone sans travail se pose sur le robot et ne brûle plus de charbon', () => {
-  const g = new Game('TEST-R1');
-  g.world.reveal(0, 0, 30); g.drones[0].cargo = null;
-  run(g, 10);
-  const d = g.drones[0];
-  assert(d.state === 'rest', `posé : ${d.state}`);
-  const f0 = d.fuel + d.burn / RULES.coalDroneSeconds;
-  g.sendRobot(12, 6);
-  run(g, 20);
-  const f1 = d.fuel + d.burn / RULES.coalDroneSeconds;
-  assert(d.state === 'rest' && Math.abs(f1 - f0) < 1e-9, `charbon ${f0} → ${f1}`);
-  assert(Math.hypot(d.x - g.robot.x, d.y - g.robot.y) < 1.5, 'il voyage sur le robot');
-  // Du travail : il décolle.
-  g.money = 1000;
-  const a = g.placeMachine('coffre', Math.floor(g.robot.x) + 3, Math.floor(g.robot.y) + 2);
-  const b = g.placeMachine('coffre', Math.floor(g.robot.x) - 3, Math.floor(g.robot.y) + 2);
-  run(g, 1);
-  assert(a && b && d.state !== 'rest', `il repart : ${d.state}`);
-});
-test('chenilles et antennes : plusieurs niveaux, le meilleur compte', () => {
+test('chenilles : plusieurs niveaux, le meilleur compte', () => {
   const g = new Game('TEST-R2');
   g.world.reveal(0, 0, 40);
   const time = () => {
@@ -543,60 +522,10 @@ test('chenilles et antennes : plusieurs niveaux, le meilleur compte', () => {
   (g as unknown as { applyUnlocks(): void }).applyUnlocks();
   const t1 = time();
   assert(g.robotSpeedMult === 1.5 && Math.abs(t0 / t1 - 1.5) < 0.1, `vitesse : ${t0.toFixed(2)} s → ${t1.toFixed(2)} s`);
-  g.unlocks.add('antenne');
-  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
-  assert(g.droneRangeMult === 1.5, `portée ${g.droneRangeMult}`);
-  for (const id of ['antenne2', 'antenne3', 'chenilles3']) assert(NODE[id] && NODE[id].effect.kind !== 'soon', `${id} existe`);
+  for (const id of ['chenilles3']) assert(NODE[id] && NODE[id].effect.kind !== 'soon', `${id} existe`);
+  for (const id of ['antenne', 'drone2', 'station', 'hangar', 'recharge']) assert(!NODE[id], `${id} retiré`);
   assert(!/marais/.test(NODE.chenilles.hint), 'plus de marais');
 });
-test('station : son drone travaille autour d’elle, loin du robot', () => {
-  const g = new Game('TEST-19');
-  g.money = 10000; g.world.reveal(30, 2, 26);
-  assert(!g.placeMachine('station', 26, 0), 'la station se débloque dans l’arbre');
-  g.lab = { lingot_fer: 30, lingot_cuivre: 10 };
-  assert(g.unlock('station'), 'déblocage');
-  const st = g.placeMachine('station', 26, 0)!;
-  // Le robot la construit, puis on l'envoie loin : seule la station reste là-bas.
-  run(g, 60);
-  assert(st.built && g.stationDrones.size === 1, `station construite ${st.built}, drones ${g.stationDrones.size}`);
-  g.sendRobot(-10, 10);
-  run(g, 15);
-  const chest = g.placeMachine('coffre', 32, 2)!;
-  const four = g.placeMachine('four', 22, 3)!;
-  run(g, 40);
-  assert(chest.built && four.built, `chantiers faits par le drone de la station : coffre ${chest.built}, four ${four.built}`);
-  g.factory.putInStorage(chest, 'charbon', 20);
-  four.fuel = 0;
-  run(g, 30);
-  assert(four.fuel > 0, `le drone de la station aurait dû recharger le four (${four.fuel})`);
-  // Le Noyau est hors de son rayon : il n'y livre pas (les lingots restent dans le coffre).
-  const noyau = [...g.factory.machines.values()].find((m) => m.type === 'noyau')!;
-  assert(Math.hypot(noyau.x - st.x, noyau.y - st.y) > RULES.stationRange, 'Noyau loin de la station');
-  g.sendRobot(-10, 10);
-  run(g, 15);
-  const sd = g.stationDrones.get(st.id)!;
-  sd.cargo = null;
-  g.setStationPriorities(st.id, ['noyau', 'carburant', 'chantiers', 'laboratoire', 'comptoir']);
-  g.factory.putInStorage(chest, 'lingot_fer', 10);
-  let far = 0;
-  for (let i = 0; i < 30 * 20; i++) { g.tick(1 / 30); far = Math.max(far, Math.hypot(sd.x - (st.x + 1), sd.y - (st.y + 1))); }
-  assert(chest.inBuf.lingot_fer === 10 && far <= RULES.stationRange + 2, `lingots ${chest.inBuf.lingot_fer}, drone allé à ${far.toFixed(1)} cases`);
-  // Sans coffre : il se sert dans la case carburant de la station (50 charbons), en lui en laissant 2.
-  g.factory.takeFromStorage(chest, 'charbon', 1000);
-  four.fuel = 0; four.burn = 0;
-  st.fuel = 0;
-  assert(g.factory.addFuel(st, 60) === RULES.stationCoal && st.fuel === 50, `station : ${st.fuel} charbons`);
-  const before = st.fuel;
-  run(g, 30);
-  assert(four.fuel > 0 && st.fuel < before && st.fuel >= RULES.stationReserve - 1, `four ${four.fuel}, station ${before} → ${st.fuel}`);
-  const s = JSON.parse(JSON.stringify(g.serialize()));
-  const g2 = new Game(s.seed, s);
-  assert(g2.stationDrones.size === 1, 'drone de station rechargé');
-  g2.removeMachine([...g2.factory.machines.values()].find((m) => m.type === 'station')!);
-  run(g2, 1);
-  assert(g2.stationDrones.size === 0, 'drone retiré avec la station');
-});
-
 test('deux machines collées se relient sans tapis', () => {
   const g = new Game('TEST-1A');
   g.money = 10000; g.world.reveal(6, 6, 20);
@@ -618,7 +547,7 @@ test('deux machines collées se relient sans tapis', () => {
 
 test('foreuses 1 × 1 : collées en L, un seul groupe ; deux sorties se partagent le minerai, le charbon se partage', () => {
   const g = new Game('TEST-G1');
-  g.money = 10000; g.world.reveal(-10, -3, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-10, -3, 20);
   const ds = [[-14, -5], [-13, -5], [-12, -5], [-12, -4], [-12, -3]].map(([x, y]) => g.placeMachine('foreuse', x, y)!);
   assert(ds.every(Boolean), 'cinq foreuses posées sur le filon');
   const a = g.placeMachine('coffre', -18, -5)!, b = g.placeMachine('coffre', -12, 1)!;
@@ -661,7 +590,7 @@ test('ancienne partie : une foreuse 2 × 2 devient quatre foreuses 1 × 1 (cases
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-6, 2, 20);
   const m = g.placeMachine('foreuse', -12, 9)!;
   run(g, 25);
   assert(m.built && g.factory.fuelRoom(m) === 0 && !g.factory.lowFuel(m), 'pas de voyant, personne ne la recharge');
@@ -672,7 +601,7 @@ test('une foreuse sur du charbon s’alimente toute seule', () => {
 });
 test('une machine sans charbon attend ; un charbon dure 40 s de travail pour une petite foreuse', () => {
   const g = new Game('TEST-20');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-6, 2, 20);
   const m = g.placeMachine('foreuse', -13, -5)!;
   run(g, 40);
   assert(m.built && m.made > 0, 'une foreuse neuve a 10 charbons : elle démarre seule');
@@ -695,34 +624,26 @@ test('le drone de départ dépose ses 10 charbons dans la foreuse qui clignote',
 });
 test('une foreuse neuve sort du chantier avec 10 charbons', () => {
   const g = new Game('TEST-29');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-6, 2, 20);
   const m = g.placeMachine('foreuse', -13, -5)!;
   for (let i = 0; i < 3000 && !m.built; i++) g.tick(1 / 30);
   assert(m.built && m.fuel + (m.burn > 0 ? 1 : 0) >= 9, `charbon à la sortie du chantier : ${m.fuel}`);
 });
-test('le carburant brûle comme le charbon : machines, robot, drones', () => {
+test('le carburant brûle comme le charbon dans les machines', () => {
   const g = new Game('TEST-F1');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-6, 2, 20);
   const four = g.placeMachine('four', -9, -1)!;
   const chest = g.placeMachine('coffre', -6, 3)!;
   run(g, 40);
   assert(four.built && chest.built, 'construits');
   // Machine : le carburant remplit la case carburant.
   four.fuel = 0; four.burn = 0;
-  assert(g.factory.canAccept(four, 'carburant') && g.machineAccepts(four, 'carburant') === 10, 'le four accepte le carburant');
-  // Drone : sans charbon dans les coffres, il prend le carburant pour recharger le four.
-  g.factory.putInStorage(chest, 'carburant', 20);
-  run(g, 30);
-  assert(four.fuel > 0 && (chest.inBuf.carburant ?? 0) < 20, `four rechargé au carburant : ${four.fuel}`);
-  // Robot : sa case carburant se remplit avec le carburant de son inventaire.
-  g.robot.fuel = 0;
-  g.robot.inv.add('carburant', 5);
-  run(g, 1);
-  assert(g.robot.fuel >= 4 && g.robot.inv.count('carburant') <= 1, `robot : ${g.robot.fuel}`);
+  assert(g.factory.canAccept(four, 'carburant') && g.factory.fuelRoom(four) === 10, 'le four accepte le carburant');
+  assert(chest.built, 'coffre');
 });
 test('le carburant passe avant le charbon et dure 5 fois plus longtemps', () => {
   const g = new Game('TEST-F2');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-6, 2, 20);
   const four = g.placeMachine('four', -9, -1)!;
   run(g, 40);
   four.fuel = 0; four.burn = 0; four.carb = 0; four.outBuf = {};
@@ -732,67 +653,22 @@ test('le carburant passe avant le charbon et dure 5 fois plus longtemps', () => 
   run(g, 1);
   assert(four.fuel === 1 && (four.carb ?? 0) === 0, `le carburant brûle d'abord : ${four.fuel} dont ${four.carb}`);
   assert(four.burn > RULES.coalMachineSeconds * 4, `il dure 5 fois plus : ${four.burn}`);
-  // Robot : il prend le carburant de son inventaire avant le charbon.
-  g.robot.fuel = 0; g.robot.burn = 0; g.robot.carb = 0;
-  g.robot.inv.add('charbon', 5); g.robot.inv.add('carburant', 3);
-  run(g, 0.1);
-  assert(g.robot.inv.count('carburant') === 0 && (g.robot.carb ?? 0) + (g.robot.burn > RULES.coalRobotSeconds ? 1 : 0) === 3, `robot : carburant ${g.robot.carb}, charbon restant ${g.robot.inv.count('charbon')}`);
-  // Sauvegarde
-  const g2 = new Game('TEST-F2', JSON.parse(JSON.stringify(g.serialize())));
-  assert(g2.robot.carb === g.robot.carb, 'carburant du robot sauvegardé');
 });
-test('le robot mine à l’arrêt sur un filon et se ravitaille avec son charbon', () => {
-  const g = new Game('TEST-22');
-  g.drones[0].cargo = null;
-  g.sendRobot(-11, 10.2);
-  run(g, 30);
-  const coal = g.robot.inv.count('charbon');
-  assert(g.robot.mining === 'charbon' && coal > 0, `minage : ${g.robot.mining}, charbon ${coal}`);
-  g.robot.fuel = 0; g.robot.burn = 0;
-  run(g, 3);
-  assert(g.robot.fuel > 0, 'le robot aurait dû remplir sa case carburant');
-});
-test('coffre : rempli par un tapis, vidé par un tapis, les drones y prennent le charbon', () => {
+test('coffre : rempli par un tapis, vidé par un tapis', () => {
   const g = new Game('TEST-24');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(-6, 2, 20);
   const drill = drills(g, -12, 9);
   const chest = g.placeMachine('coffre', -7, 9)!;
   g.placeBelts(trace(g, [[-11.5, 9.5], [-8.5, 9.5], [-7.5, 9.5]]).result());
   run(g, 40);
   g.factory.addFuel(drill, 10);
   run(g, 30);
-  // Le drone remplit sa cargaison de charbon au coffre (10 au plus).
-  const cargo = g.drones[0].cargo as { t: string; n: number } | null;
-  const stored = (chest.inBuf.charbon ?? 0) + (cargo?.t === 'charbon' ? cargo.n : 0);
-  assert(stored > 3, `coffre : ${JSON.stringify(chest.inBuf)}, drone ${JSON.stringify(g.drones[0].cargo)}`);
-  const four = g.placeMachine('four', -5, 4)!;
-  run(g, 40);
-  assert(four.fuel > 0 || four.burn > 0, `le drone n’a pas pris le charbon du coffre (${four.fuel})`);
+  assert((chest.inBuf.charbon ?? 0) > 3, `coffre : ${JSON.stringify(chest.inBuf)}`);
   g.placeBelts(trace(g, [[-6.5, 9.5], [-3.5, 9.5]]).result());
   run(g, 20);
   const out = g.factory.beltAt(-5, 9)!;
   assert(out.items.length > 0, 'rien ne sort du coffre');
 });
-test('sans charbon, le robot ralentit et le drone se pose sur lui', () => {
-  const g = new Game('TEST-25');
-  g.robot.fuel = 0; g.robot.burn = 0;
-  const x0 = g.robot.x;
-  g.sendRobot(x0 + 20, g.robot.y);
-  run(g, 2);
-  const moved = g.robot.x - x0;
-  assert(moved > 1 && moved < 4.5, `distance en 2 s : ${moved.toFixed(2)}`);
-  const d = g.drones[0];
-  d.fuel = 0; d.burn = 0; d.cargo = null;
-  g.money = 10000;
-  for (let i = 0; i < 3; i++) g.placeMachine('coffre', Math.floor(g.robot.x) + 3 + i * 2, Math.floor(g.robot.y) + 3);
-  run(g, 5);
-  assert(d.state === 'parked', `drone : ${d.state}`);
-  g.robot.inv.add('charbon', 20); // le robot remplit d'abord sa propre case carburant
-  run(g, 1);
-  assert(d.state !== 'parked' && d.fuel > 0, 'le drone aurait dû repartir');
-});
-
-
 test('les anciens tapis souterrains sont retirés et remboursés au chargement', () => {
   const g = new Game('TEST-U1');
   g.money = 1000;
@@ -806,7 +682,7 @@ test('les anciens tapis souterrains sont retirés et remboursés au chargement',
 });
 test('pas de filtre : une entrée prévue garde son étiquette, mais tout entre et tout sort', () => {
   const g = new Game('TEST-TRI');
-  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
+  g.money = 10000; g.world.reveal(6, 6, 20);
   const src = g.placeMachine('coffre', 2, 5)!;
   const dst = g.placeMachine('coffre', 9, 5)!;
   assert(g.addPort(dst, 8, 5, 'in', 'cuivre'), 'entrée prévue');
@@ -850,7 +726,7 @@ test('ancienne partie : un trieur est remboursé', () => {
 
 test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis remplissent les départs', () => {
   const g = new Game('TEST-G2');
-  g.money = 100000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null; g.drones.length = 0;
+  g.money = 100000; g.world.reveal(6, 6, 20);
   g.unlocks.add('train');
   const gare = g.placeMachine('gare', 4, 4)!;
   // Un tapis qui part de la gare vers la droite, un autre qui y arrive par la gauche.
@@ -868,7 +744,6 @@ test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis rempli
   assert(out.length > 0 && out.every((t) => t === 'carburant') && gare.inBuf.fer === 10, `seules les arrivées sortent : ${out.join(',')}`);
   assert((gare.inBuf.cuivre ?? 0) > 0 && !gare.outBuf.cuivre, `les tapis remplissent les départs : ${JSON.stringify(gare.inBuf)}`);
   // Le robot prend dans l'un ou l'autre.
-  assert(g.chestToRobot(gare, 'carburant', 2, 'out') === 2 && g.chestToRobot(gare, 'fer', 2) === 2, 'le robot se sert dans les deux coffres');
 });
 
 test('un drone qui recharge une machine en carburant y met du carburant', () => {
@@ -919,7 +794,7 @@ test('compteur : posé sur un tapis, il donne le débit des 20 dernières second
 
 test('dépôts : un camion fait les allers-retours, on ajoute des camions et un troisième arrêt', () => {
   const g = new Game('TEST-V1');
-  g.money = 100000; g.world.reveal(14, 10, 30); g.drones[0].cargo = null;
+  g.money = 100000; g.world.reveal(14, 10, 30);
   assert(!g.placeMachine('depot', 3, 8), 'dépôt à débloquer');
   g.unlocks.add('camion');
   const a = g.placeMachine('depot', 3, 8)!, b = g.placeMachine('depot', 23, 8)!, c = g.placeMachine('depot', 13, 16)!;
@@ -968,7 +843,7 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
 });
 test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () => {
   const g = new Game('TEST-V2');
-  g.money = 100000; g.world.reveal(14, 10, 30); g.drones[0].cargo = null;
+  g.money = 100000; g.world.reveal(14, 10, 30);
   g.unlocks.add('train');
   const a = g.placeMachine('gare', 3, 8)!, b = g.placeMachine('gare', 23, 12)!;
   a.built = true; b.built = true; g.pending = []; g.factory.markBuilt();
@@ -983,7 +858,7 @@ test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () =
 
 test('raffinerie à carburant : elle se sert d’abord dans ce qu’elle produit', () => {
   const g = new Game('TEST-F3');
-  g.money = 100000; g.world.reveal(8, 8, 20); g.drones[0].cargo = null;
+  g.money = 100000; g.world.reveal(8, 8, 20);
   g.unlocks.add('raffinerie');
   const r = g.placeMachine('raffinerie', 9, 4)!;
   r.built = true; g.pending = []; g.factory.markBuilt();
@@ -1066,7 +941,7 @@ test('le bout d’un tapis se tourne vers une machine collée, puis nourrit auss
 test('jour et nuit ; panneaux solaires et batteries', () => {
   const g = new Game('TEST-E3');
   const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
-  g.money = 100000; g.world.reveal(8, 8, 25); g.drones[0].cargo = null;
+  g.money = 100000; g.world.reveal(8, 8, 25);
   assert(g.daylight === 1, 'le jeu commence de jour');
   g.played = RULES.dayCycle * 0.8;
   assert(g.daylight === 0, 'la nuit');
@@ -1129,10 +1004,10 @@ test('tri : seul l’objet choisi part de côté ; entrepôt ; statistiques et s
   const g3 = new Game('TEST-T1', JSON.parse(JSON.stringify(g.serialize())));
   assert(g3.achievements.has('lingot') && (g3.factory.stats.made.lingot_fer ?? 0) >= 3, 'stats et succès sauvegardés');
 });
-test('eau : pompe sur le lac, tuyaux, réacteur refroidi ; hangar à trois drones ; recharge', () => {
+test('eau : pompe sur le lac, tuyaux, réacteur refroidi', () => {
   const g = new Game('TEST-W1');
   const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
-  g.money = 1e6; g.world.reveal(8, -16, 30); g.drones[0].cargo = null;
+  g.money = 1e6; g.world.reveal(8, -16, 30);
   for (const id of ['generateur', 'pompe', 'reacteur', 'presse', 'presse_elec', 'hangar', 'recharge', 'drone3']) g.unlocks.add(id);
   apply();
   assert(g.world.patchAt(8, -24)?.type === 'eau', 'un lac près du départ');
@@ -1159,21 +1034,6 @@ test('eau : pompe sur le lac, tuyaux, réacteur refroidi ; hangar à trois drone
   assert(g2.factory.pipes.size === 5, 'tuyaux sauvegardés');
   assert(g.removeAt(11, -24) && !g.factory.hasPipe(11, -24), 'la gomme retire un tuyau');
   g.placePipes([{ x: 11, y: -24 }]);
-  // Hangar : trois drones.
-  const hg = g.placeMachine('hangar', 30, -10)!;
-  hg.built = true; g.pending = []; g.factory.markBuilt(); g.factory.addFuel(hg, 50);
-  run(g, 1);
-  assert([...g.stationDrones.values()].filter((d) => d.station === hg.id).length === 3, 'trois drones au hangar');
-  // Recharge : un drone presque vide se recharge au courant.
-  const ch = g.placeMachine('recharge', 10, -18)!;
-  ch.built = true; g.pending = []; g.factory.markBuilt();
-  g.placeCables([12, 13, 14].map((x) => ({ x, y: -20 })));
-  g.placeCables([{ x: 14, y: -21 }, { x: 14, y: -22 }, { x: 15, y: -22 }, { x: 16, y: -22 }, { x: 17, y: -22 }, { x: 17, y: -23 }]);
-  g.robot.x = 10; g.robot.y = -15;
-  const d = g.drones[0];
-  d.fuel = 1; d.carb = 0; d.task = null; d.state = 'home';
-  run(g, 15);
-  assert(d.fuel >= 9 || d.fuel === RULES.fuelStack, `drone rechargé : ${d.fuel} (recharge ${ch.status})`);
 });
 test('toundras lointaines (titane, cristal pur), fusée, monte-charge', () => {
   const g = new Game('TEST-R1');
@@ -1216,7 +1076,7 @@ test('toundras lointaines (titane, cristal pur), fusée, monte-charge', () => {
 test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
   const g = new Game('TEST-P1');
   const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
-  g.money = 1e6; g.world.reveal(8, 8, 25); g.drones[0].cargo = null;
+  g.money = 1e6; g.world.reveal(8, 8, 25);
   // Météo : clair au début, puis des temps tirés de la graine.
   assert(g.weather === 'clair', 'il fait beau au départ');
   const seen = new Set<string>();
@@ -1258,7 +1118,7 @@ test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
 });
 test('niveaux de foreuses : tout le groupe monte d’un coup, il extrait plus ; au-delà du 3, Forage profond', () => {
   const g = new Game('TEST-DL');
-  g.money = 1e6; g.world.reveal(-10, -4, 20); g.drones[0].cargo = null;
+  g.money = 1e6; g.world.reveal(-10, -4, 20);
   const a = g.placeMachine('foreuse', -13, -4)!, b = g.placeMachine('foreuse', -12, -4)!;
   for (const m of [a, b]) { m.built = true; m.fuel = 10; }
   g.pending = []; g.factory.markBuilt();
@@ -1330,7 +1190,7 @@ test('ancienne partie : tapis rapides, Grande foreuse et son déblocage devienne
 });
 test('lignes dans les deux sens : du carburant vers la mine, du minerai au retour ; jusqu’à 6 arrêts', () => {
   const g = new Game('TEST-V3');
-  g.money = 1e6; g.world.reveal(14, 10, 30); g.drones[0].cargo = null;
+  g.money = 1e6; g.world.reveal(14, 10, 30);
   g.unlocks.add('camion');
   const base = g.placeMachine('depot', 3, 8)!, mine = g.placeMachine('depot', 23, 8)!;
   for (const m of g.factory.machines.values()) m.built = true;
@@ -1400,7 +1260,7 @@ test('atelier : une zone rangée dans un bloc 3 × 3 qui produit pareil, sauvega
   const c = g.placeMachine('coffre', 1, 1)!;
   assert(c && c.built && inner.machines.has(c.id) && !g.pending.length, 'construit tout de suite');
   assert(!g.placeMachine('coffre', inner.bounds + 1, 1), 'hors de l’intérieur');
-  assert(!g.placeMachine('station', 4, 1), 'pas de station dedans');
+  assert(!g.placeMachine('generateur', 4, 1), 'pas de générateur dedans');
   g.removeAt(1, 1);
   g.leaveAtelier();
   assert(g.view === g.factory, 'ressorti');
@@ -1448,7 +1308,7 @@ console.log('Électricité');
 test('générateur, câbles et machines qui passent au courant', () => {
   const g = new Game('TEST-E1');
   const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
-  g.money = 100000; g.world.reveal(8, 8, 20); g.drones[0].cargo = null;
+  g.money = 100000; g.world.reveal(8, 8, 20);
   assert(!g.placeMachine('generateur', 4, 4) && !g.placeCables([{ x: 6, y: 4 }]), 'à débloquer');
   assert(!MACHINES.four_elec && !BUILDABLE.some((m) => m.id.endsWith('_elec')), 'plus de machine électrique à part');
   g.unlocks.add('generateur'); apply();
@@ -1619,23 +1479,6 @@ test('Comptoir : la commande se livre et se paie en pièces', () => {
   assert(g.abandonOrder() && g.order === null && g.choices.length === 3 && g.orderSeq > seq && g.money === m1, 'commande abandonnée');
   assert(!g.abandonOrder(), 'rien à abandonner');
 });
-test('les drones vident les coffres vers le Noyau et le Laboratoire, selon leur priorité', () => {
-  const g = new Game('TEST-43');
-  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
-  const chest = g.placeMachine('coffre', 6, 8)!;
-  const lab = g.giveBuilding('laboratoire')!;
-  run(g, 40);
-  assert(chest.built && lab.built, 'construits');
-  const labWants = g.labNeeds().lingot_fer;
-  g.factory.putInStorage(chest, 'lingot_fer', labWants + 30);
-  g.setDronePriority(0, 'laboratoire');
-  const firsts: string[] = [];
-  g.on((e) => { if (e.type === 'deliver' && firsts.length < 1) firsts.push(e.at); });
-  run(g, 60);
-  assert(firsts[0] === 'laboratoire', `première livraison : ${firsts[0]}`);
-  assert((g.lab.lingot_fer ?? 0) === labWants, `labo : ${g.lab.lingot_fer} / ${labWants}`);
-  assert((g.palierDone.lingot_fer ?? 0) === 30, `Noyau : ${g.palierDone.lingot_fer}`);
-});
 test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   const g = new Game('TEST-30');
   assert(g.hasMachine('four') && g.hasMachine('coffre') && !g.hasMachine('presse'), 'départ');
@@ -1646,12 +1489,10 @@ test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   assert(g.unlock('presse') && g.hasMachine('presse'), 'presse');
   assert(g.unlock('rapide') && g.beltMaxLevel === 3, 'tapis rapide : niveau 3 possible');
   assert(g.unlock('separateur') && g.unlock('grand_coffre') && g.hasMachine('grand_coffre') && g.factory.chestSlots === 10, 'grand coffre : une machine à part');
-  assert(g.unlock('drone2') && g.drones.length === 2, 'deuxième drone');
-  g.setDronePriority(1, 'noyau');
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
-  assert(g2.hasMachine('presse') && g2.beltMaxLevel === 3 && g2.palier === 2 && g2.drones.length === 2, 'sauvegarde de l’arbre');
-  assert(g2.drones[1].priorities[0] === 'noyau' && g2.drones[1].priorities.length === 5 && JSON.stringify(g2.lab) === JSON.stringify(g.lab), 'priorités et labo');
+  assert(g2.hasMachine('presse') && g2.beltMaxLevel === 3 && g2.palier === 2, 'sauvegarde de l’arbre');
+  assert(JSON.stringify(g2.lab) === JSON.stringify(g.lab), 'labo');
 });
 test('une sauvegarde d’avant les paliers garde ses déblocages et repart au palier 1', () => {
   const g = new Game('TEST-31');
@@ -1660,129 +1501,12 @@ test('une sauvegarde d’avant les paliers garde ses déblocages et repart au pa
   delete s.palier; delete s.palierDone; delete s.lab; delete s.extraDrones;
   const g2 = new Game(s.seed, s);
   assert(g2.palier === 1 && g2.hasMachine('presse') && g2.hasMachine('tour'), 'déblocages gardés');
-  assert(g2.drones.length === 2, `drones : ${g2.drones.length}`);
   delete s.unlocks;
   const g3 = new Game(s.seed, s);
   assert(g3.hasMachine('presse') && g3.hasMachine('tour') && g3.hasMachine('trefileuse'), 'machines de l’ancien niveau 4');
 });
 
-test('priorités : une liste ordonnée par drone, appliquée dans l’ordre', () => {
-  const g = new Game('TEST-44');
-  g.money = 10000; g.world.reveal(6, 6, 20); g.drones[0].cargo = null;
-  const chest = g.placeMachine('coffre', 6, 8)!;
-  const lab = g.giveBuilding('laboratoire')!;
-  run(g, 40);
-  assert(chest.built && lab.built, 'construits');
-  // Le Noyau avant le Laboratoire : tout le fer part au Noyau d'abord.
-  g.setDronePriorities(0, ['noyau', 'laboratoire', 'carburant', 'chantiers', 'comptoir']);
-  g.factory.putInStorage(chest, 'lingot_fer', 30);
-  run(g, 40);
-  assert((g.palierDone.lingot_fer ?? 0) === 30 && !(g.lab.lingot_fer > 0), `Noyau ${g.palierDone.lingot_fer}, labo ${g.lab.lingot_fer}`);
-  g.setDronePriorities(0, ['laboratoire', 'laboratoire', 'inconnu' as never]);
-  assert(g.drones[0].priorities.length === 5 && g.drones[0].priorities[0] === 'laboratoire' && new Set(g.drones[0].priorities).size === 5, 'liste nettoyée');
-  const s = JSON.parse(JSON.stringify(g.serialize()));
-  s.crew.drones[0] = { ...s.crew.drones[0], priorities: undefined, priority: 'comptoir' };
-  const g2 = new Game(s.seed, s);
-  assert(g2.drones[0].priorities[0] === 'comptoir' && g2.drones[0].priorities.length === 5, 'ancienne priorité unique reprise en tête');
-});
-test('Revente : le gros drone passe toutes les 5 minutes et paie peu', () => {
-  const g = new Game('TEST-45');
-  g.money = 10000; g.world.reveal(6, 6, 20);
-  const bin = g.placeMachine('revente', 7, 8)!;
-  run(g, 30);
-  assert(bin.built, 'benne construite');
-  assert(g.receive(bin, 'lingot_fer', 100) === 100 && g.receive(bin, 'fer', 1000) === 300, 'plafond de 400 objets');
-  assert(g.sellValue(bin) === Math.floor((100 * 3 + 300) * 0.2), `valeur ${g.sellValue(bin)}`);
-  assert((g.palierDone.lingot_fer ?? 0) === 0, 'la revente ne compte pas pour le Noyau');
-  const m0 = g.money;
-  let sold = 0;
-  g.on((e) => { if (e.type === 'sold') sold = e.money; });
-  g.sellT = 0;
-  run(g, 299);
-  assert(g.money === m0 && g.sellCount(bin) === 400, 'vendu trop tôt');
-  run(g, 2);
-  assert(g.pickups.length === 1, 'le gros drone devrait arriver');
-  assert(g.receive(bin, 'fer', 5) === 0, 'la benne est fermée pendant le passage');
-  run(g, 4);
-  assert(sold === 120 && g.money === m0 + 120 && g.sellCount(bin) === 0, `vendu ${sold}`);
-  run(g, 4);
-  assert(g.pickups.length === 0 && g.receive(bin, 'fer', 5) === 5, 'la benne rouvre');
-  // Bien moins rentable que le Comptoir : 10 lingots y rapportent 80 pièces, 6 à la revente.
-  assert(Math.floor(10 * 3 * 0.2) * 10 < 80, 'revente trop rentable');
-});
-
 console.log('Inventaire et fabrication');
-test('fabrication : du minerai de fer aux vis, fondu puis tourné, lentement', () => {
-  const g = new Game('TEST-60');
-  g.unlocks.add('presse'); g.unlocks.add('tour');
-  g.robot.inv.add('fer', 4);
-  const res = g.craftPlan('vis', 3);
-  assert('plan' in res, 'plan impossible');
-  const plan = (res as { plan: { steps: { item: string }[]; time: number; consume: Record<string, number> } }).plan;
-  assert(plan.steps.map((x) => x.item).join() === 'lingot_fer,vis' && plan.consume.fer === 3, JSON.stringify(plan));
-  assert(plan.time === (1.6 * 3 + 1.2 * 3) * HAND_FACTOR, `durée ${plan.time}`);
-  assert(g.startCraft('vis', 3) === null && g.robot.inv.count('fer') === 1, 'ingrédients pris tout de suite');
-  assert(g.startCraft('vis', 5) !== null, 'pas assez de fer : refusé');
-  run(g, plan.time - 1);
-  assert(g.robot.inv.count('vis') === 0, 'trop rapide');
-  run(g, 2);
-  assert(g.robot.inv.count('vis') === 3 && g.craftQueue.length === 0, `vis : ${g.robot.inv.count('vis')}`);
-  assert(maxCraftable('lingot_fer', { fer: 7 }, () => true) === 7 && !('plan' in g.craftPlan('vis', 2)), 'max');
-});
-test('fabrication : les composants déjà faits passent avant ; annuler rend tout', () => {
-  const g = new Game('TEST-61');
-  for (const id of ['presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'fabricant']) g.unlocks.add(id);
-  g.robot.inv.add('rotor', 1); g.robot.inv.add('stator', 1); g.robot.inv.add('vis', 1);
-  const direct = g.craftPlan('moteur', 1) as { plan: { steps: unknown[]; consume: Record<string, number> } };
-  assert(direct.plan.steps.length === 1 && direct.plan.consume.rotor === 1, 'le moteur devrait se faire en une étape');
-  // Sans composants : le robot remonte jusqu'aux matières premières.
-  const g2 = new Game('TEST-62');
-  for (const id of ['presse', 'tour', 'trefileuse', 'haut_fourneau', 'assembleur', 'fabricant']) g2.unlocks.add(id);
-  g2.robot.inv.add('fer', 10); g2.robot.inv.add('cuivre', 10); g2.robot.inv.add('charbon', 10); g2.robot.inv.add('vis', 2);
-  const full = g2.craftPlan('moteur', 1) as { plan: { steps: { item: string }[]; consume: Record<string, number> } };
-  assert('plan' in full && full.plan.steps.length >= 6 && full.plan.consume.vis === 2 && !full.plan.steps.some((x) => x.item === 'vis'), JSON.stringify(full));
-  const before = JSON.stringify(g2.robot.inv.save());
-  assert(g2.startCraft('moteur', 1) === null, 'moteur lancé');
-  g2.cancelCraft(0);
-  assert(JSON.stringify(g2.robot.inv.kinds().sort()) === JSON.stringify(JSON.parse(before).filter(Boolean).map((x: { t: string }) => x.t).filter((t: string, i: number, a: string[]) => a.indexOf(t) === i).sort()), 'annuler rend les ingrédients');
-});
-test('le robot peut détruire des objets de son inventaire', () => {
-  const g = new Game('TEST-67');
-  g.robot.inv.add('cuivre', 8);
-  const slot = g.robot.inv.slots.findIndex((s) => s?.t === 'cuivre');
-  assert(g.destroyRobotItems(slot, 5) === 5 && g.robot.inv.count('cuivre') === 3, 'cinq de moins');
-  assert(g.destroyRobotItems(slot, 50) === 3 && g.robot.inv.count('cuivre') === 0 && g.robot.inv.slots[slot] === null, 'la case se vide');
-});
-test('coffre ↔ robot : prendre, déposer, séparer une pile', () => {
-  const g = new Game('TEST-63');
-  g.money = 1000; g.world.reveal(6, 6, 20);
-  const chest = g.placeMachine('coffre', 6, 9)!;
-  run(g, 20);
-  g.factory.putInStorage(chest, 'lingot_fer', 25);
-  assert(g.chestToRobot(chest, 'lingot_fer', 12) === 12 && chest.inBuf.lingot_fer === 13 && g.robot.inv.count('lingot_fer') === 12, 'prendre');
-  const slot = g.robot.inv.slots.findIndex((x) => x?.t === 'lingot_fer' && x.n === 10);
-  assert(g.splitRobotSlot(slot, 4) && g.robot.inv.slots[slot]!.n === 6, 'séparer');
-  assert(g.robotToChest(chest, slot, 6) === 6 && chest.inBuf.lingot_fer === 19 && g.robot.inv.count('lingot_fer') === 6, 'déposer');
-  g.robot.inv.add('fer', 50);
-  assert(g.chestToRobot(chest, 'lingot_fer', 19) <= g.robot.inv.room('lingot_fer') + 19, 'pas plus que la place');
-});
-test('machine ↔ robot : charbon, ingrédients, reprendre ce qui sort', () => {
-  const g = new Game('TEST-66');
-  g.money = 1000; g.world.reveal(6, 6, 20);
-  const four = g.placeMachine('four', 6, 9)!;
-  run(g, 20);
-  g.robot.inv.add('charbon', 10); g.robot.inv.add('fer', 10); g.robot.inv.add('vis', 3);
-  const slot = (t: string) => g.robot.inv.slots.findIndex((x) => x?.t === t);
-  assert(g.machineAccepts(four, 'vis') === 0 && g.robotToMachine(four, slot('vis'), 3) === 0, 'le four ne prend pas de vis');
-  const fuel0 = four.fuel;
-  assert(g.robotToMachine(four, slot('charbon'), 10) === 10 - fuel0 && four.fuel === 10, `charbon ${four.fuel}`);
-  assert(g.robotToMachine(four, slot('fer'), 10) === 6 && four.inBuf.fer === 6 && g.robot.inv.count('fer') === 4, 'six minerais au plus');
-  run(g, 10);
-  const out = four.outBuf.lingot_fer ?? 0;
-  if (out > 0) assert(g.machineToRobot(four, 'out', 'lingot_fer', out) === out && g.robot.inv.count('lingot_fer') === out, 'reprendre les lingots');
-  const waiting = four.inBuf.fer ?? 0, fer0 = g.robot.inv.count('fer');
-  assert(g.machineToRobot(four, 'in', 'fer', 99) === waiting && g.robot.inv.count('fer') === fer0 + waiting && !four.inBuf.fer, 'reprendre le minerai en attente');
-});
 test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais déplaçables', () => {
   const g = new Game('TEST-64');
   const gifts: string[] = [];
@@ -1805,44 +1529,6 @@ test('cadeaux du Noyau : le Comptoir puis le Laboratoire, indestructibles mais d
   assert(g2.gifts.comptoir !== undefined && [...g2.factory.machines.values()].filter((m) => m.type === 'comptoir').length === 1, 'pas de second cadeau');
 });
 
-
-test('une cargaison dont personne ne veut retourne à son coffre, sinon elle est détruite', () => {
-  const g = new Game('TEST-66');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
-  const four = g.placeMachine('four', -9, -1)!;
-  const home = g.placeMachine('coffre', -6, 3)!;
-  const other = g.placeMachine('coffre', -8, 2)!;
-  run(g, 40);
-  g.sendRobot(-7, 1.5);
-  run(g, 6);
-  const d = g.drones[0];
-  d.cargo = { t: 'cuivre', n: 8 }; d.from = home.id;
-  run(g, 40);
-  assert(!(four.inBuf.cuivre > 0) && !(other.inBuf.cuivre > 0), 'ni le Four ni un autre coffre');
-  assert(home.inBuf.cuivre === 8 && !d.cargo, `coffre d’origine : ${home.inBuf.cuivre}`);
-  // Sans coffre d'origine (supprimé) : la cargaison est détruite.
-  d.cargo = { t: 'cuivre', n: 5 }; d.from = 9999;
-  run(g, 5);
-  assert(!d.cargo && !(four.inBuf.cuivre > 0) && !(other.inBuf.cuivre > 0) && home.inBuf.cuivre === 8, 'cargaison détruite');
-});
-test('les drones ne se servent jamais dans l’inventaire du robot', () => {
-  const g = new Game('TEST-65');
-  g.money = 10000; g.world.reveal(-6, 2, 20); g.drones[0].cargo = null;
-  const four = g.placeMachine('four', -9, -1)!;
-  const chest = g.placeMachine('coffre', -6, 3)!;
-  run(g, 40);
-  g.sendRobot(-7, 1.5); // hors filon
-  run(g, 6);
-  g.robot.inv.add('cuivre', 10);
-  g.robot.inv.add('lingot_fer', 10);
-  run(g, 40);
-  assert(g.robot.inv.count('cuivre') === 10 && g.robot.inv.count('lingot_fer') === 10, `robot : ${JSON.stringify(g.robot.inv.slots)}`);
-  assert(!(four.inBuf.cuivre > 0) && !(chest.inBuf.cuivre > 0), 'rien n’a bougé');
-  // Mais dans un coffre, oui : le drone y prend les lingots pour le Noyau.
-  g.factory.putInStorage(chest, 'lingot_fer', 10);
-  run(g, 40);
-  assert((g.palierDone.lingot_fer ?? 0) === 10 && g.robot.inv.count('lingot_fer') === 10, `Noyau ${g.palierDone.lingot_fer}`);
-});
 
 console.log('Sauvegardes');
 test('sauvegarde : aucune machine ne disparaît, même après des suppressions', () => {

@@ -5,8 +5,7 @@ import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machin
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import { ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
-import { DEFAULT_ORDER, DRONE_PRIORITIES, Game, type DronePriority, type GameEvent, type OfflineReport } from '../sim/game.ts';
-import { PRIO_ICONS } from './prioIcons.ts';
+import { Game, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
@@ -17,7 +16,6 @@ import { DX, DY } from '../sim/geom.ts';
 import { RICHNESS_LABEL } from '../world/world.ts';
 import { ICONS } from './icons.ts';
 import { TreeScreen, MYSTERY } from './tree.ts';
-import { craftableItems, maxCraftable } from '../sim/craft.ts';
 import { Tips } from './tips.ts';
 import { checkForUpdate, copyText } from './update.ts';
 import { exportPanel, playTime } from './title.ts';
@@ -32,7 +30,7 @@ const STATUS_TEXT: Record<string, string> = {
   idle: 'En attente',
   working: 'En marche',
   blocked: 'Sortie pleine : branche un tapis ou vide la suite',
-  nofuel: 'Plus de charbon : le voyant clignote, un drone va en apporter',
+  nofuel: 'Plus de charbon : apporte-lui du charbon par tapis',
   noinput: 'Il manque un ingrédient',
   noore: 'Pas de filon dessous',
   nopower: 'Pas de courant : il faut un câble à 5 cases au plus, relié à un générateur qui a du charbon',
@@ -56,17 +54,12 @@ function secs(t: number): string {
   return s ? `${m} min ${String(s).padStart(2, '0')}` : `${m} min`;
 }
 
-/** Le verbe d'une étape de fabrication à la main, selon la machine qu'on imite. */
-const MACHINE_VERB: Record<string, string> = {
-  four: 'Fonte', presse: 'Pressage', tour: 'Tournage', trefileuse: 'Tréfilage', haut_fourneau: 'Fonte de l’acier',
-  assembleur: 'Assemblage', broyeur: 'Broyage', melangeur: 'Mélange', raffinerie: 'Raffinage', fabricant: 'Montage', centrifugeuse: 'Centrifugation',
-};
 
 const GIFT_TEXT: Record<string, { title: string; lines: string[]; open: string }> = {
   comptoir: {
     title: 'Le Comptoir',
     lines: [
-      'Il propose des commandes au choix. Apporte-lui les objets demandés : par un tapis, ou les drones les prennent dans tes coffres.',
+      'Il propose des commandes au choix. Apporte-lui les objets demandés par un tapis.',
       'Chaque commande livrée rapporte des pièces : c’est ta principale source d’argent pour construire.',
     ],
     open: 'Voir les commandes',
@@ -335,14 +328,10 @@ export class Hud implements GestureHandlers {
       case 'view': this.onView(); break;
       case 'rocket': this.rocketLaunched(e.n); break;
       case 'order': this.refreshOrder(); this.sheetDirty = true; break;
-      case 'inventory': if (this.sheetKind) this.sheetDirty = true; break;
-      case 'crafted': this.toast(`${this.game.look.name} a fabriqué ${itemLabel(e.item, e.n)}`, 'good'); break;
       case 'gift': this.onGift(e.building, e.id, !!e.again); break;
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
-      case 'sold': this.toast(`Le gros drone a revendu ${e.count} objet${e.count > 1 ? 's' : ''} : +${fmt(e.money)} pièces`, 'good'); break;
-      case 'drones': this.toast(`${this.game.droneCount} drones travaillent avec ton robot`, 'good'); break;
       default: break;
     }
   }
@@ -410,9 +399,9 @@ export class Hud implements GestureHandlers {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor' || m.kind === 'charger' || m.kind === 'filter') return 'electricite';
+    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor' || m.kind === 'filter') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
-    if (m.kind === 'storage' || m.kind === 'sell') return 'stockage';
+    if (m.kind === 'storage') return 'stockage';
     return 'outils';
   }
 
@@ -429,7 +418,7 @@ export class Hud implements GestureHandlers {
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const inside = !!this.game.inAtelier;
-    const OUTSIDE_ONLY = ['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar', 'rampe', 'arbre', 'filtre', 'super_foreuse'];
+    const OUTSIDE_ONLY = ['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre'];
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id))
       // Dans un atelier : ni foreuse, ni station, ni générateur, ni dépôt ; les entrées et sorties, seulement là.
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
@@ -634,7 +623,7 @@ export class Hud implements GestureHandlers {
     this.root.querySelector('.move-banner')?.remove();
     const def = machineDef(m.type);
     const banner = h('div', 'move-banner');
-    banner.innerHTML = `<span class="mb-ico">${ICONS.move}</span><div><b>Déplacer : ${esc(def.name)}</b><small>Pose le doigt sur la carte et glisse-la à sa nouvelle place${def.kind === 'station' ? ' (son rayon d’action suit)' : ''}</small></div>`;
+    banner.innerHTML = `<span class="mb-ico">${ICONS.move}</span><div><b>Déplacer : ${esc(def.name)}</b><small>Pose le doigt sur la carte et glisse-la à sa nouvelle place</small></div>`;
     const cancel = h('button', 'btn', 'Annuler');
     cancel.onclick = () => this.setTool('none');
     banner.append(cancel);
@@ -709,8 +698,7 @@ export class Hud implements GestureHandlers {
     if (!m.built) return null;
     const kind = machineDef(m.type).kind;
     if (kind === 'storage') return () => this.openChest(m);
-    if (m.type === 'revente') return () => this.openSell(m);
-    if (['crafter', 'drill', 'station', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'charger', 'rocket', 'filter'].includes(kind)) return () => this.openMachine(m);
+    if (['crafter', 'drill', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'rocket', 'filter'].includes(kind)) return () => this.openMachine(m);
     return null;
   }
 
@@ -1109,11 +1097,6 @@ export class Hud implements GestureHandlers {
         const patch = this.game.world.patchAt(m.x, m.y) ?? this.game.world.patchAt(m.x + 1, m.y + 1);
         title = `Foreuse · ${m.ore ? item(m.ore).name.toLowerCase() : '?'}`;
         text = `${STATUS_TEXT[m.status]}. Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${this.game.view.drillRate(m).toFixed(2).replace('.', ',')} par seconde.`;
-      } else if (def.kind === 'sell') {
-        const g = this.game, n = g.sellCount(m);
-        const t = Math.ceil(g.nextPickup), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
-        const coming = g.pickups.some((x) => x.id === m.id && !x.done);
-        text = `Tout ce qu’un tapis y apporte est revendu, à bas prix. ${coming ? 'Le gros drone arrive !' : `Prochain passage du gros drone dans ${mm} min ${ss}.`} ${n} objet${n > 1 ? 's' : ''} sur ${RULES.sellCap} · environ ${g.sellValue(m)} pièces.`;
       } else {
         text = def.kind === 'storage'
           ? `${def.hint}. ${this.game.view.storageSlots(m)} cases sur 10 occupées.`
@@ -1130,7 +1113,7 @@ export class Hud implements GestureHandlers {
       }
       const info = `<h3>${esc(title)}</h3><p>${esc(text)}</p>${fuelLine}<p class="refund">${m.built ? 'Supprimer' : 'Annuler'} rend ${def.cost} ${ICONS.coinSm}</p>
         ${recipes}
-        ${inChips ? `<p>${this.game.view.isStop(m) ? 'Départs' : def.kind === 'storage' || def.kind === 'sell' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
+        ${inChips ? `<p>${this.game.view.isStop(m) ? 'Départs' : def.kind === 'storage' ? 'Contenu' : 'En attente'}</p><div class="chips">${inChips}</div>` : ''}
         ${outChips ? `<p>${this.game.view.isStop(m) ? 'Arrivées' : 'Prêt à sortir'}</p><div class="chips">${outChips}</div>` : ''}`;
       const actions = `${choice}<div class="row">
           ${m.built ? `<button class="btn" data-act="move">${ICONS.move}Déplacer</button>` : ''}
@@ -1316,35 +1299,18 @@ export class Hud implements GestureHandlers {
 
   // ---------- Inventaires en grand : robot, coffre, fabrication ----------
 
-  /** Pile choisie : une case du robot, ou un objet d'un coffre (chest) ou d'une machine (min : en attente, mout : prêt à sortir). */
-  private invSel: { side: 'chest' | 'arr' | 'min' | 'mout'; item: string } | { side: 'robot'; slot: number } | null = null;
-  private invQty = 1;
-  private craftSel: string | null = null;
-  private craftQty = 1;
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
   private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | 'stop' | 'splitter' | '' = '';
   private machineId = -1;
   private chestId = -1;
   private liveTimer = 0;
 
-  private robotStatus(): string {
-    const g = this.game, r = g.robot;
-    return g.robotOutOfCoal ? 'Plus de charbon : il avance au ralenti. Arrête-le sur un filon de charbon.'
-      : g.craftQueue[0] ? 'Il fabrique.'
-      : r.mining ? `Il mine : ${item(r.mining).name.toLowerCase()}.`
-      : g.robotBuilding ? 'Il construit.'
-      : r.moving ? 'Il roule.'
-      : 'À l’arrêt sur un filon, il mine tout seul.';
-  }
 
-  /** Une grille de cases ; data-side et data-i (ou data-item) pour la sélection. */
-  private gridHtml(cells: ({ t: string; n: number } | null)[], side: 'chest' | 'arr' | 'robot' | 'min' | 'mout', cols = 5, accept?: (t: string) => boolean): string {
-    const sel = this.invSel;
-    return `<div class="inv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.map((c, i) => {
-      if (!c) return `<button class="inv-cell empty" data-side="${side}" data-i="${i}" aria-label="Case vide"></button>`;
-      const on = sel && sel.side === side && (side === 'robot' ? (sel as { slot: number }).slot === i : (sel as { item: string }).item === c.t);
-      const no = accept && !accept(c.t);
-      return `<button class="inv-cell${on ? ' on' : ''}${no ? ' no' : ''}" data-side="${side}" data-i="${i}" data-item="${c.t}" aria-label="${esc(item(c.t).name)} : ${c.n}"><img src="${this.itemIcons.get(c.t)}" alt=""><b>${c.n}</b></button>`;
+  /** Une grille de cases (le contenu d'un coffre, en piles). */
+  private gridHtml(cells: ({ t: string; n: number } | null)[], cols = 5): string {
+    return `<div class="inv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.map((c) => {
+      if (!c) return '<span class="inv-cell empty"></span>';
+      return `<span class="inv-cell" aria-label="${esc(item(c.t).name)} : ${c.n}"><img src="${this.itemIcons.get(c.t)}" alt=""><b>${c.n}</b></span>`;
     }).join('')}</div>`;
   }
 
@@ -1359,203 +1325,21 @@ export class Hud implements GestureHandlers {
     return cells;
   }
 
-  /** Branche les cases : toucher une pile la choisit (ou la quitte). */
-  private wireGrid(root: HTMLElement, target: Machine | null): void {
-    root.querySelectorAll<HTMLButtonElement>('.inv-cell').forEach((b) => {
-      b.onclick = () => {
-        const side = b.dataset.side as 'chest' | 'arr' | 'robot' | 'min' | 'mout';
-        const it = b.dataset.item;
-        if (!it) { this.invSel = null; this.refreshSheet(); return; }
-        const n = Number(b.querySelector('b')?.textContent ?? 1);
-        if (side === 'robot') {
-          const slot = Number(b.dataset.i);
-          const same = this.invSel?.side === 'robot' && this.invSel.slot === slot;
-          this.invSel = same ? null : { side, slot };
-        } else {
-          const same = this.invSel?.side === side && (this.invSel as { item: string }).item === it;
-          this.invSel = same ? null : { side, item: it };
-        }
-        this.invQty = n;
-        if (!target && this.invSel) this.invQty = Math.max(1, Math.floor(n / 2));
-        this.refreshSheet();
-      };
-    });
-  }
 
-  /** La barre d'action d'une pile choisie : quantité, puis prendre, déposer ou séparer. */
-  private invBar(target: Machine | null): HTMLElement | null {
-    const g = this.game, sel = this.invSel;
-    if (!sel) return null;
-    const kind = target ? machineDef(target.type).kind : null;
-    const chest = kind === 'storage' ? target : null;
-    const machine = kind === 'crafter' || kind === 'drill' || kind === 'generator' ? target : null;
-    const building = target && !chest && !machine ? target : null;
-    let t: string, have: number, max: number, verb: string, why = '';
-    if (sel.side === 'robot') {
-      const sl = g.robot.inv.slots[sel.slot];
-      if (!sl) { this.invSel = null; return null; }
-      t = sl.t; have = sl.n;
-      if (chest) { max = Math.min(sl.n, g.view.storageRoom(chest, t)); verb = g.view.isStop(chest) ? 'Dans les départs' : 'Déposer dans le coffre'; if (!max) why = 'Le coffre est plein'; }
-      else if (building) {
-        const name = machineDef(building.type).name;
-        max = Math.min(sl.n, g.accepts(building, t));
-        verb = `Donner ${building.type === 'revente' ? 'à la' : 'au'} ${name}`;
-        if (!max) why = building.type === 'revente' ? 'La Revente est pleine (ou le gros drone est là)' : `${name} n’en a pas besoin pour l’instant`;
-      }
-      else if (machine) {
-        const name = machineDef(machine.type).name.toLowerCase();
-        max = Math.min(sl.n, g.machineAccepts(machine, t));
-        verb = isFuel(t) ? `Recharger en ${t === 'charbon' ? 'charbon' : 'carburant'}` : `Mettre dans la machine`;
-        if (!max) why = g.machineAccepts(machine, t) === 0 && !machineDef(machine.type).recipes.some((r) => r.in[t]) && !isFuel(t) ? `La ${name} ne s’en sert pas` : 'Elle est pleine pour l’instant';
-      }
-      else { max = sl.n; verb = ''; }
-    } else {
-      const src = sel.side === 'chest' ? chest?.inBuf : sel.side === 'arr' ? chest?.outBuf : sel.side === 'min' ? machine?.inBuf : machine?.outBuf;
-      if (!src || !(src[sel.item] > 0)) { this.invSel = null; return null; }
-      t = sel.item; have = src[t];
-      max = Math.min(have, g.robot.inv.room(t)); verb = sel.side === 'chest' || sel.side === 'arr' ? `Donner à ${g.look.name}` : `Reprendre dans l’inventaire`;
-      if (!max) why = `L’inventaire de ${g.look.name} est plein`;
-    }
-    const q = Math.max(max ? 1 : 0, Math.min(this.invQty, max));
-    this.invQty = q;
-    const bar = h('div', 'inv-bar');
-    const where = sel.side === 'robot' ? `dans la case de ${esc(g.look.name)}` : sel.side === 'arr' ? 'dans les arrivées' : sel.side === 'chest' ? (chest && g.view.isStop(chest) ? 'dans les départs' : 'dans le coffre') : 'dans la machine';
-    bar.innerHTML = `<div class="ib-head"><img src="${this.itemIcons.get(t)}" alt=""><b>${esc(item(t).name)}</b><small>${fmt(have)} ${where}</small></div>
-      ${max ? `<div class="ib-qty"><button class="btn ib-step" data-d="-1" aria-label="Un de moins">−</button><input class="ib-range" type="range" min="1" max="${max}" value="${q}" aria-label="Quantité"><button class="btn ib-step" data-d="1" aria-label="Un de plus">+</button><b class="ib-n">${q}</b></div>
-      <div class="ib-quick"><button class="btn" data-set="1">1</button><button class="btn" data-set="half">Moitié</button><button class="btn" data-set="all">Tout (${max})</button></div>` : `<p class="muted">${why}</p>`}
-      <div class="ib-acts"></div>`;
-    const range = bar.querySelector<HTMLInputElement>('.ib-range');
-    const label = bar.querySelector<HTMLElement>('.ib-n');
-    const setQ = (v: number) => {
-      this.invQty = Math.max(1, Math.min(max, v));
-      if (range) range.value = String(this.invQty);
-      if (label) label.textContent = String(this.invQty);
-    };
-    if (range) range.oninput = () => setQ(Number(range.value));
-    bar.querySelectorAll<HTMLButtonElement>('.ib-step').forEach((b) => { b.onclick = () => setQ(this.invQty + Number(b.dataset.d)); });
-    bar.querySelectorAll<HTMLButtonElement>('[data-set]').forEach((b) => {
-      b.onclick = () => setQ(b.dataset.set === 'all' ? max : b.dataset.set === 'half' ? Math.max(1, Math.floor(max / 2)) : 1);
-    });
-    const acts = bar.querySelector<HTMLElement>('.ib-acts')!;
-    if (sel.side === 'robot') {
-      const slot = sel.slot;
-      const sl = g.robot.inv.slots[slot]!;
-      const canSplit = sl.n > 1 && g.robot.inv.slots.includes(null) && (!!target || this.invQty < sl.n);
-      const split = h('button', 'btn', 'Séparer la pile');
-      split.disabled = !canSplit;
-      split.onclick = () => {
-        const n = Math.min(this.invQty, sl.n - 1);
-        if (g.splitRobotSlot(slot, n)) this.toast(`Pile séparée : ${sl.n} et ${n}`, 'good');
-        this.invSel = null;
-        this.refreshSheet();
-      };
-      acts.append(split);
-      if (!target) {
-        // Détruire : en deux temps, pour ne rien perdre par erreur.
-        const armed = this.armedTrash?.slot === slot && performance.now() < this.armedTrash.until;
-        const n = this.invQty;
-        const trash = h('button', `btn danger${armed ? ' armed' : ''}`, armed ? `Confirmer : détruire ${n}` : `Détruire ${n}`);
-        trash.onclick = () => {
-          if (!(this.armedTrash?.slot === slot && performance.now() < this.armedTrash.until)) {
-            this.armedTrash = { slot, until: performance.now() + 4000 };
-            this.refreshSheet();
-            setTimeout(() => { if (this.armedTrash && performance.now() >= this.armedTrash.until) { this.armedTrash = null; this.refreshSheet(); } }, 4100);
-            return;
-          }
-          this.armedTrash = null;
-          const name = sl.t;
-          const k = g.destroyRobotItems(slot, this.invQty);
-          if (k) this.toast(`${itemLabel(name, k)} détruit${k > 1 ? 's' : ''}`, 'warn');
-          this.invSel = null;
-          this.refreshSheet();
-        };
-        // Changer la quantité désarme la confirmation.
-        bar.querySelectorAll<HTMLElement>('.ib-step, [data-set], .ib-range').forEach((el) => {
-          el.addEventListener(el.classList.contains('ib-range') ? 'input' : 'click', () => {
-            this.armedTrash = null;
-            trash.classList.remove('armed');
-            trash.textContent = `Détruire ${this.invQty}`;
-            split.disabled = !(sl.n > 1 && g.robot.inv.slots.includes(null) && this.invQty < sl.n);
-          });
-        });
-        acts.append(trash);
-      }
-      if (chest) {
-        const dep = h('button', 'btn primary', verb);
-        dep.disabled = !max;
-        dep.onclick = () => { g.robotToChest(chest, slot, this.invQty); this.invSel = null; this.refreshSheet(); };
-        if (g.view.isStop(chest)) {
-          // Une gare a deux coffres : on peut aussi poser dans les arrivées (elles ressortent sur les tapis).
-          split.remove();
-          const arr = h('button', 'btn', 'Dans les arrivées');
-          const room = Math.min(sl.n, g.view.storageRoom(chest, sl.t, chest.outBuf));
-          arr.disabled = !room;
-          arr.onclick = () => { g.robotToChest(chest, slot, this.invQty, 'out'); this.invSel = null; this.refreshSheet(); };
-          acts.append(arr);
-        }
-        acts.append(dep);
-      } else if (machine) {
-        split.remove();
-        const dep = h('button', 'btn primary', verb);
-        dep.disabled = !max;
-        dep.onclick = () => { g.robotToMachine(machine, slot, this.invQty); this.invSel = null; this.refreshSheet(); };
-        acts.append(dep);
-      } else if (building) {
-        split.remove();
-        const dep = h('button', 'btn primary', verb);
-        dep.disabled = !max;
-        dep.onclick = () => {
-          const n = g.robotToBuilding(building, slot, this.invQty);
-          if (n) this.toast(`${itemLabel(sl.t, n)} donné${n > 1 ? 's' : ''}`, 'good');
-          this.invSel = null;
-          this.refreshSheet();
-        };
-        acts.append(dep);
-      }
-    } else if (chest) {
-      const take = h('button', 'btn primary', verb);
-      take.disabled = !max;
-      take.onclick = () => { g.chestToRobot(chest, t, this.invQty, sel.side === 'arr' ? 'out' : 'in'); this.invSel = null; this.refreshSheet(); };
-      acts.append(take);
-    } else if (machine && (sel.side === 'min' || sel.side === 'mout')) {
-      const which = sel.side === 'min' ? 'in' : 'out';
-      const take = h('button', 'btn primary', verb);
-      take.disabled = !max;
-      take.onclick = () => { g.machineToRobot(machine, which, t, this.invQty); this.invSel = null; this.refreshSheet(); };
-      acts.append(take);
-    }
-    return bar;
-  }
 
-  /** L'inventaire du robot en grand : charbon, cases, fabrication, drones. */
+  /** La fenêtre du robot : son nom, ce qu'il fait, le scanner. (Plus d'inventaire ni de fabrication.) */
   openRobot(): void {
     this.closePopover();
     this.tips.note('robotOpened');
-    this.invSel = null;
-    this.craftSel = null;
-    this.openSheet((sheet, close) => this.buildRobotSheet(sheet, close), true);
+    this.openSheet((sheet, close) => {
+      const g = this.game, r = g.robot;
+      const speed = g.robotSpeedMult > 1 ? ` · chenilles : ×${String(g.robotSpeedMult).replace('.', ',')}` : '';
+      sheet.append(this.sheetHead(g.look.name, esc(`${r.moving ? 'Il roule.' : 'À l’arrêt.'} Touche le sol pour l’envoyer explorer : sa lampe dissipe le brouillard${speed}.`), close));
+      sheet.append(this.scanCard(close));
+    }, true);
     this.sheetKind = 'robot';
   }
 
-  private buildRobotSheet(sheet: HTMLElement, close: () => void): void {
-    const g = this.game, r = g.robot;
-    sheet.classList.add('inv-sheet');
-    sheet.append(this.sheetHead(g.look.name, esc(this.robotStatus()), close));
-    const inv = h('div', 'card');
-    inv.innerHTML = `${this.gauge('Carburant', r.fuel, 10, g.robotOutOfCoal, r.carb)}<p class="muted">Inventaire · touche une pile pour la séparer ou la détruire</p>${this.gridHtml(r.inv.slots, 'robot')}`;
-    this.wireGrid(inv, null);
-    const bar = this.invBar(null);
-    if (bar) inv.append(bar);
-    sheet.append(inv, this.scanCard(close), this.craftCard());
-    // Drones et leurs priorités.
-    const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
-    const dr = h('div', 'card');
-    dr.innerHTML = g.drones.length
-      ? `<p class="muted">Drones · touche un drone pour ranger ses tâches</p>${g.drones.map((d, i) => `<button class="prio-btn big" data-drone="${i}"><span>Drone ${i + 1}</span>${this.gauge('', d.fuel, 10, d.fuel <= 2, d.carb)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>`).join('')}`
-      : '<p class="muted">Pas encore de drone.</p>';
-    dr.querySelectorAll<HTMLButtonElement>('[data-drone]').forEach((b) => { b.onclick = () => this.openPriorities(Number(b.dataset.drone)); });
-    sheet.append(dr);
-  }
 
   /** Scanner : choisir une matière, des flèches montrent les 3 filons les plus proches pendant 10 s. */
   private scanCard(close: () => void): HTMLElement {
@@ -1577,82 +1361,7 @@ export class Hud implements GestureHandlers {
     return btn;
   }
 
-  /** Fabrication à la main : ce qui est en cours, puis ce qu'on peut faire avec l'inventaire. */
-  private craftCard(): HTMLElement {
-    const g = this.game;
-    const card = h('div', 'card craft');
-    card.innerHTML = `<p class="muted">Fabriquer à la main · lentement, avec ce que ${esc(g.look.name)} a sur lui</p>`;
-    // File en cours
-    g.craftQueue.forEach((job, i) => {
-      const st = Game.craftStep(job);
-      const row = h('div', 'craft-job');
-      row.dataset.i = String(i);
-      row.innerHTML = `<img src="${this.itemIcons.get(job.target)}" alt=""><div class="cj-info"><b>${job.n} × ${esc(item(job.target).name)}</b><small class="cj-step">${i === 0 ? (job.blocked ? 'Inventaire plein : fais de la place' : st ? `${esc(MACHINE_VERB[st.machine] ?? 'Fabrication')} : ${esc(item(st.item).name.toLowerCase())}` : '') : 'En attente'}</small><span class="cj-bar"><span style="width:${(job.t / job.total) * 100}%"></span></span></div>`;
-      const x = h('button', 'round small', ICONS.close);
-      x.setAttribute('aria-label', 'Annuler');
-      x.onclick = () => { g.cancelCraft(i); this.refreshSheet(); };
-      row.append(x);
-      card.append(row);
-    });
-    // Ce qu'on peut fabriquer maintenant
-    const has = (id: string) => g.hasMachine(id);
-    const have: Record<string, number> = {};
-    for (const sl of g.robot.inv.slots) if (sl) have[sl.t] = (have[sl.t] ?? 0) + sl.n;
-    const options = craftableItems(has)
-      .map((id) => ({ id, max: maxCraftable(id, have, has, 50) }))
-      .filter((o) => o.max > 0)
-      .sort((a, b) => item(a.id).tier - item(b.id).tier || item(a.id).value - item(b.id).value);
-    if (!options.length) {
-      card.insertAdjacentHTML('beforeend', `<p class="muted small">Rien à fabriquer pour l’instant : mine du fer ou du cuivre, ou prends des objets dans un coffre.</p>`);
-      this.craftSel = null;
-      return card;
-    }
-    if (this.craftSel && !options.some((o) => o.id === this.craftSel)) this.craftSel = null;
-    const grid = h('div', 'craft-grid');
-    for (const o of options) {
-      const b = h('button', `craft-opt${o.id === this.craftSel ? ' on' : ''}`, `<img src="${this.itemIcons.get(o.id)}" alt=""><small>${esc(item(o.id).name)}</small><b>×${o.max}</b>`);
-      b.onclick = () => { this.craftSel = this.craftSel === o.id ? null : o.id; this.craftQty = 1; this.refreshSheet(); };
-      grid.append(b);
-    }
-    card.append(grid);
-    const sel = options.find((o) => o.id === this.craftSel);
-    if (sel) {
-      const q = Math.min(this.craftQty, sel.max);
-      const res = g.craftPlan(sel.id, q);
-      if ('plan' in res) {
-        const plan = res.plan;
-        const chain = plan.steps.map((st) => `<span class="it"><img src="${this.itemIcons.get(st.item)}" alt="">${st.runs > 1 ? `${st.runs} ` : ''}${esc(item(st.item).name)}</span>`).join('<span class="arrow">→</span>');
-        const uses = Object.entries(plan.consume).map(([k, v]) => `<span class="chip"><img src="${this.itemIcons.get(k)}" alt="">${v} ${esc((v > 1 ? item(k).plural : item(k).name).toLowerCase())}</span>`).join('');
-        const sec = Math.ceil(plan.time);
-        const det = h('div', 'craft-detail');
-        det.innerHTML = `<div class="recipes"><div class="recipe">${chain}</div></div>
-          <p class="muted small">Prend : </p><div class="chips">${uses}</div>
-          <div class="ib-quick">${[1, 5, 10].filter((n) => n < sel.max).map((n) => `<button class="btn${n === q ? ' primary' : ''}" data-cq="${n}">${n}</button>`).join('')}<button class="btn${q === sel.max ? ' primary' : ''}" data-cq="${sel.max}">Max (${sel.max})</button></div>`;
-        det.querySelectorAll<HTMLButtonElement>('[data-cq]').forEach((b) => { b.onclick = () => { this.craftQty = Number(b.dataset.cq); this.refreshSheet(); }; });
-        const go = h('button', 'btn primary big', `Fabriquer ${q} × ${esc(item(sel.id).name.toLowerCase())} · ${sec < 60 ? `${sec} s` : `${Math.floor(sec / 60)} min ${String(sec % 60).padStart(2, '0')}`}`);
-        go.onclick = () => {
-          const err = g.startCraft(sel.id, q);
-          if (err) this.toast(err, 'warn');
-          else { this.craftSel = null; this.toast(`${g.look.name} se met au travail`, 'good'); }
-          this.refreshSheet();
-        };
-        det.append(go);
-        card.append(det);
-      }
-    }
-    return card;
-  }
 
-  /** « Depuis ton inventaire » : donner directement au Noyau, au Laboratoire, au Comptoir ou à la Revente. */
-  private depositCard(m: Machine): HTMLElement {
-    const g = this.game;
-    const card = h('div', 'card');
-    card.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · touche une pile pour la donner</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.accepts(m, t) > 0)}`;
-    this.wireGrid(card, m);
-    const bar = this.invBar(m);
-    if (bar) card.append(bar);
-    return card;
-  }
 
   /**
    * Bouton Supprimer en deux temps. Le « toucher encore » est retenu par machine pendant 4 s,
@@ -1661,8 +1370,6 @@ export class Hud implements GestureHandlers {
   private armedDelete: { id: number; until: number } | null = null;
   /** Abandon de la commande du Comptoir en attente de confirmation (jusqu'à cette date). */
   private armedAbandon = 0;
-  /** Destruction d'objets du robot en attente de confirmation. */
-  private armedTrash: { slot: number; until: number } | null = null;
 
   private deleteButton(m: Machine, label: string, confirm: string, close: () => void): HTMLButtonElement {
     const armed = () => this.armedDelete?.id === m.id && performance.now() < this.armedDelete.until;
@@ -1684,7 +1391,6 @@ export class Hud implements GestureHandlers {
   /** Une machine en grand (four, foreuse…) : état, charbon, recettes, ce qu'elle contient, et l'inventaire du robot. */
   openMachine(m: Machine): void {
     this.closePopover();
-    this.invSel = null;
     this.machineId = m.id;
     if (this.machTabOf !== m.id) { this.machTab = 'prod'; this.machTabOf = m.id; }
     this.openSheet((sheet, close) => {
@@ -1698,29 +1404,6 @@ export class Hud implements GestureHandlers {
         const patch = g.world.patchAt(mm.x, mm.y) ?? g.world.patchAt(mm.x + 1, mm.y + 1);
         title = `${def.name} · ${mm.ore ? item(mm.ore).name.toLowerCase() : '?'}`;
         status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${g.view.drillRate(mm).toFixed(2).replace('.', ',')} par seconde.`;
-      }
-      if (def.kind === 'station') {
-        const nd = g.stationCapacity(mm);
-        sheet.append(this.sheetHead(def.name, nd > 1 ? `Ses ${nd} drones construisent, rechargent et livrent dans un rayon de ${RULES.stationRange} cases autour de lui.` : `Son drone construit, recharge et livre dans un rayon de ${RULES.stationRange} cases autour d’elle.`, close));
-        this.r.rangeOf = mm.id;
-        const d = g.stationDrones.get(mm.id);
-        const label = (p: DronePriority) => DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p;
-        const card = h('div', 'card');
-        card.innerHTML = `${this.gauge('Carburant de la station', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb)}<p class="muted small">Son drone s’y sert pour recharger les machines autour (et lui-même). Un tapis ou les autres drones la remplissent.</p>
-          ${d ? `<button class="prio-btn big" data-st="1"><span>Drone</span>${this.gauge('', d.fuel, 10, d.fuel <= 2, d.carb)}${d.cargo ? `<span class="chip"><img src="${this.itemIcons.get(d.cargo.t)}" alt="">${d.cargo.n}</span>` : ''}<b>${PRIO_ICONS[d.priorities[0]] ?? ''}${esc(label(d.priorities[0]))}</b><i>›</i></button>` : ''}`;
-        card.querySelector<HTMLButtonElement>('[data-st]')?.addEventListener('click', () => this.openPriorities(0, mm.id));
-        sheet.append(card);
-        const dep = h('div', 'card');
-        dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · charbon</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
-        this.wireGrid(dep, mm);
-        if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
-        sheet.append(dep);
-        const acts = h('div', 'row');
-        const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-        mv.onclick = () => { close(); this.startMove(mm); };
-        acts.append(mv, this.deleteButton(mm, `Supprimer · rend ${def.cost}`, 'Toucher encore pour supprimer', close));
-        sheet.append(acts);
-        return;
       }
       if (def.kind === 'atelier') {
         const inner = mm.inner;
@@ -1768,15 +1451,10 @@ export class Hud implements GestureHandlers {
       }
       if (def.kind === 'rocket') {
         const counting = !!mm.craft;
-        sheet.append(this.sheetHead(def.name, esc(counting ? `Décollage dans ${Math.max(0, Math.ceil(RULES.rocketCountdown - mm.craft!.t))} s !` : `${g.rockets ? `${g.rockets} fusée${g.rockets > 1 ? 's' : ''} lancée${g.rockets > 1 ? 's' : ''}. ` : ''}Remplis-la par tapis (ou depuis l’inventaire du robot) : quand tout y est, la fusée décolle.`), close));
+        sheet.append(this.sheetHead(def.name, esc(counting ? `Décollage dans ${Math.max(0, Math.ceil(RULES.rocketCountdown - mm.craft!.t))} s !` : `${g.rockets ? `${g.rockets} fusée${g.rockets > 1 ? 's' : ''} lancée${g.rockets > 1 ? 's' : ''}. ` : ''}Remplis-la par tapis : quand tout y est, la fusée décolle.`), close));
         const card = h('div', 'card');
         card.innerHTML = Object.entries(ROCKET_NEEDS).map(([k, n]) => this.gauge(item(k).name, Math.min(n, mm.inBuf[k] ?? 0), n, false).replace(this.itemIcons.get('charbon')!, this.itemIcons.get(k)!)).join('');
         sheet.append(card);
-        const dep = h('div', 'card');
-        dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)}</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
-        this.wireGrid(dep, mm);
-        if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
-        sheet.append(dep);
         const acts = h('div', 'row');
         const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
         mv.onclick = () => { close(); this.startMove(mm); };
@@ -1784,19 +1462,18 @@ export class Hud implements GestureHandlers {
         sheet.append(acts);
         return;
       }
-      if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'charger' || def.kind === 'filter') {
+      if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'filter') {
         const wn = g.view.waterNetOf(mm);
         const waterLine = wn ? `Réseau d’eau : ${fmtN(wn.demand)} L/s demandés pour ${fmtN(wn.supply)} L/s pompés.` : 'Aucun tuyau ne la touche.';
         const sub = def.kind === 'pump' ? `${status} 40 L/s. ${waterLine}`
           : def.kind === 'reactor' ? `${status} Eau : ${Math.round((mm.water ?? 0) * 100)} %. ${wn ? waterLine : 'Relie-le par un tuyau à une pompe, sinon il ne démarre pas.'}`
-          : def.kind === 'filter' ? `${status} Pollution ici : ${Math.round(g.view.pollutionAt(mm))}. Au courant, il en retire ${RULES.filterClean} par seconde.`
-          : `${status} Les drones autour (robot ou stations) viennent s’y recharger au lieu de brûler du charbon.`;
+          : `${status} Pollution ici : ${Math.round(g.view.pollutionAt(mm))}. Au courant, il en retire ${RULES.filterClean} par seconde.`;
         sheet.append(this.sheetHead(def.name, esc(sub), close));
         const card = h('div', 'card');
         if (def.kind === 'reactor') {
           const rods = mm.inBuf.uranium_enrichi ?? 0;
           card.innerHTML = `${this.gauge('Barreaux', rods, RULES.fuelStack, rods <= 1).replace(this.itemIcons.get('charbon')!, this.itemIcons.get('uranium_enrichi')!)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${(mm.water ?? 0) * 100}%"></span></span><b>${Math.round((mm.water ?? 0) * 100)} %</b></div>${this.powerCard(mm)}<p class="muted small">Un barreau d’uranium enrichi dure 2 minutes à pleine charge ; apporte-les par tapis.</p>`;
-        } else if (def.kind === 'charger' || def.kind === 'filter') {
+        } else if (def.kind === 'filter') {
           card.innerHTML = this.powerCard(mm);
         } else {
           card.innerHTML = `<p class="muted small">${esc(waterLine)}</p>`;
@@ -1833,11 +1510,6 @@ export class Hud implements GestureHandlers {
         const card = h('div', 'card');
         card.innerHTML = `${this.gauge('Carburant', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb)}${this.powerCard(mm)}`;
         sheet.append(card);
-        const dep = h('div', 'card');
-        dep.innerHTML = `<p class="muted">Depuis l’inventaire de ${esc(g.look.name)} · charbon</p>${this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0)}`;
-        this.wireGrid(dep, mm);
-        if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) dep.append(bar); }
-        sheet.append(dep);
         const acts = h('div', 'row');
         const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
         mv.onclick = () => { close(); this.startMove(mm); };
@@ -1866,12 +1538,10 @@ export class Hud implements GestureHandlers {
       else if (this.machTab === 'inv') this.machContents(body, mm);
       else this.machRecipes(body, mm);
       sheet.append(body);
-      const acts = h('div', 'macts');
-      const give = h('button', 'btn primary', 'Donner');
-      give.onclick = () => this.openGive(mm);
+      const acts = h('div', 'macts two');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(mm); };
-      acts.append(give, mv, this.deleteButton(mm, 'Supprimer', 'Confirmer', close));
+      acts.append(mv, this.deleteButton(mm, 'Supprimer', 'Confirmer', close));
       sheet.append(acts);
     }, true);
     this.sheetKind = 'machine';
@@ -2075,7 +1745,7 @@ export class Hud implements GestureHandlers {
     const g = this.game, f = g.view, def = machineDef(mm.type);
     const slots = (buf: Record<string, number>, which: 'in' | 'out', min: number) => {
       const list = Object.entries(buf).filter(([, n]) => n > 0);
-      let html = list.map(([t, n]) => `<button class="mslot" data-which="${which}" data-item="${t}" aria-label="${esc(item(t).name)} : ${n}"><img src="${this.itemIcons.get(t)}" alt=""><b>${n}</b></button>`).join('');
+      let html = list.map(([t, n]) => `<span class="mslot" data-which="${which}" aria-label="${esc(item(t).name)} : ${n}"><img src="${this.itemIcons.get(t)}" alt=""><b>${n}</b></span>`).join('');
       for (let i = list.length; i < min; i++) html += '<span class="mslot empty"></span>';
       return html;
     };
@@ -2086,22 +1756,7 @@ export class Hud implements GestureHandlers {
     const any = Object.values(mm.inBuf).some((n) => n > 0) || Object.keys(outAll).length > 0;
     const inv = h('div', 'card minv2', `${def.kind === 'crafter' ? `<div class="minv-g"><small>En attente</small><div class="minv-s">${slots(mm.inBuf, 'in', 3)}</div></div>` : ''}
       <div class="minv-g"><small>Prêt à sortir${all.length > 1 ? ' (tout le groupe)' : ''}</small><div class="minv-s">${slots(outAll, 'out', 2)}</div></div>
-      <p class="muted small">${any ? `Touche une pile pour la rendre à ${esc(g.look.name)}.` : 'Rien dedans pour l’instant.'}</p>`);
-    inv.querySelectorAll<HTMLButtonElement>('.mslot[data-item]').forEach((b) => {
-      b.onclick = () => {
-        const which = b.dataset.which as 'in' | 'out', t = b.dataset.item!;
-        let n = 0, full = false;
-        for (const x of which === 'in' ? [mm] : all) {
-          const want = (which === 'in' ? x.inBuf : x.outBuf)[t] ?? 0;
-          if (!want) continue;
-          const got = g.machineToRobot(x, which, t, want);
-          n += got;
-          if (got < want) { full = true; break; }
-        }
-        if (!n || full) this.toast(`L’inventaire de ${g.look.name} est plein`, 'warn');
-        this.refreshSheet();
-      };
-    });
+      ${any ? '' : '<p class="muted small">Rien dedans pour l’instant.</p>'}`);
     body.append(inv);
     // Les tapis branchés : on entre et on sort par où l'on veut, on les compte seulement.
     const io = f.machineIO(mm), ioAll = all.flatMap((x) => (x === mm ? io : f.machineIO(x)));
@@ -2352,62 +2007,7 @@ export class Hud implements GestureHandlers {
     return best;
   }
 
-  /** Donner à une machine depuis l'inventaire du robot : ce qui lui sert est en clair. */
-  private openGive(mm: Machine): void {
-    const g = this.game;
-    this.invSel = null;
-    this.openSheet((sheet, close) => {
-      const def = machineDef(mm.type);
-      if (!g.view.machines.has(mm.id)) { close(); return; }
-      const back = () => { close(); this.openMachine(mm); };
-      sheet.append(this.sheetHead(`Donner ${def.name.match(/^[AEÉIOU]/) ? 'à l’' : 'au '}${def.name.toLowerCase()}`, `Depuis l’inventaire de ${esc(g.look.name)} · ce qui lui sert est en clair`, back));
-      const card = h('div', 'card');
-      card.innerHTML = this.gridHtml(g.robot.inv.slots, 'robot', 5, (t) => g.machineAccepts(mm, t) > 0);
-      this.wireGrid(card, mm);
-      if (this.invSel?.side === 'robot') { const bar = this.invBar(mm); if (bar) card.append(bar); }
-      sheet.append(card);
-      const useful = g.robot.inv.slots.map((s2, i) => ({ s: s2, i })).filter((x) => x.s && g.machineAccepts(mm, x.s.t) > 0);
-      const all = h('button', 'btn big', `Tout ce qui lui sert${useful.length ? ` <span class="give-icons">${[...new Set(useful.map((x) => x.s!.t))].map((t) => `<img src="${this.itemIcons.get(t)}" alt="">`).join('')}</span>` : ''}`);
-      all.disabled = !useful.length;
-      all.onclick = () => {
-        let n = 0;
-        for (const x of useful) { const sl = g.robot.inv.slots[x.i]; if (sl) n += g.robotToMachine(mm, x.i, sl.n); }
-        if (n) this.toast(`${n} objet${n > 1 ? 's' : ''} donné${n > 1 ? 's' : ''}`, 'good');
-        back();
-      };
-      sheet.append(all);
-      if (def.coal) sheet.append(h('p', 'muted small', 'Le charbon et le carburant vont dans sa case carburant ; le reste dans ses entrées.'));
-      const ret = h('button', 'btn', 'Retour à la machine');
-      ret.onclick = back;
-      sheet.append(ret);
-    }, true);
-    this.sheetKind = 'machine';
-  }
 
-  /** La Revente en grand : contenu, passage du gros drone, et dépôt depuis l'inventaire. */
-  openSell(m: Machine): void {
-    this.closePopover();
-    this.invSel = null;
-    this.openSheet((sheet, close) => {
-      const g = this.game;
-      const bin = g.view.machines.get(m.id);
-      if (!bin) { close(); return; }
-      const n = g.sellCount(bin);
-      const t = Math.ceil(g.nextPickup), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
-      const coming = g.pickups.some((x) => x.id === bin.id && !x.done);
-      sheet.append(this.sheetHead('Revente', coming ? 'Le gros drone est là !' : `Prochain passage du gros drone dans ${mm} min ${ss}`, close));
-      const info = h('div', 'card');
-      info.innerHTML = `<p class="muted">Tout ce qui arrive ici est revendu à bas prix : ${n} objet${n > 1 ? 's' : ''} sur ${RULES.sellCap}, environ ${g.sellValue(bin)} pièces.</p>${n ? `<div class="chips">${this.chips(bin.inBuf)}</div>` : ''}`;
-      sheet.append(info, this.depositCard(bin));
-      const acts = h('div', 'row');
-      const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
-      mv.onclick = () => { close(); this.startMove(bin); };
-      const del = this.deleteButton(bin, 'Supprimer', n ? 'Son contenu sera perdu : toucher encore' : 'Toucher encore pour supprimer', close);
-      acts.append(mv, del);
-      sheet.append(acts);
-    }, true);
-    this.sheetKind = 'sell';
-  }
 
   // ---------- Camions et trains ----------
 
@@ -2454,7 +2054,7 @@ export class Hud implements GestureHandlers {
       });
     };
     card.append(link);
-    if (!f.linesOf(m).length) card.append(h('p', 'muted small', `Remplis ce ${word} par tapis (ou les drones), relie-le : le véhicule charge ici et décharge à l’autre bout.`));
+    if (!f.linesOf(m).length) card.append(h('p', 'muted small', `Remplis ce ${word} par tapis, relie-le : le véhicule charge ici et décharge à l’autre bout.`));
     return card;
   }
 
@@ -2625,7 +2225,6 @@ export class Hud implements GestureHandlers {
   /** Un coffre en grand, avec l'inventaire du robot dessous. */
   openChest(m: Machine): void {
     this.closePopover();
-    this.invSel = null;
     this.chestId = m.id;
     this.openSheet((sheet, close) => {
       const chest = this.game.view.machines.get(this.chestId);
@@ -2639,28 +2238,20 @@ export class Hud implements GestureHandlers {
       sheet.classList.add('inv-sheet');
       sheet.append(this.sheetHead(machineDef(chest.type).name, stop
         ? `Deux coffres de ${cap} objets : ce qui arrive par ${g.stationKind(chest) === 'train' ? 'train' : 'camion'}, et ce qui part`
-        : `${fmt(total)} / ${cap} objets · les tapis le remplissent et le vident, les drones s’y servent`, close));
+        : `${fmt(total)} / ${cap} objets · les tapis le remplissent, un tapis qui en part le vide`, close));
       // Ses entrées et sorties : tout passe, par où l'on veut.
       sheet.append(this.machineDiagram(chest));
       const c1 = h('div', 'card');
       if (stop) {
-        // Arrivées : ce que ramènent les véhicules, qui ressort sur les tapis (et où les drones se servent).
+        // Arrivées : ce que ramènent les véhicules, qui ressort sur les tapis.
         const c0 = h('div', 'card');
-        c0.innerHTML = `<p class="muted"><b>Arrivées</b> · ${fmt(arrived)} / ${cap} · déposé par les ${g.stationKind(chest) === 'train' ? 'trains' : 'camions'}, sort sur les tapis qui partent d’ici</p>${this.gridHtml(this.chestCells(chest, chest.outBuf), 'arr')}`;
-        this.wireGrid(c0, chest);
+        c0.innerHTML = `<p class="muted"><b>Arrivées</b> · ${fmt(arrived)} / ${cap} · déposé par les ${g.stationKind(chest) === 'train' ? 'trains' : 'camions'}, sort sur les tapis qui partent d’ici</p>${this.gridHtml(this.chestCells(chest, chest.outBuf))}`;
         sheet.append(c0);
-        c1.innerHTML = `<p class="muted"><b>Départs</b> · ${fmt(total)} / ${cap} · apporté par les tapis et les drones, part avec les ${g.stationKind(chest) === 'train' ? 'trains' : 'camions'}</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
+        c1.innerHTML = `<p class="muted"><b>Départs</b> · ${fmt(total)} / ${cap} · apporté par les tapis, part avec les ${g.stationKind(chest) === 'train' ? 'trains' : 'camions'}</p>${this.gridHtml(this.chestCells(chest))}`;
       } else {
-        c1.innerHTML = `<p class="muted">${esc(machineDef(chest.type).name)}</p>${this.gridHtml(this.chestCells(chest), 'chest')}`;
+        c1.innerHTML = `<p class="muted">${esc(machineDef(chest.type).name)}</p>${this.gridHtml(this.chestCells(chest))}`;
       }
-      const swap = h('div', 'inv-swap', `<svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3 V15 M3 12 L6 15 L9 12 M12 15 V3 M9 6 L12 3 L15 6"/></svg>Touche une pile pour la déplacer`);
-      const c2 = h('div', 'card');
-      c2.innerHTML = `<p class="muted">Inventaire de ${esc(g.look.name)}</p>${this.gridHtml(g.robot.inv.slots, 'robot')}`;
-      this.wireGrid(c1, chest);
-      this.wireGrid(c2, chest);
-      sheet.append(c1, swap, c2);
-      const bar = this.invBar(chest);
-      if (bar) { bar.classList.add('floating'); sheet.append(bar); }
+      sheet.append(c1);
       // Dépôt ou gare : ses lignes, et de quoi le relier à un autre.
       if (g.stationKind(chest)) sheet.append(this.stationCard(chest));
       const acts = h('div', 'row');
@@ -2699,7 +2290,7 @@ export class Hud implements GestureHandlers {
     const list: ['lines' | 'arr' | 'dep', string][] = [['lines', 'Lignes'], ['arr', `Arrivées${arr ? ` <small>${fmt(arr)}</small>` : ''}`], ['dep', `Départs${dep ? ` <small>${fmt(dep)}</small>` : ''}`]];
     for (const [id, label] of list) {
       const b = h('button', `mtab${this.stopTab === id ? ' on' : ''}`, label);
-      b.onclick = () => { if (this.stopTab === id) return; this.stopTab = id; this.invSel = null; this.refreshSheet(); this.reframe(); };
+      b.onclick = () => { if (this.stopTab === id) return; this.stopTab = id; this.refreshSheet(); this.reframe(); };
       tabs.append(b);
     }
     sheet.append(tabs);
@@ -2712,7 +2303,7 @@ export class Hud implements GestureHandlers {
         row.onclick = () => this.openLine(l.id);
         card.append(row);
       }
-      if (!lines.length) card.append(h('p', 'muted', `Remplis ${train ? 'cette gare' : 'ce dépôt'} par tapis (ou les drones), puis relie-${train ? 'la' : 'le'} : le ${train ? 'train' : 'camion'} charge ici les départs et dépose à l’autre bout, dans ses arrivées.`));
+      if (!lines.length) card.append(h('p', 'muted', `Remplis ${train ? 'cette gare' : 'ce dépôt'} par tapis, puis relie-${train ? 'la' : 'le'} : le ${train ? 'train' : 'camion'} charge ici les départs et dépose à l’autre bout, dans ses arrivées.`));
       body.append(card);
     } else {
       const isArr = this.stopTab === 'arr';
@@ -2722,15 +2313,9 @@ export class Hud implements GestureHandlers {
       while (cells.length < Math.max(cols, Math.ceil(cells.length / cols) * cols)) cells.push(null);
       const c1 = h('div', 'card');
       c1.innerHTML = `<div class="sfill"><b>${isArr ? 'Arrivées' : 'Départs'}</b><span class="mp-bar"><span style="width:${Math.min(100, (n / cap) * 100)}%"></span></span><b>${fmt(n)} / ${cap}</b></div>
-        <p class="muted small">${isArr ? `Déposé par les ${train ? 'trains' : 'camions'} ; ressort sur les tapis qui partent d’ici, les drones s’y servent.` : `Apporté par les tapis et les drones ; part avec les ${train ? 'trains' : 'camions'}.`}</p>
-        ${this.gridHtml(cells, isArr ? 'arr' : 'chest', cols)}`;
-      this.wireGrid(c1, st);
-      const c2 = h('div', 'card');
-      c2.innerHTML = `<p class="muted">Inventaire de ${esc(g.look.name)} · touche une pile pour la déplacer</p>${this.gridHtml(g.robot.inv.slots, 'robot')}`;
-      this.wireGrid(c2, st);
-      body.append(c1, c2);
-      const bar = this.invBar(st);
-      if (bar) { bar.classList.add('floating'); body.append(bar); }
+        <p class="muted small">${isArr ? `Déposé par les ${train ? 'trains' : 'camions'} ; ressort sur les tapis qui partent d’ici.` : `Apporté par les tapis ; part avec les ${train ? 'trains' : 'camions'}.`}</p>
+        ${this.gridHtml(cells, cols)}`;
+      body.append(c1);
     }
     sheet.append(body);
     const acts = h('div', 'macts');
@@ -2752,69 +2337,6 @@ export class Hud implements GestureHandlers {
     sheet.append(acts);
   }
 
-  /** La liste des tâches d'un drone, à ranger de la plus importante à la moins importante. */
-  private openPriorities(i: number, station?: number): void {
-    this.closePopover();
-    const g = this.game;
-    const setOrder = (list: DronePriority[]) => (station !== undefined ? g.setStationPriorities(station, list) : g.setDronePriorities(i, list));
-    const drone = () => (station !== undefined ? g.stationDrones.get(station) : g.drones[i]);
-    if (!drone()) return;
-    this.openModal(station !== undefined ? 'Priorités du drone de la station' : `Priorités du drone ${i + 1}`, 'De la plus importante à la moins importante. Le drone fait la première tâche utile de la liste ; son propre charbon passe toujours avant.', (body, close, rebuild) => {
-      const d = drone();
-      if (!d) { close(); return; }
-      if (g.drones.length > 1 && station === undefined) {
-        const tabs = h('div', 'rule-seg pick-seg');
-        g.drones.forEach((_, j) => {
-          const b = h('button', `btn${j === i ? ' primary' : ''}`, `Drone ${j + 1}`);
-          b.onclick = () => { if (j !== i) this.openPriorities(j); };
-          tabs.append(b);
-        });
-        body.append(tabs);
-      }
-      const list = h('div', 'prio-list pick-prio');
-      const move = (from: number, to: number) => {
-        const order = [...d.priorities];
-        const [p] = order.splice(from, 1);
-        order.splice(to, 0, p);
-        setOrder(order);
-        rebuild();
-        this.refreshSheet();
-      };
-      d.priorities.forEach((p, k) => {
-        const row = h('div', `prio-item${k === 0 ? ' first' : ''}`);
-        row.innerHTML = `<span class="prio-n">${k + 1}</span><span class="prio-ico">${PRIO_ICONS[p] ?? ''}</span><b>${esc(DRONE_PRIORITIES.find((x) => x.id === p)?.label ?? p)}</b>`;
-        const up = h('button', 'prio-move', '<svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9 L7 5 L11 9"/></svg>');
-        up.setAttribute('aria-label', 'Monter');
-        up.disabled = k === 0;
-        up.onclick = () => move(k, k - 1);
-        const down = h('button', 'prio-move', '<svg width="16" height="16" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5 L7 9 L11 5"/></svg>');
-        down.setAttribute('aria-label', 'Descendre');
-        down.disabled = k === d.priorities.length - 1;
-        down.onclick = () => move(k, k + 1);
-        row.append(up, down);
-        list.append(row);
-      });
-      body.append(list);
-    }, (bar, close) => {
-      const row = h('div', 'row');
-      if (g.drones.length > 1 && station === undefined) {
-        const all = h('button', 'btn', 'Même ordre pour tous');
-        all.onclick = () => {
-          const d = drone();
-          if (d) g.drones.forEach((_, j) => g.setDronePriorities(j, d.priorities));
-          this.toast('Tous les drones suivent cet ordre', 'good');
-          this.refreshSheet();
-        };
-        row.append(all);
-      }
-      const reset = h('button', 'btn', 'Ordre de départ');
-      reset.onclick = () => { setOrder(DEFAULT_ORDER); this.openPriorities(i, station); this.refreshSheet(); };
-      row.append(reset);
-      const ok = h('button', 'btn primary', 'Terminé');
-      ok.onclick = close;
-      bar.append(row, ok);
-    });
-  }
 
   private popKey = '';
   private popActions = '';
@@ -3031,7 +2553,6 @@ export class Hud implements GestureHandlers {
 
   private closeSheet(): void {
     this.closeModal();
-    this.r.rangeOf = null;
     if (this.sheetKind === 'machine' && this.popover.classList.contains('hidden')) this.r.selection = null;
     this.overlay?.remove();
     this.overlay = null;
@@ -3176,7 +2697,6 @@ export class Hud implements GestureHandlers {
   /** La mission du Noyau : ce qu'il demande pour passer au palier suivant. */
   openNoyau(): void {
     this.closePopover();
-    this.invSel = null;
     const g = this.game;
     this.openSheet((sheet, close) => {
       const mission = palierMission(g.palier);
@@ -3187,9 +2707,8 @@ export class Hud implements GestureHandlers {
       sheet.append(this.sheetHead(`Mission du Noyau`, `Palier ${g.palier} → palier ${mission.to}`, close));
       const card = h('div', 'card');
       card.innerHTML = `<p><b>${esc(mission.pitch)}</b></p>${this.costRows(Object.entries(mission.lines).map(([k, v]) => [k, g.palierDone[k] ?? 0, v]))}
-        <p class="muted">Relie un tapis au Noyau, ou range ces objets dans un coffre : les drones les y apportent.</p>`;
+        <p class="muted">Relie un tapis au Noyau : il prend ce que demande sa mission.</p>`;
       sheet.append(card);
-      sheet.append(this.depositCard(g.noyau));
       const opens = ALL_NODES.filter((x) => x.palier === mission.to);
       if (opens.length) {
         const c2 = h('div', 'card');
@@ -3206,7 +2725,6 @@ export class Hud implements GestureHandlers {
   /** Le Laboratoire : son stock et les déblocages qu'il peut payer. */
   openLab(): void {
     this.closePopover();
-    this.invSel = null;
     const g = this.game;
     this.openSheet((sheet, close) => {
       sheet.append(this.sheetHead('Laboratoire', `Il garde les objets qui servent à débloquer l’arbre (${RULES.labCap} de chaque au plus).`, close));
@@ -3228,10 +2746,8 @@ export class Hud implements GestureHandlers {
       }
       const stock = Object.entries(g.lab).filter(([, n]) => n > 0);
       const st = h('div', 'card');
-      st.innerHTML = `<p class="muted">En stock</p>${stock.length ? `<div class="chips">${this.chips(Object.fromEntries(stock))}</div>` : '<p class="muted">Vide. Relie-lui un tapis, ou range les objets dans un coffre : les drones les y apportent.</p>'}`;
+      st.innerHTML = `<p class="muted">En stock</p>${stock.length ? `<div class="chips">${this.chips(Object.fromEntries(stock))}</div>` : '<p class="muted">Vide. Relie-lui un tapis.</p>'}`;
       sheet.append(st);
-      const lab = [...g.factory.machines.values()].find((x) => x.type === 'laboratoire');
-      if (lab) sheet.append(this.depositCard(lab));
       const tree = h('button', 'btn', 'Ouvrir l’arbre de déblocages');
       tree.onclick = () => { close(); this.openTree(); };
       sheet.append(tree);
@@ -3250,15 +2766,12 @@ export class Hud implements GestureHandlers {
   /** Le Comptoir : des commandes au choix, payées en pièces. */
   openOrders(): void {
     this.closePopover();
-    this.invSel = null;
     const g = this.game;
     if (!g.order && g.choices.length === 0) g.refreshChoices();
     this.openSheet((sheet, close) => {
       if (g.order) {
-        sheet.append(this.sheetHead('Comptoir', 'Commande en cours : relie un tapis au Comptoir, ou laisse les drones y apporter le contenu de tes coffres.', close));
+        sheet.append(this.sheetHead('Comptoir', 'Commande en cours : relie un tapis au Comptoir.', close));
         sheet.append(h('div', 'card', this.orderCardHtml(g.order, true)));
-        const comptoir = [...g.factory.machines.values()].find((x) => x.type === 'comptoir');
-        if (comptoir) sheet.append(this.depositCard(comptoir));
         // Abandonner : en deux temps (ce qui a déjà été livré est perdu).
         const armed = performance.now() < this.armedAbandon;
         const quit = h('button', `btn danger${armed ? ' armed' : ''}`, armed ? 'Toucher encore : ce qui est livré sera perdu' : 'Abandonner la commande');
@@ -3591,13 +3104,8 @@ export class Hud implements GestureHandlers {
         this.weatherIcon.title = w === 'pluie' ? 'Pluie : camions plus lents' : w === 'neige' ? 'Neige : solaire réduit' : '';
       }
     }
-    // Inventaires en grand : la fabrication avance à chaque image, le reste chaque seconde.
+    // Fenêtres en grand : les barres avancent à chaque image, le reste chaque seconde.
     if (this.sheetKind && this.overlay) {
-      this.overlay.querySelectorAll<HTMLElement>('.craft-job').forEach((row) => {
-        const job = this.game.craftQueue[Number(row.dataset.i)];
-        const bar = row.querySelector<HTMLElement>('.cj-bar > span');
-        if (job && bar) bar.style.width = `${(job.t / job.total) * 100}%`;
-      });
       // Fenêtre d'une machine : la pièce en cours et le charbon qui brûle avancent en continu.
       this.overlay.querySelectorAll<HTMLElement>('[data-mp]').forEach((bar) => {
         const mm = this.game.view.machines.get(Number(bar.dataset.mp));

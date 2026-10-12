@@ -23,8 +23,8 @@ const has = (g: Game, type: string) => machines(g).some((m) => m.type === type);
 export const TIPS: Tip[] = [
   {
     id: 'charbon', title: 'Tout marche au charbon',
-    text: (g) => `Envoie ${g.look.name} sur le filon gris foncé : à l’arrêt, il mine tout seul.`,
-    goal: (g) => g.robot.inv.count('charbon') > 0 || machines(g).some((m) => m.ore === 'charbon'),
+    text: (g) => `Envoie ${g.look.name} explorer : sa lampe révèle les filons. Le charbon est gris foncé.`,
+    goal: (g) => g.world.discovered.has('charbon') || machines(g).some((m) => m.ore === 'charbon'),
   },
   {
     id: 'foreuse', title: 'Une foreuse sur le charbon',
@@ -33,7 +33,7 @@ export const TIPS: Tip[] = [
   },
   {
     id: 'coffre', title: 'Un coffre au bout du tapis',
-    text: () => 'Pose un Coffre et relie-y la foreuse avec l’outil Tapis : les drones y prendront le charbon.',
+    text: () => 'Pose un Coffre et relie-y la foreuse avec l’outil Tapis : il garde le charbon en réserve.',
     goal: (g) => has(g, 'coffre'),
   },
   {
@@ -42,14 +42,8 @@ export const TIPS: Tip[] = [
     goal: (g) => (g.palierDone.lingot_fer ?? 0) > 0 || g.palier > 1,
   },
   {
-    id: 'atelier', title: 'Fabriquer à la main',
-    text: (g) => `Touche ${g.look.name} : son inventaire s’ouvre, et il sait fabriquer lui-même, lentement.`,
-    when: (g) => g.gifts.comptoir !== undefined,
-    goal: (_g, c) => c.robotOpened,
-  },
-  {
     id: 'palier2', title: 'Palier 2 !',
-    text: () => 'La suite de l’arbre est ouverte. Un deuxième drone t’attend dans la branche Robot.',
+    text: () => 'La suite de l’arbre est ouverte : des machines, et des tapis plus rapides dans Logistique.',
     when: (g) => g.palier >= 2,
   },
 ];

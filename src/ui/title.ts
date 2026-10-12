@@ -1,7 +1,7 @@
 // Menu principal : il s'ouvre à chaque lancement à froid du jeu.
 // Continuer, trois parties sauvegardées, nouvelle partie, importer un code, mise à jour.
 import { cleanLook, DEFAULT_LOOK } from '../data/look.ts';
-import { droneSvg, robotSvg } from '../render/robotShapes.ts';
+import { robotSvg } from '../render/robotShapes.ts';
 import { decodeSave, encodeSave } from '../save/code.ts';
 import { deleteSlot, lastSlot, listSlots, saveSlot, SLOTS } from '../save/storage.ts';
 import type { GameSave } from '../sim/game.ts';
@@ -224,8 +224,6 @@ export function showTitle(): Promise<TitleChoice> {
           <div class="title-logo"><span class="logo-cube"></span><h1>Usine<br>fractale</h1></div>
           <div class="title-stage">
             ${robotSvg(look, { spin: true, cls: 'robot-svg hero' })}
-            <span class="orbit o1">${droneSvg(look)}</span>
-            <span class="orbit o2">${droneSvg(look)}</span>
           </div>
         </div>
         <div class="title-menu"></div>

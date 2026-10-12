@@ -1,8 +1,6 @@
-// Présentation d'une nouvelle partie : le robot, son apparence, ses drones.
+// Présentation d'une nouvelle partie : le robot, son apparence, son usine.
 import { ACCESSORIES, cleanLook, DEFAULT_LOOK, ROBOT_COLORS, ROBOT_NAMES, type RobotLook } from '../data/look.ts';
-import { droneSvg, robotSvg } from '../render/robotShapes.ts';
-import { DRONE_PRIORITIES } from '../sim/game.ts';
-import { PRIO_ICONS } from './prioIcons.ts';
+import { robotSvg } from '../render/robotShapes.ts';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
@@ -33,8 +31,7 @@ export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
             ${robotSvg(look, { spin: true, cls: 'robot-svg hero pop' })}
           </div>
           <h1 class="intro-title">Ça, c’est toi !</h1>
-          <p class="intro-text">Un petit robot de chantier. Touche le sol pour l’envoyer quelque part : il construit tout ce que tu poses. À l’arrêt sur un filon, il mine tout seul.</p>
-          <p class="intro-text small">Comme tes machines, il roule au charbon.</p>`;
+          <p class="intro-text">Un petit robot explorateur. Touche le sol pour l’envoyer quelque part : sa lampe dissipe le brouillard et révèle les filons.</p>`;
       } else if (step === 1) {
         body = `
           <div class="intro-stage">${robotSvg(look, { spin: true, cls: 'robot-svg hero' })}</div>
@@ -49,17 +46,10 @@ export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
           </div>`;
       } else {
         body = `
-          <div class="intro-stage drones">
-            ${robotSvg(look, { spin: true, cls: 'robot-svg hero' })}
-            <span class="orbit o1">${droneSvg(look)}</span>
-            <span class="orbit o2">${droneSvg(look)}</span>
-          </div>
-          <h1 class="intro-title">Tes drones</h1>
-          <p class="intro-text">Ils volent autour de ${esc(look.name)} : ils construisent avec lui, rechargent les machines en charbon et apportent au Noyau, au Laboratoire et au Comptoir ce qu’ils trouvent dans tes coffres. Tu commences avec un drone, et 10 charbons dans sa soute.</p>
-          <div class="prio-demo">
-            <p class="custom-label">Touche ${esc(look.name)}, puis un drone : range ses tâches de la plus importante à la moins importante. Il fait la première tâche utile de la liste.</p>
-            <ol class="prio-list demo">${DRONE_PRIORITIES.map((p, i) => `<li class="prio-item${i === 0 ? ' first' : ''}"><span class="prio-n">${i + 1}</span><span class="prio-ico">${PRIO_ICONS[p.id] ?? ''}</span><b>${esc(p.label)}</b></li>`).join('')}</ol>
-          </div>`;
+          <div class="intro-stage">${robotSvg(look, { spin: true, cls: 'robot-svg hero' })}</div>
+          <h1 class="intro-title">Ton usine</h1>
+          <p class="intro-text">Pose des foreuses sur les filons et relie-les aux machines par des tapis : tout se construit d’un coup.</p>
+          <p class="intro-text">Le charbon, les minerais et ce que tu fabriques voyagent sur les tapis, jusqu’au Noyau, au Laboratoire et au Comptoir.</p>`;
       }
       screen.innerHTML = `
         <div class="intro-top"><div class="intro-dots">${dots}</div><button class="link skip">Passer</button></div>

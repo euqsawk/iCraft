@@ -218,6 +218,9 @@ export interface PlaceCheck {
 
 const DRILL_BASE_RATE = 0.5;
 
+/** Bâtiments retirés du jeu, avec leur prix (rendu quand une ancienne partie se charge). */
+const REMOVED_COST: Record<string, number> = { station: 100, hangar: 500, recharge: 200, revente: 20 };
+
 export class Factory {
   readonly belts = new Map<number, Belt>();
   readonly machines = new Map<number, Machine>();
@@ -268,7 +271,6 @@ export class Factory {
 
   /** Puissance demandée par la machine quand elle travaille, en kW (0 : elle ne se branche pas). */
   powerUse(m: Machine): number {
-    if (machineDef(m.type).kind === 'charger') return RULES.chargerKw;
     if (machineDef(m.type).kind === 'filter') return RULES.filterKw;
     if (m.inner) return this.electric.size ? this.innerKw(m) : 0;
     if (!this.electric.has(m.type)) return 0;
@@ -1073,7 +1075,7 @@ export class Factory {
     for (const m of this.machines.values()) {
       const k = machineDef(m.type).kind;
       if (!m.built || this.netOfMachine.has(m)) continue;
-      if (k === 'solar' || k === 'battery' || k === 'charger') m.status = 'idle';
+      if (k === 'solar' || k === 'battery') m.status = 'idle';
       if (k === 'reactor') m.status = (m.water ?? 0) > 0 ? 'idle' : 'nowater';
     }
     // Un générateur sans câble ne sert à rien.
@@ -1236,9 +1238,9 @@ export class Factory {
 
   // ---------- Charbon et coffres ----------
 
-  /** Taille de la case carburant (10, ou 50 pour une station). */
-  fuelCap(m: Machine): number {
-    return machineDef(m.type).kind === 'station' ? RULES.stationCoal : RULES.fuelStack;
+  /** Taille de la case carburant (10). */
+  fuelCap(_m: Machine): number {
+    return RULES.fuelStack;
   }
 
   /** Place restante dans la case carburant. */
@@ -1327,7 +1329,7 @@ export class Factory {
   canAccept(m: Machine, item: string): boolean {
     if (!m.built) return false;
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') return this.buildingAccepts(m, item);
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
     if (def.kind === 'port_out') return !!this.host && this.bufCount(this.host.outBuf) < ATELIER_BUFFER;
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) return true;
@@ -1341,7 +1343,7 @@ export class Factory {
 
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'sell') { this.onDeliver(m, item); return; }
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') { this.onDeliver(m, item); return; }
     if (def.kind === 'port_out') { if (this.host) this.host.outBuf[item] = (this.host.outBuf[item] ?? 0) + 1; return; }
     if (def.kind === 'rocket') { m.inBuf[item] = (m.inBuf[item] ?? 0) + 1; return; }
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) {
@@ -1518,8 +1520,8 @@ export class Factory {
     for (const m of this.machines.values()) {
       if (!m.built) continue;
       const def = machineDef(m.type);
-      m.want = def.kind === 'charger' || def.kind === 'filter';
-      if (def.kind === 'charger' || def.kind === 'filter') m.status = (m.power ?? 0) > 0 ? 'working' : 'nopower';
+      m.want = def.kind === 'filter';
+      if (def.kind === 'filter') m.status = (m.power ?? 0) > 0 ? 'working' : 'nopower';
       // Arbres et filtres nettoient la pollution de leur morceau de carte.
       if (this.pollution && (def.kind === 'tree' || (def.kind === 'filter' && (m.power ?? 0) > 0))) {
         const k = this.chunkOf(m), p = this.pollution.get(k) ?? 0;
@@ -1930,6 +1932,7 @@ export class Factory {
   }
 
   load(s: FactorySave): void {
+    this.legacyRefund = 0;
     this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
     for (const k of s.cables ?? []) this.cables.add(k);
     this.pipes.clear();
@@ -1962,12 +1965,14 @@ export class Factory {
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
       sm.type = baseType(sm.type); // les anciennes « machines électriques » redeviennent des machines normales
       if (sm.type === 'super_foreuse' && !this.machines.has(sm.id)) { bigDrills.push(sm); continue; }
+      // Bâtiments retirés du jeu (drones et revente) : leur prix est rendu.
+      if (REMOVED_COST[sm.type] !== undefined) { this.legacyRefund += REMOVED_COST[sm.type]; continue; }
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       // Ancienne foreuse 2 × 2 : coupée en quatre plus bas, une fois les autres numéros connus.
       if (!s.drills1 && sm.type === 'foreuse') { oldDrills.push(sm); continue; }
 
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
-      Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
+      Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
       if (sm.links?.length) m.links = [...sm.links];
       // Dans un atelier, une foreuse garde le filon d'où elle vient.
@@ -1990,7 +1995,6 @@ export class Factory {
       this.nextLine = Math.max(this.nextLine, sl.id + 1);
     }
     // Les tapis souterrains n'existent plus : une ancienne partie récupère leur prix (4 pièces par case de trajet).
-    this.legacyRefund = 0;
     for (const st of s.tunnels ?? []) this.legacyRefund += (st.cells.length + 1) * 4;
     // Les trieurs d'avant (retirés, comme les filtres) sont remboursés.
     this.legacyRefund += oldPicks.size * 20;

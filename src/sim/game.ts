@@ -1,125 +1,32 @@
-// L'état complet d'une partie : monde, usine, robot, drones, argent, paliers, laboratoire et commandes.
+// L'état complet d'une partie : monde, usine, robot, argent, paliers, laboratoire et commandes.
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
-import { FUELS, isFuel, item, itemLabel } from '../data/items.ts';
-import { addTo, burnOne, moveFuel } from './fuel.ts';
+import { itemLabel } from '../data/items.ts';
 import { World } from '../world/world.ts';
-import { Factory, ROCKET_NEEDS, stopRules, type Belt, type StopRule, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
+import { Factory, stopRules, type Belt, type StopRule, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
-import { Inventory, type Slot } from './inventory.ts';
-import { planCraft, type CraftStep } from './craft.ts';
-import { RICHNESS_RATE } from '../world/world.ts';
 import { ACHIEVEMENTS } from '../data/achievements.ts';
 import { ALL_NODES, BASE_UNLOCKS, LAB_ITEMS, NODE, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 import { MAX_PALIER, palierMission } from '../data/paliers.ts';
 import { cleanLook, DEFAULT_LOOK, type RobotLook } from '../data/look.ts';
 
 /** Ce qu'un drone fait en premier ; ensuite il fait le reste dans l'ordre habituel. */
-export type DronePriority = 'carburant' | 'chantiers' | 'noyau' | 'laboratoire' | 'comptoir';
-export const DRONE_PRIORITIES: { id: DronePriority; label: string }[] = [
-  { id: 'carburant', label: 'Recharger le charbon' },
-  { id: 'chantiers', label: 'Construire' },
-  { id: 'noyau', label: 'Livrer le Noyau' },
-  { id: 'laboratoire', label: 'Livrer le Laboratoire' },
-  { id: 'comptoir', label: 'Livrer le Comptoir' },
-];
-export const DEFAULT_ORDER: DronePriority[] = DRONE_PRIORITIES.map((p) => p.id);
-
-/** Une liste de priorités complète et sans doublon (les tâches oubliées vont à la fin). */
-export function cleanOrder(list: unknown): DronePriority[] {
-  const ok = Array.isArray(list) ? list.filter((p): p is DronePriority => DEFAULT_ORDER.includes(p as DronePriority)) : [];
-  const uniq = [...new Set(ok)];
-  return [...uniq, ...DEFAULT_ORDER.filter((p) => !uniq.includes(p))];
-}
-
-/** Passage du gros drone de revente : il arrive, ramasse (à mi-parcours), repart. */
-export interface SellPickup { id: number; t: number; x: number; y: number; done: boolean }
-export const PICKUP_TIME = 6;
-
-/** Une fabrication à la main en cours (les ingrédients sont déjà pris dans l'inventaire). */
-export interface CraftJob {
-  target: string;
-  n: number;
-  consume: Record<string, number>;
-  extra: Record<string, number>;
-  steps: CraftStep[];
-  total: number;
-  t: number;
-  /** Fini, mais l'inventaire est plein. */
-  blocked?: boolean;
-}
-export const CRAFT_QUEUE = 5;
-
 /** Bâtiments offerts par le Noyau, dans l'ordre. */
 export const GIFTS = ['comptoir', 'laboratoire'] as const;
 export type GiftType = typeof GIFTS[number];
 
 export type Job = { kind: 'belt'; k: number } | { kind: 'machine'; id: number };
 
-/** D'où un drone prend un objet : un coffre (jamais l'inventaire du robot). */
-export type Source = { kind: 'chest' | 'station'; id: number };
-
-export type DroneTask =
-  | { kind: 'build'; job: Job }
-  /** Prendre un objet ; `self` : remplir sa propre case carburant. */
-  | { kind: 'fetch'; from: Source; item: string; self?: boolean; max?: number }
-
-  /** Recharger une machine en charbon. */
-  | { kind: 'refuel'; id: number }
-  /** Le drone va se recharger à une station de recharge (au courant, sans charbon). */
-  | { kind: 'recharge'; id: number }
-  /** Déposer la cargaison (minerai du robot) dans une machine ou un coffre. */
-  | { kind: 'deliver'; id: number };
-
-export interface Drone {
-  x: number;
-  y: number;
-  /** Drone d'une station (numéro de la station) : il travaille autour d'elle, pas autour du robot. */
-  station?: number;
-  /** home : en vol stationnaire près du robot ; fly : en mission ; parked : posé sur le robot, sans charbon. */
-  /** rest : posé sur le robot ou sur sa station, sans rien à faire (il ne brûle rien). */
-  state: 'home' | 'fly' | 'work' | 'parked' | 'rest';
-  task: DroneTask | null;
-  t: number;
-  /** Angle de rangement autour du robot. */
-  slot: number;
-  /** Case carburant (0 à 10) et secondes restantes du charbon en cours ; carb : dont du carburant. */
-  fuel: number;
-  burn: number;
-  carb?: number;
-  /** Une case d'inventaire. */
-  cargo: Slot | null;
-  /** Le coffre d'où vient la cargaison : si plus personne n'en veut, elle y retourne. */
-  from?: number;
-
-  /** Ses tâches, de la plus importante à la moins importante. */
-  priorities: DronePriority[];
-}
-
 export interface Robot {
   x: number;
   y: number;
   target: { x: number; y: number } | null;
-  /** Le joueur a donné l'ordre de se déplacer (prioritaire sur la construction). */
+  /** Le joueur a donné l'ordre de se déplacer. */
   manual: boolean;
   heading: number;
   moving: boolean;
-  /** Case carburant (0 à 10) et secondes restantes du charbon en cours. */
-  fuel: number;
-  burn: number;
-  /** Dont du carburant (brûlé en premier, 5 fois plus long). */
-  carb?: number;
-  /** Cinq cases d'inventaire (piles de 10). */
-  inv: Inventory;
-  /** Matière en cours de minage, si le robot est arrêté sur un filon. */
-  mining: string | null;
-  mineT: number;
-  /** Nombre d'objets minés (pour l'animation). */
-  mined: number;
-  /** Le robot a travaillé à la dernière image (il brûle du charbon). */
-  active: boolean;
 }
 
 export type GameEvent =
@@ -135,10 +42,6 @@ export type GameEvent =
   | { type: 'factory' }
   | { type: 'view' }
   | { type: 'rocket'; id: number; n: number }
-  | { type: 'drones' }
-  | { type: 'sold'; money: number; count: number }
-  | { type: 'inventory' }
-  | { type: 'crafted'; item: string; n: number }
   | { type: 'gift'; building: GiftType; id: number; again?: boolean }
   | { type: 'unlock'; id: string };
 
@@ -171,7 +74,7 @@ export interface GameSave {
   orderSeq: number;
   rerolls: number;
   delivered: number;
-  /** Nombre de drones (module de drones). Absent des premières sauvegardes. */
+  /** Anciennes parties : nombre de drones (retirés du jeu). */
   drones?: number;
   /** Arbre de déblocages (depuis la version 3). */
   unlocks?: string[];
@@ -181,7 +84,7 @@ export interface GameSave {
   palierDone?: Record<string, number>;
   lab?: Record<string, number>;
   extraDrones?: number;
-  priorities?: DronePriority[];
+  priorities?: unknown;
   /** Apparence du robot, conseils et temps de jeu (depuis la version 5). */
   look?: RobotLook;
   tips?: TipState;
@@ -193,17 +96,13 @@ export interface GameSave {
   pollution?: Record<string, number>;
   gifts?: Record<string, number>;
   ordersDone?: number;
+  /** Anciennes parties : revente, charbon et inventaires du robot et des drones (retirés du jeu). */
   sellT?: number;
-  /** Charbon et inventaires du robot et des drones (depuis la version 2). */
-  crew?: {
-    robot: { fuel: number; carb?: number; burn: number; inv: (Slot | null)[]; craft?: CraftJob[] };
-    drones: { fuel: number; carb?: number; burn: number; cargo: Slot | null; from?: number; priority?: DronePriority; priorities?: DronePriority[] }[];
-    stations?: { id: number; fuel: number; carb?: number; burn: number; cargo: Slot | null; from?: number; priorities?: DronePriority[] }[];
-  };
+  crew?: unknown;
 }
 
-/** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte, avec le robot et les drones). */
-const NOT_IN_ATELIER = new Set(['station', 'generateur', 'depot', 'gare', 'revente', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'recharge', 'hangar', 'rampe', 'arbre', 'filtre', 'super_foreuse']);
+/** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte). */
+const NOT_IN_ATELIER = new Set(['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre']);
 
 export class Game {
   readonly world: World;
@@ -326,10 +225,10 @@ export class Game {
     return this.viewStack.includes(m);
   }
 
-  /** Après une pose : dans un atelier, c'est construit tout de suite ; sur la carte, le robot s'en charge. */
+  /** Après une pose : c'est construit tout de suite (plus de chantier ni de drones). */
   private finishPlacement(m: Machine): void {
     if (this.inAtelier) m.built = true;
-    else this.pending.push({ kind: 'machine', id: m.id });
+    else this.finishJob({ kind: 'machine', id: m.id });
     this.emit({ type: 'factory' });
   }
 
@@ -470,12 +369,8 @@ export class Game {
   palierDone: Record<string, number> = {};
   /** Objets déposés au Laboratoire (pour débloquer l'arbre). */
   lab: Record<string, number> = {};
-  robot: Robot = {
-    x: 2, y: 7, target: null, manual: false, heading: 0, moving: false,
-    fuel: RULES.fuelStack, burn: 0, inv: new Inventory(RULES.robotSlots, RULES.invStack),
-    mining: null, mineT: 0, mined: 0, active: false,
-  };
-  drones: Drone[] = [];
+  robot: Robot = { x: 2, y: 7, target: null, manual: false, heading: 0, moving: false };
+  /** Chantiers en attente : toujours vide (tout se construit tout de suite), gardé pour les anciennes sauvegardes. */
   pending: Job[] = [];
   order: Order | null = null;
   choices: Order[] = [];
@@ -489,20 +384,9 @@ export class Game {
   tips: TipState = { done: [], off: false };
   /** Temps de jeu, en secondes. */
   played = 0;
-  /** Fabrications à la main, dans l'ordre. */
-  craftQueue: CraftJob[] = [];
   /** Bâtiments offerts : type → temps de jeu au moment du cadeau. */
   gifts: Record<string, number> = {};
   ordersDone = 0;
-  /** Revente : temps depuis le dernier passage, et passages en cours. */
-  sellT = 0;
-  pickups: SellPickup[] = [];
-  /** Drones gagnés avec l'ancien système de commandes (anciennes parties). */
-  extraDrones = 0;
-  /** Chantier en cours du robot lui-même. */
-  robotJob: Job | null = null;
-  robotBuilding = false;
-  private robotT = 0;
   /** Pendant le calcul de la production hors ligne : objets livrés, par type. */
   private offlineGains: Record<string, number> | null = null;
   private listeners: ((e: GameEvent) => void)[] = [];
@@ -524,27 +408,11 @@ export class Game {
       this.noyau = this.factory.addMachine('noyau', 0, 0, true);
       this.order = firstOrder(this.orderSeq++);
       this.applyUnlocks();
-      this.rebuildDrones();
-      // Cadeau de départ : 10 charbons dans le premier drone, pour lancer la première foreuse.
-      if (this.drones[0]) this.drones[0].cargo = { t: 'charbon', n: RULES.giftCoal };
     }
     this.revealRobot(true);
   }
 
-  /** Nombre de drones : un au départ, plus ceux débloqués dans l'arbre. */
-  get droneCount(): number {
-    const fromTree = [...this.unlocks].filter((id) => NODE[id]?.effect.kind === 'drone').length;
-    return Math.min(RULES.maxDrones + this.extraDrones, RULES.startDrones + fromTree + this.extraDrones);
-  }
 
-  private rebuildDrones(): void {
-    const n = this.droneCount;
-    while (this.drones.length < n) {
-      this.drones.push({ x: this.robot.x, y: this.robot.y - 1, state: 'home', task: null, t: 0, slot: 0, fuel: RULES.fuelStack, burn: 0, cargo: null, priorities: [...DEFAULT_ORDER] });
-    }
-    this.drones.length = n;
-    this.drones.forEach((d, i) => { d.slot = (i / Math.max(n, 1)) * Math.PI * 2; });
-  }
 
   on(fn: (e: GameEvent) => void): () => void {
     this.listeners.push(fn);
@@ -629,18 +497,13 @@ export class Game {
     if (m.type === 'noyau') return this.noyauNeeds()[item] ?? 0;
     if (m.type === 'comptoir') return this.comptoirNeeds()[item] ?? 0;
     if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? Math.max(0, RULES.labCap - (this.lab[item] ?? 0), this.labNeeds()[item] ?? 0) : 0;
-    if (m.type === 'revente') return m.built && !this.pickups.some((p) => p.id === m.id && !p.done) ? Math.max(0, RULES.sellCap - this.sellCount(m)) : 0;
     return 0;
   }
 
-  /** Un bâtiment reçoit des objets (par tapis ou par drone). Renvoie le nombre accepté. */
+  /** Un bâtiment reçoit des objets (par tapis). Renvoie le nombre accepté. */
   receive(m: Machine, item: string, n: number): number {
     const k = Math.min(n, this.accepts(m, item));
     if (k <= 0) return 0;
-    if (m.type === 'revente') {
-      m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
-      return k;
-    }
     if (this.offlineGains) this.offlineGains[item] = (this.offlineGains[item] ?? 0) + k;
     this.delivered += k;
     if (m.type === 'noyau') {
@@ -684,55 +547,10 @@ export class Game {
     return total ? done / total : 1;
   }
 
-  // ---------- Revente : le gros drone passe toutes les 5 minutes ----------
 
-  sellCount(m: Machine): number {
-    let n = 0;
-    for (const v of Object.values(m.inBuf)) n += v;
-    return n;
-  }
 
-  /** Ce que rapporterait le contenu d'une benne de revente. */
-  sellValue(m: Machine): number {
-    let v = 0;
-    for (const [k, n] of Object.entries(m.inBuf)) v += item(k).value * n;
-    return Math.floor(v * RULES.sellRate);
-  }
 
-  /** Secondes avant le prochain passage du gros drone. */
-  get nextPickup(): number {
-    return Math.max(0, RULES.sellEvery - this.sellT);
-  }
 
-  /** Vide une benne et paie son contenu. */
-  private sell(m: Machine): number {
-    const money = this.sellValue(m);
-    const n = this.sellCount(m);
-    m.inBuf = {};
-    if (money > 0) this.earn(money);
-    if (n > 0) this.emit({ type: 'sold', money, count: n });
-    return money;
-  }
-
-  private tickSell(dt: number): void {
-    this.sellT += dt;
-    if (this.sellT >= RULES.sellEvery) {
-      this.sellT -= RULES.sellEvery;
-      for (const m of this.factory.machines.values()) {
-        if (m.type === 'revente' && m.built && this.sellCount(m) > 0) this.pickups.push({ id: m.id, t: 0, x: m.x + m.w / 2, y: m.y + m.h / 2, done: false });
-      }
-    }
-    for (const p of this.pickups) {
-      const before = p.t;
-      p.t += dt;
-      if (before < PICKUP_TIME / 2 && p.t >= PICKUP_TIME / 2) {
-        const m = this.factory.machines.get(p.id);
-        if (m) this.sell(m);
-        p.done = true;
-      }
-    }
-    this.pickups = this.pickups.filter((p) => p.t < PICKUP_TIME);
-  }
 
   get finalPalier(): boolean {
     return this.palier >= MAX_PALIER;
@@ -886,20 +704,17 @@ export class Game {
     return v;
   }
 
-  /** Chenilles et antennes : vitesse du robot et portée de ses drones (le meilleur niveau débloqué). */
+  /** Chenilles : vitesse du robot (le meilleur niveau débloqué). */
   robotSpeedMult = 1;
-  droneRangeMult = 1;
 
   private applyUnlocks(): void {
     const speed = 1;
     let slots = RULES.chestSlots, copy = 1, size = 20, nest = false;
     let beltMax = RULES.beltBaseMax, drillMax = RULES.drillBaseMax;
     this.robotSpeedMult = 1;
-    this.droneRangeMult = 1;
     for (const id of this.unlocks) {
       const e = NODE[id]?.effect;
       if (e?.kind === 'robotSpeed') this.robotSpeedMult = Math.max(this.robotSpeedMult, e.mult);
-      if (e?.kind === 'droneRange') this.droneRangeMult = Math.max(this.droneRangeMult, e.mult);
       if (e?.kind === 'beltLevel') beltMax = Math.max(beltMax, e.max);
       if (e?.kind === 'drillLevel') drillMax = Math.max(drillMax, e.max);
       if (e?.kind === 'chestSlots') slots = Math.max(slots, e.slots);
@@ -920,10 +735,6 @@ export class Game {
     this.factory.speedMult = speed;
     this.factory.chestSlots = slots;
     this.factory.setElectric([...this.unlocks].flatMap((id) => { const e = NODE[id]?.effect; return e?.kind === 'electric' ? [e.id] : []; }));
-    if (this.drones.length !== this.droneCount && this.drones.length > 0) {
-      this.rebuildDrones();
-      this.emit({ type: 'drones' });
-    }
   }
 
   // ---------- Absence ----------
@@ -952,8 +763,6 @@ export class Game {
     }
     this.checkPalier();
     if (this.order && orderComplete(this.order)) this.completeOrder();
-    // Le gros drone est passé pendant l'absence : les bennes de revente sont vidées.
-    for (const m of this.factory.machines.values()) if (m.type === 'revente' && m.built) this.sell(m);
     this.emit({ type: 'order' });
     return { away, counted, gained };
   }
@@ -1024,11 +833,12 @@ export class Game {
           if (c.jump) b.jump = Math.min(c.jump, RULES.bridgeSpan);
         }
       } else {
-        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, !!this.inAtelier);
+        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, true);
         if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
-        if (!this.inAtelier) this.pending.push({ kind: 'belt', k: key(c.x, c.y) });
+        if (!this.inAtelier && this.world.reveal(c.x, c.y, 2)) this.emit({ type: 'reveal' });
       }
     }
+    this.view.markBuilt();
     this.emit({ type: 'factory' });
     return true;
   }
@@ -1485,66 +1295,15 @@ export class Game {
     if (this.world.reveal(cx, cy, RULES.revealRobot)) this.emit({ type: 'reveal' });
   }
 
-  /** Le robot a-t-il du charbon pour travailler ? (Il brûle seulement quand il travaille.) */
-  private robotPowered(dt: number): boolean {
-    const r = this.robot;
-    // Le robot remplit sa case carburant avec son inventaire : le carburant d'abord (il dure 5 fois plus), puis le charbon.
-    for (const f of FUELS) if (r.fuel < RULES.fuelStack) addTo(r, r.inv.take(f, RULES.fuelStack - r.fuel), f);
-    if (!r.active) return r.burn > 0 || r.fuel > 0;
-    if (r.burn <= 0 && !burnOne(r, RULES.coalRobotSeconds)) return false;
-    r.burn -= dt;
-    return true;
-  }
 
-  /** Vrai si le robot n'a plus du tout de charbon (il avance alors au ralenti). */
-  get robotOutOfCoal(): boolean {
-    return this.robot.fuel <= 0 && this.robot.burn <= 0;
-  }
 
-  /** Le robot construit lui-même : il va au chantier le plus proche et le construit à courte portée. */
+  /** Le robot se déplace où on l'envoie (il ne construit plus, ne mine plus, ne porte plus rien). */
   private tickRobot(dt: number): void {
     const r = this.robot;
-    const power = this.robotPowered(dt) ? 1 : RULES.robotNoFuelSpeed;
-    r.active = false;
-    this.robotBuilding = false;
-    if (this.robotJob && !this.jobPos(this.robotJob)) { this.robotJob = null; this.robotT = 0; }
-    if (!this.robotJob && this.pending.length) {
-      const taken = this.droneJobs();
-      let best: Job | null = null, bd = Infinity;
-      for (const j of this.pending) {
-        if (taken.has(j)) continue;
-        const p = this.jobPos(j);
-        if (!p) continue;
-        const d = Math.hypot(p.x - r.x, p.y - r.y);
-        if (d < bd) { bd = d; best = j; }
-      }
-      this.robotJob = best;
-      this.robotT = 0;
-    }
-    if (this.robotJob && !r.manual) {
-      const p = this.jobPos(this.robotJob)!;
-      const d = Math.hypot(p.x - r.x, p.y - r.y);
-      if (d <= RULES.robotBuildRange) {
-        r.target = null;
-        this.robotBuilding = true;
-        r.active = true;
-        this.robotT += dt * power;
-        const need = this.robotJob.kind === 'belt' ? RULES.robotBeltTime : RULES.robotMachineTime;
-        if (this.robotT >= need) {
-          this.finishJob(this.robotJob);
-          this.robotJob = null;
-          this.robotT = 0;
-        }
-      } else {
-        const k = (d - (RULES.robotBuildRange - 0.6)) / d;
-        r.target = { x: r.x + (p.x - r.x) * k, y: r.y + (p.y - r.y) * k };
-      }
-    }
     if (r.target) {
       const dx = r.target.x - r.x, dy = r.target.y - r.y;
       const d = Math.hypot(dx, dy);
-      const step = RULES.robotSpeed * this.robotSpeedMult * dt * power;
-      r.active = true;
+      const step = RULES.robotSpeed * this.robotSpeedMult * dt;
       if (d <= step) {
         r.x = r.target.x; r.y = r.target.y; r.target = null; r.manual = false; r.moving = false;
       } else {
@@ -1556,193 +1315,8 @@ export class Game {
     } else {
       r.moving = false;
     }
-    // À l'arrêt sur un filon, sans chantier, le robot mine et garde ce qu'il trouve.
-    r.mining = null;
-    if (!r.target && !this.robotBuilding) {
-      const p = this.world.patchAt(Math.floor(r.x), Math.floor(r.y));
-      if (p && p.type !== 'eau' && r.inv.room(p.type) > 0) {
-        r.mining = p.type;
-        r.active = true;
-        r.mineT += dt * power * RULES.robotMineRate * RICHNESS_RATE[p.richness];
-        if (r.mineT >= 1) {
-          r.mineT -= 1;
-          r.inv.add(p.type, 1);
-          r.mined++;
-          this.emit({ type: 'inventory' });
-        }
-      }
-    }
-    // Fabrication à la main : en même temps que le reste, et au charbon elle aussi.
-    const job = this.craftQueue[0];
-    if (job) {
-      r.active = true;
-      job.t = Math.min(job.total, job.t + dt * power);
-      if (job.t >= job.total) this.finishCraft(job);
-    }
   }
 
-  // ---------- Inventaire du robot : coffres et fabrication ----------
-
-  private have(): Record<string, number> {
-    const h: Record<string, number> = {};
-    for (const sl of this.robot.inv.slots) if (sl) h[sl.t] = (h[sl.t] ?? 0) + sl.n;
-    return h;
-  }
-
-  /** Ce que le robot peut fabriquer avec son inventaire (ou ce qui manque). */
-  craftPlan(target: string, n: number) {
-    return planCraft(target, n, this.have(), (id) => this.hasMachine(id));
-  }
-
-  /** Lance une fabrication : les ingrédients sont pris tout de suite. Renvoie un message d'erreur, ou null. */
-  startCraft(target: string, n: number): string | null {
-    if (this.craftQueue.length >= CRAFT_QUEUE) return 'Trop de fabrications en attente';
-    const res = this.craftPlan(target, n);
-    if (!('plan' in res)) return 'Il manque des matières';
-    const { plan } = res;
-    // Il faut la place pour le résultat, une fois les ingrédients pris.
-    const test = this.robot.inv.clone();
-    for (const [k, v] of Object.entries(plan.consume)) test.take(k, v);
-    let fits = test.add(target, n) === n;
-    for (const [k, v] of Object.entries(plan.extra)) fits = fits && test.add(k, v) === v;
-    for (const j of this.craftQueue) {
-      fits = fits && test.add(j.target, j.n) === j.n;
-      for (const [k, v] of Object.entries(j.extra)) fits = fits && test.add(k, v) === v;
-    }
-    if (!fits) return 'Pas assez de place dans l’inventaire';
-    for (const [k, v] of Object.entries(plan.consume)) this.robot.inv.take(k, v);
-    this.craftQueue.push({ target, n, consume: plan.consume, extra: plan.extra, steps: plan.steps, total: Math.max(0.5, plan.time), t: 0 });
-    this.emit({ type: 'inventory' });
-    return null;
-  }
-
-  private finishCraft(job: CraftJob): void {
-    const test = this.robot.inv.clone();
-    let fits = test.add(job.target, job.n) === job.n;
-    for (const [k, v] of Object.entries(job.extra)) fits = fits && test.add(k, v) === v;
-    if (!fits) { job.blocked = true; return; }
-    job.blocked = false;
-    this.robot.inv.add(job.target, job.n);
-    for (const [k, v] of Object.entries(job.extra)) this.robot.inv.add(k, v);
-    this.craftQueue.shift();
-    this.emit({ type: 'crafted', item: job.target, n: job.n });
-    this.emit({ type: 'inventory' });
-  }
-
-  /** Annule une fabrication : les ingrédients reviennent (ce qui ne rentre pas est perdu). */
-  cancelCraft(i: number): void {
-    const job = this.craftQueue[i];
-    if (!job) return;
-    this.craftQueue.splice(i, 1);
-    for (const [k, v] of Object.entries(job.consume)) this.robot.inv.add(k, v);
-    this.emit({ type: 'inventory' });
-  }
-
-  /** L'étape en cours d'une fabrication (pour l'afficher). */
-  static craftStep(job: CraftJob): CraftStep | null {
-    let acc = 0;
-    for (const st of job.steps) {
-      acc += st.time;
-      if (job.t < acc) return st;
-    }
-    return job.steps[job.steps.length - 1] ?? null;
-  }
-
-  /** Du coffre vers le robot ; renvoie la quantité déplacée. */
-  chestToRobot(m: Machine, item: string, n: number, which: 'in' | 'out' = 'in'): number {
-    const buf = which === 'out' ? m.outBuf : m.inBuf;
-    const k = Math.min(n, buf[item] ?? 0, this.robot.inv.room(item));
-    if (k <= 0) return 0;
-    this.factory.takeFromStorage(m, item, k, buf);
-    this.robot.inv.add(item, k);
-    this.emit({ type: 'inventory' });
-    return k;
-  }
-
-  /** D'une case du robot vers le coffre ; renvoie la quantité déplacée. */
-  robotToChest(m: Machine, slot: number, n: number, which: 'in' | 'out' = 'in'): number {
-    const sl = this.robot.inv.slots[slot];
-    if (!sl) return 0;
-    const buf = which === 'out' ? m.outBuf : m.inBuf;
-    const k = Math.min(n, sl.n, this.factory.storageRoom(m, sl.t, buf));
-    if (k <= 0) return 0;
-    const t = sl.t;
-    this.robot.inv.takeAt(slot, k);
-    this.factory.putInStorage(m, t, k, buf);
-    this.emit({ type: 'inventory' });
-    return k;
-  }
-
-  /** D'une case du robot vers le Noyau, le Laboratoire, le Comptoir ou la Revente ; renvoie la quantité donnée. */
-  robotToBuilding(m: Machine, slot: number, n: number): number {
-    const sl = this.robot.inv.slots[slot];
-    if (!sl) return 0;
-    const t = sl.t;
-    const k = Math.min(n, sl.n, this.accepts(m, t));
-    if (k <= 0) return 0;
-    this.robot.inv.takeAt(slot, k);
-    const got = this.receive(m, t, k);
-    if (got < k) this.robot.inv.add(t, k - got);
-    this.emit({ type: 'inventory' });
-    return got;
-  }
-
-  /** Combien une machine (four, foreuse…) accepte encore de cet objet : charbon dans sa case carburant, ingrédients. */
-  machineAccepts(m: Machine, t: string): number {
-    const def = machineDef(m.type);
-    if (m.built && def.kind === 'rocket') return m.craft ? 0 : Math.max(0, (ROCKET_NEEDS[t] ?? 0) - (m.inBuf[t] ?? 0));
-    if (!m.built || (def.kind !== 'crafter' && def.kind !== 'drill' && def.kind !== 'station' && def.kind !== 'generator')) return 0;
-    let n = 0;
-    const ingredient = def.recipes.some((r) => r.in[t]);
-    if (isFuel(t) && def.coal) n += this.factory.fuelRoom(m);
-    if (def.kind === 'crafter' && ingredient) n += Math.max(0, RULES.machineBuffer - (m.inBuf[t] ?? 0));
-    return n;
-  }
-
-  /** D'une case du robot vers une machine ; renvoie la quantité donnée. */
-  robotToMachine(m: Machine, slot: number, n: number): number {
-    const sl = this.robot.inv.slots[slot];
-    if (!sl) return 0;
-    const t = sl.t;
-    const k = Math.min(n, sl.n, this.machineAccepts(m, t));
-    if (k <= 0) return 0;
-    this.robot.inv.takeAt(slot, k);
-    let rest = k;
-    if (isFuel(t)) rest -= this.factory.addFuel(m, rest, t);
-    if (rest > 0) m.inBuf[t] = (m.inBuf[t] ?? 0) + rest;
-    this.emit({ type: 'inventory' });
-    return k;
-  }
-
-  /** Reprend des objets d'une machine (en attente ou prêts à sortir) ; renvoie la quantité reprise. */
-  machineToRobot(m: Machine, which: 'in' | 'out', t: string, n: number): number {
-    const buf = which === 'in' ? m.inBuf : m.outBuf;
-    const k = Math.min(n, buf[t] ?? 0, this.robot.inv.room(t));
-    if (k <= 0) return 0;
-    buf[t] -= k;
-    if (buf[t] <= 0) delete buf[t];
-    this.robot.inv.add(t, k);
-    this.emit({ type: 'inventory' });
-    return k;
-  }
-
-  /** Sépare une pile du robot en deux. */
-  /** Détruit n objets d'une case du robot (pour faire de la place). Renvoie la quantité détruite. */
-  destroyRobotItems(slot: number, n: number): number {
-    const k = this.robot.inv.takeAt(slot, Math.max(0, Math.floor(n)));
-    if (k > 0) this.emit({ type: 'inventory' });
-    return k;
-  }
-
-  splitRobotSlot(slot: number, n: number): boolean {
-    const ok = this.robot.inv.split(slot, n) >= 0;
-    if (ok) this.emit({ type: 'inventory' });
-    return ok;
-  }
-
-  // ---------- Bâtiments offerts par le Noyau ----------
-
-  /** Le Comptoir arrive après les premiers pas, le Laboratoire un peu plus tard. */
   private tickGifts(): void {
     const t = this.played;
     // Un bâtiment offert qui a disparu (ancienne erreur de sauvegarde) : le Noyau le rend.
@@ -1801,358 +1375,7 @@ export class Game {
     return m;
   }
 
-  // ---------- Drones ----------
 
-  private droneJobs(): Set<Job> {
-    const s = new Set<Job>();
-    for (const d of this.allDrones()) if (d.task?.kind === 'build') s.add(d.task.job);
-    return s;
-  }
-
-  /** Les drones des stations, par numéro de station. */
-  stationDrones = new Map<number, Drone>();
-
-  /** Tous les drones : ceux du robot, puis ceux des stations. */
-  allDrones(): Drone[] {
-    return [...this.drones, ...this.stationDrones.values()];
-  }
-
-  /** Le point autour duquel travaille le drone en cours : le robot, ou sa station. */
-  private anchor = { x: 0, y: 0, build: RULES.droneRange, supply: RULES.droneRange };
-
-  private useAnchor(d: Drone): void {
-    const st = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
-    if (st) {
-      const c = this.center(st);
-      this.anchor = { x: c.x, y: c.y, build: RULES.stationRange, supply: RULES.stationRange };
-    } else {
-      this.anchor = { x: this.robot.x, y: this.robot.y, build: RULES.droneRange * this.droneRangeMult, supply: RULES.droneRange * this.droneRangeMult };
-    }
-  }
-
-  /** Une station construite a son drone ; une station retirée l'emporte avec elle. */
-  /** Combien de drones a une station (trois pour un hangar). */
-  stationCapacity(m: Machine): number {
-    return m.type === 'hangar' ? RULES.hangarDrones : 1;
-  }
-
-  /** Clé d'un drone de station : le numéro de la station, puis + 1 000 000 par drone en plus (hangar). */
-  stationKey(id: number, k: number): number {
-    return id + k * 1_000_000;
-  }
-
-  private syncStations(): void {
-    for (const m of this.factory.machines.values()) {
-      if (machineDef(m.type).kind !== 'station' || !m.built) continue;
-      const n = this.stationCapacity(m);
-      for (let k = 0; k < n; k++) {
-        const key = this.stationKey(m.id, k);
-        if (this.stationDrones.has(key)) continue;
-        const c = this.center(m);
-        this.stationDrones.set(key, { x: c.x + (k - (n - 1) / 2) * 0.8, y: c.y - 1, station: m.id, state: 'home', task: null, t: 0, slot: k, fuel: RULES.fuelStack, burn: 0, cargo: null, priorities: [...DEFAULT_ORDER] });
-      }
-    }
-    for (const [key, d] of this.stationDrones) {
-      const m = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
-      const k = Math.floor(key / 1_000_000);
-      if (!m || machineDef(m.type).kind !== 'station' || !m.built || k >= this.stationCapacity(m)) this.stationDrones.delete(key);
-    }
-  }
-
-  setStationPriorities(id: number, list: DronePriority[]): void {
-    // Tous les drones de la station (trois pour un hangar) prennent le même ordre.
-    for (const d of this.stationDrones.values()) {
-      if (d.station !== id) continue;
-      d.priorities = cleanOrder(list);
-      d.task = null;
-      if (d.state === 'fly') d.state = 'home';
-    }
-  }
-
-  private near(p: { x: number; y: number }, range = this.anchor.build): boolean {
-    return Math.hypot(p.x - this.anchor.x, p.y - this.anchor.y) <= range;
-  }
-
-  private center(m: Machine): { x: number; y: number } {
-    return { x: m.x + m.w / 2, y: m.y + m.h / 2 };
-  }
-
-  /** Les bâtiments qui reçoivent, s'ils existent. */
-  private building(type: 'noyau' | 'laboratoire' | 'comptoir'): Machine | null {
-    for (const m of this.factory.machines.values()) if (m.type === type && m.built) return m;
-    return null;
-  }
-
-  /** Le coffre à portée le plus proche du drone qui contient cet objet. Les drones ne se servent jamais dans l'inventaire du robot. */
-  private sourceFor(d: Drone, item: string): Source | null {
-    // Le drone d'une station prend d'abord le charbon de sa station (elle en garde 2 pour lui).
-    if (item === 'charbon' && d.station !== undefined) {
-      const st = this.factory.machines.get(d.station);
-      if (st?.built && st.fuel > RULES.stationReserve) return { kind: 'station', id: st.id };
-    }
-    if (item === 'carburant' && d.station !== undefined) {
-      const st = this.factory.machines.get(d.station);
-      if (st?.built && (st.carb ?? 0) > 0 && st.fuel > RULES.stationReserve) return { kind: 'station', id: st.id };
-    }
-    let best: Source | null = null, bd = Infinity;
-    for (const m of this.factory.machines.values()) {
-      if (machineDef(m.type).kind !== 'storage' || !m.built || !(this.factory.outOf(m)[item] > 0)) continue;
-      const c = this.center(m);
-      if (!this.near(c, this.anchor.supply)) continue;
-      const dist = Math.hypot(c.x - d.x, c.y - d.y);
-      if (dist < bd) { bd = dist; best = { kind: 'chest', id: m.id }; }
-    }
-    return best;
-  }
-
-  /** Où prendre de quoi brûler : du charbon d'abord, sinon du carburant. */
-  private fuelSource(d: Drone): { src: Source; item: string } | null {
-    for (const item of FUELS) {
-      const src = this.sourceFor(d, item);
-      if (src) return { src, item };
-    }
-    return null;
-  }
-
-  /** Le coffre où rendre la cargaison du drone : celui d'où elle vient, s'il existe encore et a de la place. */
-  private returnChest(d: Drone): Machine | null {
-    if (!d.cargo || d.from === undefined) return null;
-    const m = this.factory.machines.get(d.from);
-    if (!m || !m.built) return null;
-    // Le charbon pris dans une station y retourne.
-    if (machineDef(m.type).kind === 'station') return isFuel(d.cargo.t) && this.factory.fuelRoom(m) > 0 ? m : null;
-    if (machineDef(m.type).kind !== 'storage') return null;
-    return this.factory.storageRoom(m, d.cargo.t, this.factory.outOf(m)) > 0 ? m : null;
-  }
-
-  /** Ce qui manque à un bâtiment, et le bâtiment lui-même. */
-  private needsOf(cat: 'noyau' | 'laboratoire' | 'comptoir', d: Drone): { m: Machine; needs: Record<string, number> } | null {
-    const m = this.building(cat);
-    if (!m) return null;
-    // Le drone d'une station ne quitte pas son rayon : le bâtiment doit y être.
-    if (d.station !== undefined && !this.near(this.center(m), this.anchor.supply)) return null;
-    const needs = cat === 'noyau' ? this.noyauNeeds() : cat === 'laboratoire' ? this.labNeeds() : this.comptoirNeeds();
-    return Object.keys(needs).length ? { m, needs } : null;
-  }
-
-  private pickTask(d: Drone): DroneTask | null {
-    const others = this.allDrones().filter((o) => o !== d && o.task);
-    const reservedFuel = new Set(others.map((o) => (o.task!.kind === 'refuel' ? o.task!.id : -1)));
-
-    // Son propre carburant d'abord, toujours : une recharge reliée au courant, à portée, sinon du charbon.
-    if (d.fuel <= 3) {
-      const ch = [...this.factory.machines.values()]
-        .filter((m) => m.built && machineDef(m.type).kind === 'charger' && (m.power ?? 0) > 0 && this.near(this.center(m), this.anchor.supply))
-        .sort((a, b) => Math.hypot(this.center(a).x - d.x, this.center(a).y - d.y) - Math.hypot(this.center(b).x - d.x, this.center(b).y - d.y))[0];
-      if (ch) return { kind: 'recharge', id: ch.id };
-      const fs = this.fuelSource(d);
-      if (fs) return { kind: 'fetch', from: fs.src, item: fs.item, self: true };
-    }
-    // Machines à portée qui ont besoin de charbon, la plus vide d'abord.
-    const needy = [...this.factory.machines.values()]
-      .filter((m) => m.built && this.factory.fuelRoom(m) > 0 && !reservedFuel.has(m.id) && m.id !== d.station && this.near(this.center(m), this.anchor.supply))
-      .sort((a, b) => a.fuel - b.fuel);
-    const order = d.priorities;
-    const refueler = order[0] === 'carburant';
-    const cargo = d.cargo;
-
-    // 1. Avec une cargaison : la livrer là où elle sert, dans l'ordre des priorités.
-    if (cargo) {
-      for (const cat of order) {
-        if (cat === 'carburant') {
-          if (isFuel(cargo.t) && needy[0]) return { kind: 'refuel', id: needy[0].id };
-          if (isFuel(cargo.t) && refueler && cargo.n < RULES.invStack) {
-            const src = this.sourceFor(d, cargo.t);
-            if (src) return { kind: 'fetch', from: src, item: cargo.t };
-          }
-        } else if (cat === 'chantiers') {
-          const job = this.freeJob();
-          if (job) return { kind: 'build', job };
-        } else {
-          const nb = this.needsOf(cat, d);
-          if (nb && nb.needs[cargo.t]) return { kind: 'deliver', id: nb.m.id };
-        }
-      }
-      // Personne n'en veut (sauf le charbon d'un drone ravitailleur, qu'il garde pour la prochaine machine) :
-      // retour au coffre d'où elle vient ; s'il n'existe plus ou qu'il est plein, la cargaison est détruite.
-      if (!(isFuel(cargo.t) && refueler)) {
-        const home = this.returnChest(d);
-        if (home) return machineDef(home.type).kind === 'station' ? { kind: 'refuel', id: home.id } : { kind: 'deliver', id: home.id };
-        d.cargo = null;
-        d.from = undefined;
-      }
-      return null;
-    }
-
-    // 2. Les mains vides : la première tâche utile dans l'ordre des priorités.
-    for (const cat of order) {
-      if (cat === 'carburant') {
-        if (needy.length || refueler) {
-          const fs = this.fuelSource(d);
-          if (fs) return { kind: 'fetch', from: fs.src, item: fs.item };
-        }
-      } else if (cat === 'chantiers') {
-        const job = this.freeJob();
-        if (job) return { kind: 'build', job };
-      } else {
-        const nb = this.needsOf(cat, d);
-        if (!nb) continue;
-        for (const [item, need] of Object.entries(nb.needs)) {
-          const src = this.sourceFor(d, item);
-          // Juste ce qu'il faut : le reste reste dans le coffre ou chez le robot.
-          if (src) return { kind: 'fetch', from: src, item, max: need };
-        }
-      }
-    }
-    return null;
-  }
-
-  /** Un chantier à portée que personne ne fait encore. */
-  private freeJob(): Job | null {
-    const taken = this.droneJobs();
-    return this.pending.find((j) => {
-      if (taken.has(j) || j === this.robotJob) return false;
-      const p = this.jobPos(j);
-      return p && this.near(p);
-    }) ?? null;
-  }
-
-  private taskPos(t: DroneTask): { x: number; y: number } | null {
-    if (t.kind === 'build') return this.jobPos(t.job);
-    const id = t.kind === 'fetch' ? (t.from as { id: number }).id : t.id;
-    const m = this.factory.machines.get(id);
-    return m && m.built ? this.center(m) : null;
-  }
-
-  private doTask(d: Drone, t: DroneTask): void {
-    const f = this.factory;
-    if (t.kind === 'fetch') {
-      const take = (n: number): number => {
-        if (n <= 0) return 0;
-        const m = f.machines.get(t.from.id);
-        if (!m) return 0;
-        if (t.from.kind === 'station') {
-          // Dans la case carburant de la station (on lui en laisse un peu pour le drone).
-          return f.takeFuel(m, n, t.item, RULES.stationReserve);
-        }
-        return f.takeFromStorage(m, t.item, n);
-      };
-      if (t.self) addTo(d, take(RULES.fuelStack - d.fuel), t.item);
-      if (!d.cargo || d.cargo.t === t.item) {
-        const room = RULES.invStack - (d.cargo?.n ?? 0);
-        const got = take(t.max !== undefined ? Math.min(room, t.max) : room);
-        if (got > 0) {
-          d.cargo = { t: t.item, n: (d.cargo?.n ?? 0) + got };
-          d.from = t.from.id;
-        }
-      }
-
-    } else if (t.kind === 'recharge') {
-      const m = f.machines.get(t.id);
-      if (m && (m.power ?? 0) > 0) { d.fuel = RULES.fuelStack; d.carb = 0; d.burn = RULES.coalDroneSeconds; }
-    } else if (t.kind === 'refuel' && d.cargo && isFuel(d.cargo.t)) {
-      const m = f.machines.get(t.id);
-      if (m) d.cargo.n -= f.addFuel(m, d.cargo.n, d.cargo.t);
-    } else if (t.kind === 'deliver' && d.cargo) {
-      const m = f.machines.get(t.id);
-      if (m) {
-        const kind = machineDef(m.type).kind;
-        // Une cargaison prise dans les arrivées d'une gare y retourne (pas dans ses départs).
-        d.cargo.n -= kind === 'core' || kind === 'lab' || kind === 'missions'
-          ? this.receive(m, d.cargo.t, d.cargo.n)
-          : f.isStop(m) && d.from === m.id ? f.putInStorage(m, d.cargo.t, d.cargo.n, m.outBuf)
-          : f.putInMachine(m, d.cargo.t, d.cargo.n);
-      }
-    }
-    if (d.cargo && d.cargo.n <= 0) d.cargo = null;
-    if (!d.cargo) d.from = undefined;
-  }
-
-  /** Range les tâches d'un drone, de la plus importante à la moins importante. */
-  setDronePriorities(i: number, list: DronePriority[]): void {
-    const d = this.drones[i];
-    if (!d) return;
-    d.priorities = cleanOrder(list);
-    d.task = null;
-    if (d.state === 'fly') d.state = 'home';
-  }
-
-  /** Met une tâche en tête de liste. */
-  setDronePriority(i: number, p: DronePriority): void {
-    const d = this.drones[i];
-    if (d) this.setDronePriorities(i, [p, ...d.priorities.filter((x) => x !== p)]);
-  }
-
-  /** Le drone brûle du charbon en vol ; faux s'il n'en a plus. */
-  private droneFuel(d: Drone, dt: number): boolean {
-    if (d.burn <= 0 && !burnOne(d, RULES.coalDroneSeconds)) return false;
-    d.burn -= dt;
-    return true;
-  }
-
-  private tickDrones(dt: number): void {
-    const r = this.robot;
-    this.syncStations();
-    for (const d of this.allDrones()) {
-      this.useAnchor(d);
-      const st = d.station !== undefined ? this.factory.machines.get(d.station) : undefined;
-      if (d.state === 'parked' && st) {
-        // Posé sur sa station : il repart dès qu'elle a du charbon dans sa case carburant.
-        d.x = this.anchor.x; d.y = this.anchor.y - 0.6;
-        if (moveFuel(st, d, RULES.fuelStack - d.fuel) > 0) d.state = 'home';
-        continue;
-      }
-      if (d.state === 'parked') {
-        // Posé sur le robot : il repart dès que le robot peut partager sa case carburant
-        // (jamais son inventaire ; le robot y remplit lui-même sa case carburant).
-        d.x = r.x; d.y = r.y - 0.9;
-        if (moveFuel(r, d, Math.min(RULES.fuelStack - d.fuel, Math.floor(r.fuel / 2))) > 0) d.state = 'home';
-        continue;
-      }
-      // Sans travail, il se pose sur le robot (qui le porte) ou sur sa station : il ne brûle plus de charbon.
-      const restAt = st ? { x: this.anchor.x, y: this.anchor.y - 0.6 } : { x: r.x, y: r.y - 0.9 };
-      if (d.state === 'rest') {
-        d.x = restAt.x; d.y = restAt.y;
-        d.task = this.pickTask(d);
-        if (!d.task) continue;
-        d.state = 'home';
-      }
-      if (d.task && !this.taskPos(d.task)) d.task = null;
-      if (!d.task && d.state !== 'work') d.task = this.pickTask(d);
-      const target = d.task ? this.taskPos(d.task)! : restAt;
-      const dist = Math.hypot(target.x - d.x, target.y - d.y);
-      if (d.state === 'work' && d.task?.kind === 'build') {
-        d.t += dt;
-        const need = d.task.job.kind === 'belt' ? RULES.beltBuildTime : RULES.machineBuildTime;
-        if (d.t >= need) {
-          this.finishJob(d.task.job);
-          d.task = null;
-          d.state = 'home';
-        }
-        continue;
-      }
-      if (d.state === 'work') d.state = 'home';
-      if (dist > 0.05 && (d.task || dist > 0.6)) {
-        // En vol : il brûle du charbon. Sans charbon, il revient se poser sur le robot.
-        if (!this.droneFuel(d, dt)) {
-          d.task = null;
-          d.state = 'parked';
-          continue;
-        }
-        d.state = 'fly';
-        const step = RULES.droneSpeed * dt;
-        if (dist <= step) { d.x = target.x; d.y = target.y; }
-        else { d.x += ((target.x - d.x) / dist) * step; d.y += ((target.y - d.y) / dist) * step; }
-      } else if (!d.task) {
-        d.state = 'rest';
-        d.x = restAt.x; d.y = restAt.y;
-      }
-      if (d.task && Math.hypot(target.x - d.x, target.y - d.y) < 0.05) {
-        if (d.task.kind === 'build') { d.state = 'work'; d.t = 0; }
-        else { this.doTask(d, d.task); d.task = null; d.state = 'home'; }
-      }
-    }
-  }
 
   /** Moment de la journée, de 0 à 1 (0 : le matin ; la nuit tombe vers 0,6). */
   get dayTime(): number {
@@ -2255,9 +1478,7 @@ export class Game {
       if (this.statHistory.length > 61) this.statHistory.shift();
     }
     this.tickRobot(dt);
-    this.tickDrones(dt);
     this.factory.tick(dt);
-    this.tickSell(dt);
     this.tickGifts();
   }
 
@@ -2272,18 +1493,12 @@ export class Game {
       pending: this.pending, fog: this.world.saveFog(),
       order: this.order, choices: this.choices, stock: {},
       orderSeq: this.orderSeq, rerolls: this.rerolls, delivered: this.delivered,
-      drones: this.droneCount,
       unlocks: [...this.unlocks],
-      palier: this.palier, palierDone: this.palierDone, lab: this.lab, extraDrones: this.extraDrones,
-      look: this.look, tips: this.tips, played: Math.floor(this.played), sellT: this.sellT,
+      palier: this.palier, palierDone: this.palierDone, lab: this.lab,
+      look: this.look, tips: this.tips, played: Math.floor(this.played),
       gifts: this.gifts, ordersDone: this.ordersDone,
       stats: this.factory.stats, achievements: [...this.achievements], rockets: this.rockets,
       pollution: Object.fromEntries([...this.pollution].filter(([, v]) => v >= 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])),
-      crew: {
-        robot: { fuel: r.fuel, carb: r.carb, burn: r.burn, inv: r.inv.save(), craft: this.craftQueue },
-        drones: this.drones.map((d) => ({ fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
-        stations: [...this.stationDrones.entries()].map(([id, d]) => ({ id, fuel: d.fuel, carb: d.carb, burn: d.burn, cargo: d.cargo ? { ...d.cargo } : null, from: d.from, priorities: [...d.priorities] })),
-      },
     };
   }
 
@@ -2298,7 +1513,15 @@ export class Game {
     for (const id of s.achievements ?? []) this.achievements.add(id);
     this.rockets = s.rockets ?? 0;
     for (const [k, v] of Object.entries(s.pollution ?? {})) this.pollution.set(k, v);
-    this.pending = s.pending.filter((j) => (j.kind === 'belt' ? this.factory.belts.has(j.k) : this.factory.machines.has(j.id)));
+    // Les chantiers d'une ancienne partie se terminent tout de suite (plus de drones pour les construire).
+    for (const j of s.pending ?? []) {
+      if (j.kind === 'belt') { const b = this.factory.belts.get(j.k); if (b) b.built = true; }
+      else { const m = this.factory.machines.get(j.id); if (m) m.built = true; }
+    }
+    for (const b of this.factory.belts.values()) b.built = true;
+    for (const m of this.factory.machines.values()) m.built = true;
+    this.factory.markBuilt();
+    this.pending = [];
     this.order = s.order; this.choices = s.choices;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;
     if (this.order) { this.order.xp = 0; delete this.order.equip; }
@@ -2306,7 +1529,6 @@ export class Game {
     // Les parties d'avant les conseils n'en reçoivent pas.
     this.tips = s.tips ? { done: [...(s.tips.done ?? [])], off: !!s.tips.off } : { done: [], off: true };
     this.played = s.played ?? 0;
-    this.sellT = s.sellT ?? 0;
     this.ordersDone = s.ordersDone ?? 0;
     this.gifts = { ...(s.gifts ?? {}) };
     // Déjà posés avant les cadeaux : ils comptent comme offerts.
@@ -2315,7 +1537,6 @@ export class Game {
       this.palier = s.palier ?? 1;
       this.palierDone = s.palierDone ?? {};
       this.lab = s.lab ?? {};
-      this.extraDrones = s.extraDrones ?? 0;
       this.unlocks = new Set([...BASE_UNLOCKS, ...(s.unlocks ?? [])]);
     } else {
       // Avant les paliers : on garde les déblocages (ou ceux qu'ouvrait le niveau), on repart du palier 1.
@@ -2326,8 +1547,6 @@ export class Game {
         for (const [id, lvl] of Object.entries(legacy)) if ((s.level ?? 1) >= lvl) this.unlocks.add(id);
         for (const x of ALL_NODES) if (this.unlocks.has(x.id)) x.parents.forEach((p) => this.unlocks.add(p));
       }
-      const fromTree = [...this.unlocks].filter((id) => NODE[id]?.effect.kind === 'drone').length;
-      this.extraDrones = Math.max(0, (s.drones ?? RULES.startDrones) - RULES.startDrones - fromTree);
     }
     // La Grande foreuse est devenue « Forage profond » (foreuses jusqu'au niveau 5).
     if (this.unlocks.delete('super_foreuse')) this.unlocks.add('forage');
@@ -2339,24 +1558,6 @@ export class Game {
       const lvl = this.unlocks.has('express') ? 5 : this.unlocks.has('rapide') ? 3 : 1;
       const raise = (f: Factory) => { for (const b of f.belts.values()) b.lvl = Math.max(b.lvl ?? 1, lvl); for (const m of f.machines.values()) if (m.inner) raise(m.inner); };
       if (lvl > 1) raise(this.factory);
-    }
-    this.rebuildDrones();
-    if (s.crew) {
-      const r = this.robot;
-      r.fuel = s.crew.robot.fuel; r.burn = s.crew.robot.burn; r.carb = Math.min(s.crew.robot.carb ?? 0, r.fuel); r.inv.load(s.crew.robot.inv);
-      this.craftQueue = (s.crew.robot.craft ?? []).filter((j) => j && typeof j.target === 'string').map((j) => ({ ...j }));
-      this.syncStations();
-      for (const sd of s.crew.stations ?? []) {
-        const d = this.stationDrones.get(sd.id);
-        if (d) { d.fuel = sd.fuel; d.carb = Math.min(sd.carb ?? 0, sd.fuel); d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? []); }
-      }
-      s.crew.drones.forEach((sd, i) => {
-        const d = this.drones[i];
-        if (d) { d.fuel = sd.fuel; d.carb = Math.min(sd.carb ?? 0, sd.fuel); d.burn = sd.burn; d.cargo = sd.cargo ? { ...sd.cargo } : null; d.from = sd.cargo ? sd.from : undefined; d.priorities = cleanOrder(sd.priorities ?? (sd.priority ? [sd.priority] : [])); }
-      });
-    } else if (this.drones[0]) {
-      // Sauvegarde d'avant le charbon : le cadeau de départ.
-      this.drones[0].cargo = { t: 'charbon', n: RULES.giftCoal };
     }
   }
 

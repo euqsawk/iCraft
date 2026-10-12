@@ -77,8 +77,3 @@ export function robotSvg(look: RobotLook, opts: { beam?: boolean; spin?: boolean
   return `<svg class="${opts.cls ?? 'robot-svg'}" viewBox="-22 -50 72 56" aria-hidden="true"><ellipse cx="0" cy="1" rx="17" ry="4" fill="${hex(PALETTE.shadow)}"/>${beam}<g class="rb-body">${body.map(svgShape).join('')}${lamp}${sp}</g></svg>`;
 }
 
-/** Image SVG d'un drone. */
-export function droneSvg(look: RobotLook, cls = 'drone-svg'): string {
-  const ink = hex(PALETTE.ink);
-  return `<svg class="${cls}" viewBox="-14 -14 28 24" aria-hidden="true"><line x1="-10" y1="-9" x2="10" y2="-9" stroke="${ink}" stroke-width="2" stroke-linecap="round"/><line x1="0" y1="-7" x2="0" y2="-9" stroke="${ink}" stroke-width="2"/><circle cx="0" cy="0" r="7" fill="#fff" stroke="${ink}" stroke-width="2"/><circle cx="0" cy="0" r="2.5" fill="${hex(robotColor(look).main)}"/></svg>`;
-}

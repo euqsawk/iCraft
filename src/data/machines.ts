@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'sell' | 'station' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'charger' | 'rocket' | 'tree' | 'filter';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'filter';
 
 export interface MachineDef {
   id: string;
@@ -150,7 +150,7 @@ export const MACHINES: Record<string, MachineDef> = {
   },
   coffre: {
     id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,
-    hint: 'Garde 100 objets · les drones y prennent le charbon',
+    hint: 'Garde 100 objets · un tapis le remplit, un autre le vide',
   },
   compteur: {
     id: 'compteur', name: 'Compteur', kind: 'meter', coal: false, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true,
@@ -172,14 +172,6 @@ export const MACHINES: Record<string, MachineDef> = {
     id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 600,
     hint: 'Brûle du charbon et alimente les machines reliées par câble',
   },
-  station: {
-    id: 'station', name: 'Station', kind: 'station', coal: true, w: 2, h: 2, cost: 100, unlock: 1, recipes: [], buildable: true,
-    hint: 'Un drone qui travaille tout seul dans la zone autour',
-  },
-  revente: {
-    id: 'revente', name: 'Revente', kind: 'sell', coal: false, w: 2, h: 2, cost: 20, unlock: 1, recipes: [], buildable: true,
-    hint: 'Un gros drone passe toutes les 5 minutes et revend tout, à bas prix',
-  },
   laboratoire: {
     id: 'laboratoire', name: 'Laboratoire', kind: 'lab', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
     hint: 'Garde les objets qui servent à débloquer l’arbre',
@@ -195,14 +187,6 @@ export const MACHINES: Record<string, MachineDef> = {
   centrale: {
     id: 'centrale', name: 'Réacteur', kind: 'reactor', coal: false, w: 3, h: 3, cost: 1500, unlock: 1, recipes: [], buildable: true, supply: 2400,
     hint: '2,4 MW à l’uranium enrichi ; il doit être refroidi par l’eau d’une pompe (20 L/s)',
-  },
-  recharge: {
-    id: 'recharge', name: 'Recharge des drones', kind: 'charger', coal: false, w: 2, h: 2, cost: 200, unlock: 1, recipes: [], buildable: true,
-    hint: 'Reliée au courant : les drones autour s’y rechargent au lieu de brûler du charbon',
-  },
-  hangar: {
-    id: 'hangar', name: 'Hangar', kind: 'station', coal: true, w: 3, h: 3, cost: 500, unlock: 1, recipes: [], buildable: true,
-    hint: 'Une station à trois drones',
   },
   entrepot: {
     id: 'entrepot', name: 'Entrepôt', kind: 'storage', coal: false, w: 3, h: 3, cost: 300, unlock: 1, recipes: [], buildable: true,
