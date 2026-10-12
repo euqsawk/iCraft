@@ -112,7 +112,19 @@ export function skinSvg(id: string, opts: { look?: Pick<RobotLook, 'color'>; ani
   const sid = skinOf(id).id;
   const o = opts.anim === false ? { back: '', front: '' } : orbitSvg(sid);
   const B = SKIN_BOX;
-  const gray = opts.gray ? ' style="filter: grayscale(1) opacity(.42)"' : '';
-  return `<svg class="${opts.cls ?? 'skin-svg'}" viewBox="${B.x} ${B.y} ${B.w} ${B.h}" aria-hidden="true"${gray}>`
+  const svg = `<svg class="${opts.cls ?? 'skin-svg'}" viewBox="${B.x} ${B.y} ${B.w} ${B.h}" aria-hidden="true">`
     + `<ellipse cx="0" cy="4" rx="84" ry="10" fill="#2E3A4B" opacity=".12"/>${o.back}<g class="sk-body">${skinBody(sid, opts.look)}</g>${o.front}</svg>`;
+  // Pas encore gagné : les couleurs passent en gris pâle dans le dessin lui-même. (Un filtre CSS sur le SVG
+  // le faisait disparaître pendant le défilement sur iPhone.)
+  return opts.gray ? svg.replace(/#([0-9a-f]{6}|[0-9a-f]{3})\b/gi, (_, hx: string) => paleGray(hx)) : svg;
+}
+
+/** Une couleur en gris pâle (comme un gris à 42 % sur fond clair). */
+function paleGray(hx: string): string {
+  const full = hx.length === 3 ? hx.split('').map((c) => c + c).join('') : hx;
+  const n = parseInt(full, 16);
+  const l = 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  const v = Math.round(l * 0.42 + 236 * 0.58);
+  const h = v.toString(16).padStart(2, '0');
+  return `#${h}${h}${h}`;
 }
