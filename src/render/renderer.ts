@@ -1284,7 +1284,6 @@ export class GameRenderer {
       // Le Quai du train : la voie sur toute la longueur (5 cases de rails de chaque côté, puis un tunnel),
       // le quai au milieu, en bas, avec sa bande jaune. Les tunnels sont dessinés par-dessus le train (drawTrain).
       const x0 = -W / 2, y0 = -H / 2, side = (def.w - 6) / 2 * CELL, px = x0 + side, pw = 6 * CELL;
-      body.roundRect(x0 + CELL, y0 + CELL + 4, W - 2 * CELL, CELL - 10, 4).fill({ color: 0xCFC7B2, alpha: 0.7 });
       body.roundRect(px, y0 + CELL + 3, pw, CELL - 1, 6).fill(PALETTE.shadow);
       body.roundRect(px, y0 + CELL, pw, CELL - 2, 6).fill(0xEDE6D6);
       body.rect(px + 4, y0 + CELL + 2, pw - 8, 3).fill(PALETTE.yellow);
@@ -2234,8 +2233,8 @@ export class GameRenderer {
     t.text = here ? `Train à quai · part dans ${clk}${left ? ` · il manque ${left}` : ' · plein'}` : `Train de fret · arrive dans ${clk}`;
     t.style.fill = here && left ? PALETTE.coral : PALETTE.ink;
     t.position.set(x0 + W / 2, y0 - 4);
-    // Le train roule entre les deux tunnels : il sort de celui de droite, s'arrête au quai, repart dans celui de gauche.
-    const xL = x0 + CELL, xR = x0 + W - CELL;
+    // Le train roule d'un bout à l'autre de la voie : il sort du sol à droite, s'arrête au quai, s'enfonce à gauche.
+    const xL = x0, xR = x0 + W;
     const px = x0 + (q.w - 6) / 2 * CELL, cy = y0 + CELL / 2, car = (6 * CELL - 10) / 3, len = car * 3;
     if (this.trainP > 0) {
       const e = this.trainP * this.trainP * (3 - 2 * this.trainP);
@@ -2265,14 +2264,17 @@ export class GameRenderer {
         if (i < 2 && cx + car + 1 <= xR) g.rect(cx + car - 3, cy - 1.5, 4, 3).fill(PALETTE.ink);
       }
     }
-    // Les deux tunnels, par-dessus : une butte d'herbe, un portail de pierre, une bouche noire.
-    for (const [tx, dir] of [[x0, 1], [x0 + W, -1]] as const) {
-      g.ellipse(tx + dir * CELL * 0.35, y0 + CELL * 0.9, CELL * 1.25, CELL * 1.05).fill(0x9CC38A);
-      g.ellipse(tx + dir * CELL * 0.35, y0 + CELL * 0.75, CELL * 1.05, CELL * 0.85).fill(0xB2D49E);
-      const gx = dir === 1 ? tx + 2 : tx - CELL - 2;
-      g.roundRect(gx - 3, y0 - 4, CELL + 6, CELL + 6, 9).fill(0x8E9AA6);
-      g.roundRect(gx - 3, y0 - 4, CELL + 6, 5, 3).fill(0xA9B4BE);
-      g.moveTo(gx + 2, y0 + CELL - 1).lineTo(gx + 2, y0 + 8).arc(gx + CELL / 2, y0 + 8, CELL / 2 - 2, Math.PI, 0).lineTo(gx + CELL - 2, y0 + CELL - 1).closePath().fill(0x1E2733);
+    // Aux deux bouts, un voile couleur du sol passe par-dessus la voie et le train, de plus en plus opaque
+    // (vu du dessus : ils passent sous terre). Opaque au bout, transparent 4 cases plus loin vers le quai.
+    const ground = BIOME_COLORS[this.game.world.biomeAt(q.x + 1, q.y) as keyof typeof BIOME_COLORS] ?? PALETTE.ground;
+    const span = CELL * 4.4, steps = 64, sw = span / steps;
+    for (let i = 0; i < steps; i++) {
+      const k = (i + 0.5) / steps;                 // 0 au bout, 1 vers le quai
+      const alpha = Math.max(0, Math.min(1, (1 - k) / 0.75));
+      if (alpha <= 0) continue;
+      const smooth = alpha * alpha * (3 - 2 * alpha);
+      g.rect(xL - CELL * 1.2 + i * sw, y0 - 4, sw + 0.6, CELL + 8).fill({ color: ground, alpha: smooth });
+      g.rect(xR + CELL * 1.2 - (i + 1) * sw, y0 - 4, sw + 0.6, CELL + 8).fill({ color: ground, alpha: smooth });
     }
   }
 
