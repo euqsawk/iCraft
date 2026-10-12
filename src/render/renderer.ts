@@ -1,5 +1,5 @@
 // Rendu du monde avec PixiJS : sol, filons, tapis, machines, objets, robot, brouillard.
-import { Application, CanvasSource, Container, Graphics, RenderTexture, Sprite, Text, Texture, TilingSprite, type ICanvas } from 'pixi.js';
+import { Application, CanvasSource, Container, FillGradient, Graphics, RenderTexture, Sprite, Text, Texture, TilingSprite, type ICanvas } from 'pixi.js';
 
 /** Les types DOM et ceux de PixiJS divergent sur getContext('webgpu') : simple conversion. */
 const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
@@ -2267,15 +2267,31 @@ export class GameRenderer {
     // Aux deux bouts, un voile couleur du sol passe par-dessus la voie et le train, de plus en plus opaque
     // (vu du dessus : ils passent sous terre). Opaque au bout, transparent 4 cases plus loin vers le quai.
     const ground = BIOME_COLORS[this.game.world.biomeAt(q.x + 1, q.y) as keyof typeof BIOME_COLORS] ?? PALETTE.ground;
-    const span = CELL * 4.4, steps = 64, sw = span / steps;
-    for (let i = 0; i < steps; i++) {
-      const k = (i + 0.5) / steps;                 // 0 au bout, 1 vers le quai
-      const alpha = Math.max(0, Math.min(1, (1 - k) / 0.75));
-      if (alpha <= 0) continue;
-      const smooth = alpha * alpha * (3 - 2 * alpha);
-      g.rect(xL - CELL * 1.2 + i * sw, y0 - 4, sw + 0.6, CELL + 8).fill({ color: ground, alpha: smooth });
-      g.rect(xR + CELL * 1.2 - (i + 1) * sw, y0 - 4, sw + 0.6, CELL + 8).fill({ color: ground, alpha: smooth });
+    // Un vrai dégradé (pas des bandes : elles se chevauchaient et faisaient des traits sur un écran net).
+    const span = CELL * 4.4;
+    const [gl, gr] = this.fadeGradients(ground);
+    g.rect(xL - CELL * 1.2, y0 - 4, span, CELL + 8).fill(gl);
+    g.rect(xR + CELL * 1.2 - span, y0 - 4, span, CELL + 8).fill(gr);
+  }
+
+  private fadeCache: { color: number; l: FillGradient; r: FillGradient } | null = null;
+
+  /** Les deux voiles des bouts de voie : opaques au bout, transparents vers le quai. */
+  private fadeGradients(color: number): [FillGradient, FillGradient] {
+    if (this.fadeCache?.color !== color) {
+      const r = (color >> 16) & 255, gg = (color >> 8) & 255, b = color & 255;
+      const c = (a: number) => `rgba(${r}, ${gg}, ${b}, ${a})`;
+      const stops = (rev: boolean) => {
+        const st = [{ offset: 0, color: c(0) }, { offset: 0.17, color: c(1) }, { offset: 0.3, color: c(1) }, { offset: 0.55, color: c(0.6) }, { offset: 0.8, color: c(0.2) }, { offset: 1, color: c(0) }];
+        return rev ? st.map((x) => ({ offset: 1 - x.offset, color: x.color })).reverse() : st;
+      };
+      this.fadeCache = {
+        color,
+        l: new FillGradient({ type: 'linear', start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, colorStops: stops(false), textureSpace: 'local' }),
+        r: new FillGradient({ type: 'linear', start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, colorStops: stops(true), textureSpace: 'local' }),
+      };
     }
+    return [this.fadeCache.l, this.fadeCache.r];
   }
 
   /** Pluie (traits obliques) ou neige (flocons qui dérivent), dessinées à l'écran. */
