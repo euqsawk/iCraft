@@ -23,7 +23,6 @@ const SHORT: Record<string, string> = {
   rampe: 'Rampe', base_robot: 'Base du robot',
 };
 const short = (x: UnlockNode) => SHORT[x.id] ?? x.name.replace(' électrique', '');
-const ARROW = (a: number) => ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'][Math.round((((a % 360) + 360) % 360) / 45) % 8];
 
 /** Une icône de nœud posée dans le plan, à (x, y), de côté `size`. */
 function iconAt(svg: string, x: number, y: number, size: number, fade: boolean): string {
@@ -98,24 +97,8 @@ export class TreeScreen {
           <div class="pill tree-points"></div>
         </div>
         <div class="star-legend"></div>
-        <div class="star-bottom">
-          <div class="star-go"><span class="star-k">Aller vers</span><div class="star-chips"></div></div>
-          <div class="star-zoom">
-            <button class="star-zb" data-z="in" aria-label="Zoomer">+</button>
-            <button class="star-zb" data-z="out" aria-label="Dézoomer">−</button>
-            <button class="star-zb dark" data-z="home" aria-label="Revenir au robot"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#fff" stroke-width="2.4" aria-hidden="true"><circle cx="11" cy="11" r="7"/><circle cx="11" cy="11" r="2" fill="#fff"/></svg></button>
-          </div>
-        </div>
         <div class="tree-sheet star-sheet"></div>`;
       this.el.querySelector<HTMLButtonElement>('[data-act="back"]')!.onclick = () => this.close();
-      this.el.querySelectorAll<HTMLButtonElement>('.star-zb').forEach((b) => {
-        b.onclick = () => {
-          const z = b.dataset.z;
-          const { w, h } = this.size();
-          if (z === 'home') this.goTo(0, 0, this.homeScale());
-          else this.zoomAt(w / 2, h / 2, z === 'in' ? 1.35 : 1 / 1.35, true);
-        };
-      });
       this.root.append(this.el);
       this.bindGestures(this.el.querySelector<HTMLElement>('.star-view')!);
     }
@@ -146,7 +129,7 @@ export class TreeScreen {
 
   private homeScale(): number {
     const { w, h } = this.size();
-    return Math.max(0.5, Math.min(0.9, Math.min(w, h - 240) / 700));
+    return Math.max(0.5, Math.min(0.9, Math.min(w, h - 120) / 700));
   }
 
   /** Caché tant que son palier n'est pas atteint. */
@@ -180,7 +163,7 @@ export class TreeScreen {
   private goTo(wx: number, wy: number, s = this.s, animate = true): void {
     const { w, h } = this.size();
     const top = 120;
-    const sheet = this.sel ? this.el?.querySelector<HTMLElement>('.star-sheet')?.offsetHeight ?? 0 : 170;
+    const sheet = this.sel ? this.el?.querySelector<HTMLElement>('.star-sheet')?.offsetHeight ?? 0 : 0;
     const cy = top + Math.max(80, h - sheet - top) / 2;
     const tx = w / 2 - wx * s, ty = cy - wy * s;
     if (animate) this.animateTo(tx, ty, s);
@@ -213,7 +196,7 @@ export class TreeScreen {
     const x0 = Math.min(...pts.map((p) => p.x)), x1 = Math.max(...pts.map((p) => p.x));
     const y0 = Math.min(...pts.map((p) => p.y)), y1 = Math.max(...pts.map((p) => p.y));
     const { w, h } = this.size();
-    const s = Math.max(0.5, Math.min(0.9, (w - 40) / (x1 - x0 + 160), (h - 330) / (y1 - y0 + 160)));
+    const s = Math.max(0.5, Math.min(0.9, (w - 40) / (x1 - x0 + 160), (h - 160) / (y1 - y0 + 160)));
     this.goTo((x0 + x1) / 2, (y0 + y1) / 2, s, animate);
   }
 
@@ -398,17 +381,6 @@ export class TreeScreen {
     this.apply();
 
     el.querySelector('.star-legend')!.innerHTML = `<span><i class="lg done"></i>Débloqué</span><span><i class="lg open"></i>Possible</span><span><i class="lg far"></i>Plus loin</span><span><i class="lg next"></i>Palier suivant</span>`;
-    const chips = el.querySelector('.star-chips')!;
-    chips.innerHTML = '';
-    for (const b of BRANCHES) {
-      const c = document.createElement('button');
-      c.className = 'star-chipbtn';
-      c.style.background = b.color;
-      const dot = b.nodes.some((x) => g.nodeState(x) === 'available' && g.canAfford(x));
-      c.innerHTML = `${ARROW(b.angle)} ${esc(b.label)}${dot ? '<span class="tree-dot"></span>' : ''}`;
-      c.onclick = () => this.focusBranch(b.id);
-      chips.append(c);
-    }
     this.renderSheet();
   }
 
