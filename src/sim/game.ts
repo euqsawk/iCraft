@@ -249,7 +249,7 @@ export class Game {
   contentValue(f: Factory): number {
     let v = 0;
     for (const m of f.machines.values()) v += machineDef(m.type).cost + (m.inner ? this.contentValue(m.inner) : 0);
-    for (const b of f.belts.values()) v += RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0);
+    for (const b of f.belts.values()) v += RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0) + Game.levelValue(RULES.beltLevelCost, b.lvl);
     return v;
   }
 
@@ -288,7 +288,7 @@ export class Game {
   saveValue(s: FactorySave): number {
     let v = 0;
     for (const m of s.machines) v += (MACHINES[m.type]?.cost ?? 0) + (m.inner ? this.saveValue(m.inner) : 0);
-    for (const b of s.belts) v += RULES.beltCost + (b[8] ? RULES.bridgeCost : 0) + (b[9] ? RULES.bridgeCost : 0);
+    for (const b of s.belts) v += RULES.beltCost + (b[8] ? RULES.bridgeCost : 0) + (b[9] ? RULES.bridgeCost : 0) + Game.levelValue(RULES.beltLevelCost, b[14]);
     return v;
   }
 
@@ -827,19 +827,81 @@ export class Game {
     return ALL_NODES.filter((x) => this.nodeState(x) === 'available' && this.canAfford(x)).length;
   }
 
+  /** Niveau le plus haut où l'on peut monter un tapis, une foreuse (selon l'arbre). */
+  beltMaxLevel = RULES.beltBaseMax;
+  drillMaxLevel = RULES.drillBaseMax;
+
+  /**
+   * Monter tout un tapis d'un niveau : les cases du niveau le plus bas passent au suivant.
+   * Renvoie le niveau visé, les cases concernées et le prix ; null si c'est le plus haut possible.
+   */
+  beltUpgrade(b: Belt): { from: number; to: number; cells: Belt[]; price: number; locked: boolean } | null {
+    const chain = this.view.chainOf(b);
+    const from = Math.min(...chain.map((c) => c.lvl ?? 1));
+    if (from >= 5) return null;
+    const to = from + 1;
+    const cells = chain.filter((c) => (c.lvl ?? 1) < to);
+    return { from, to, cells, price: cells.length * RULES.beltLevelCost[to - 1], locked: to > this.beltMaxLevel };
+  }
+
+  upgradeBelt(b: Belt): boolean {
+    const up = this.beltUpgrade(b);
+    if (!up) return false;
+    if (up.locked) { this.emit({ type: 'toast', text: `Niveau ${up.to} : à débloquer dans l’arbre (${up.to <= 3 ? 'Tapis rapide' : 'Tapis express'})`, tone: 'warn' }); return false; }
+    if (this.money < up.price) { this.emit({ type: 'toast', text: `Il faut ${up.price} pièces`, tone: 'warn' }); return false; }
+    this.money -= up.price;
+    for (const c of up.cells) c.lvl = up.to;
+    this.emit({ type: 'money' });
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Monter tout un groupe de foreuses d'un niveau (celles du niveau le plus bas). */
+  drillUpgrade(m: Machine): { from: number; to: number; drills: Machine[]; price: number; locked: boolean } | null {
+    const group = this.view.drillGroup(m);
+    if (!group.length) return null;
+    const from = Math.min(...group.map((x) => x.lvl ?? 1));
+    if (from >= 5) return null;
+    const to = from + 1;
+    const drills = group.filter((x) => (x.lvl ?? 1) < to);
+    return { from, to, drills, price: drills.length * RULES.drillLevelCost[to - 1], locked: to > this.drillMaxLevel };
+  }
+
+  upgradeDrills(m: Machine): boolean {
+    const up = this.drillUpgrade(m);
+    if (!up) return false;
+    if (up.locked) { this.emit({ type: 'toast', text: `Niveau ${up.to} : à débloquer dans l’arbre (Forage profond)`, tone: 'warn' }); return false; }
+    if (this.money < up.price) { this.emit({ type: 'toast', text: `Il faut ${up.price} pièces`, tone: 'warn' }); return false; }
+    this.money -= up.price;
+    for (const x of up.drills) x.lvl = up.to;
+    this.emit({ type: 'money' });
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Ce qu'on a payé pour monter un tapis ou une foreuse jusqu'à son niveau (rendu quand on le supprime). */
+  static levelValue(costs: number[], lvl: number | undefined): number {
+    let v = 0;
+    for (let i = 1; i < (lvl ?? 1); i++) v += costs[i];
+    return v;
+  }
+
   /** Chenilles et antennes : vitesse du robot et portée de ses drones (le meilleur niveau débloqué). */
   robotSpeedMult = 1;
   droneRangeMult = 1;
 
   private applyUnlocks(): void {
-    let speed = 1, slots = RULES.chestSlots, copy = 1, size = 20, nest = false;
+    const speed = 1;
+    let slots = RULES.chestSlots, copy = 1, size = 20, nest = false;
+    let beltMax = RULES.beltBaseMax, drillMax = RULES.drillBaseMax;
     this.robotSpeedMult = 1;
     this.droneRangeMult = 1;
     for (const id of this.unlocks) {
       const e = NODE[id]?.effect;
       if (e?.kind === 'robotSpeed') this.robotSpeedMult = Math.max(this.robotSpeedMult, e.mult);
       if (e?.kind === 'droneRange') this.droneRangeMult = Math.max(this.droneRangeMult, e.mult);
-      if (e?.kind === 'beltSpeed') speed = Math.max(speed, e.mult);
+      if (e?.kind === 'beltLevel') beltMax = Math.max(beltMax, e.max);
+      if (e?.kind === 'drillLevel') drillMax = Math.max(drillMax, e.max);
       if (e?.kind === 'chestSlots') slots = Math.max(slots, e.slots);
       if (e?.kind === 'copyRate') copy = Math.min(copy, e.rate);
       if (e?.kind === 'atelierSize') size = Math.max(size, e.size);
@@ -847,6 +909,8 @@ export class Game {
     }
     this.copyRate = copy;
     this.nesting = nest;
+    this.beltMaxLevel = beltMax;
+    this.drillMaxLevel = drillMax;
     if (size !== this.atelierSize) {
       this.atelierSize = size;
       // Les ateliers déjà posés s'agrandissent aussi.
@@ -974,7 +1038,7 @@ export class Game {
     const k = key(b.x, b.y);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
     return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0)
-      + (b.meter ? MACHINES.compteur.cost : 0);
+      + (b.meter ? MACHINES.compteur.cost : 0) + Game.levelValue(RULES.beltLevelCost, b.lvl);
   }
 
   /** Supprime ce qui se trouve sur une case. Renvoie vrai si quelque chose a été supprimé. */
@@ -1269,7 +1333,7 @@ export class Game {
     this.view.removeMachine(m);
     this.pending = this.pending.filter((j) => !(j.kind === 'machine' && j.id === m.id));
     // Un atelier rend aussi ce qu'il contient (ce qui y circulait est perdu).
-    this.earn(def.cost + (m.inner ? this.contentValue(m.inner) : 0));
+    this.earn(def.cost + (m.inner ? this.contentValue(m.inner) : 0) + Game.levelValue(RULES.drillLevelCost, m.lvl));
     this.emit({ type: 'factory' });
     return true;
   }
@@ -2265,9 +2329,17 @@ export class Game {
       const fromTree = [...this.unlocks].filter((id) => NODE[id]?.effect.kind === 'drone').length;
       this.extraDrones = Math.max(0, (s.drones ?? RULES.startDrones) - RULES.startDrones - fromTree);
     }
+    // La Grande foreuse est devenue « Forage profond » (foreuses jusqu'au niveau 5).
+    if (this.unlocks.delete('super_foreuse')) this.unlocks.add('forage');
     // Les déblocages retirés du jeu (tapis souterrains) disparaissent de la partie.
     for (const id of [...this.unlocks]) if (!NODE[id]) this.unlocks.delete(id);
     this.applyUnlocks();
+    // Partie d'avant les niveaux de tapis : la vitesse débloquée pour tous devient le niveau de chaque tapis.
+    if (!s.factory.levels) {
+      const lvl = this.unlocks.has('express') ? 5 : this.unlocks.has('rapide') ? 3 : 1;
+      const raise = (f: Factory) => { for (const b of f.belts.values()) b.lvl = Math.max(b.lvl ?? 1, lvl); for (const m of f.machines.values()) if (m.inner) raise(m.inner); };
+      if (lvl > 1) raise(this.factory);
+    }
     this.rebuildDrones();
     if (s.crew) {
       const r = this.robot;

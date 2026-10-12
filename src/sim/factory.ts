@@ -2,7 +2,7 @@
 import { CHUNK, RULES } from '../config.ts';
 import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
-import { patchCells, RICHNESS_RATE, type Patch, type World } from '../world/world.ts';
+import { RICHNESS_RATE, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
 import { addTo, burnOne, moveFuel, takeOf } from './fuel.ts';
 
@@ -42,6 +42,13 @@ export interface Belt {
   splitJump?: number;
   /** Compteur posé sur cette case : les objets qui en sortent (date et matière), pour le débit. */
   meter?: { ev: { t: number; k: string }[]; since: number };
+  /** Niveau du tapis (1 à 5, absent = 1) : il va plus vite à chaque niveau. */
+  lvl?: number;
+}
+
+/** Vitesse d'un tapis (× la vitesse de base) selon son niveau. */
+export function beltLevelSpeed(b: { lvl?: number }): number {
+  return RULES.beltLevelSpeed[Math.max(0, Math.min(4, (b.lvl ?? 1) - 1))];
 }
 
 /** Longueur parcourue sur une case de tapis, en cases (plus longue sur un pont). */
@@ -71,6 +78,8 @@ export interface Machine {
   /** Foreuse : matière et vitesse (objets par seconde). */
   ore?: string;
   rate?: number;
+  /** Foreuse : son niveau (1 à 5, absent = 1), qui multiplie ce qu'elle extrait. */
+  lvl?: number;
   drillT: number;
   /** Recette choisie quand plusieurs recettes ont les mêmes entrées (raffinerie). */
   choice?: string;
@@ -247,8 +256,6 @@ export class Factory {
 
   setElectric(types: Iterable<string>): void {
     const next = new Set(types);
-    // La grande foreuse passe au courant avec les foreuses.
-    if (next.has('foreuse')) next.add('super_foreuse');
     if (next.size === this.electric.size && [...next].every((t) => this.electric.has(t))) return;
     this.electric = next;
     this.dirty = true;
@@ -264,7 +271,10 @@ export class Factory {
     if (machineDef(m.type).kind === 'charger') return RULES.chargerKw;
     if (machineDef(m.type).kind === 'filter') return RULES.filterKw;
     if (m.inner) return this.electric.size ? this.innerKw(m) : 0;
-    return this.electric.has(m.type) ? machineDef(m.type).kw ?? 100 : 0;
+    if (!this.electric.has(m.type)) return 0;
+    // Une foreuse améliorée extrait plus : elle consomme d'autant plus.
+    const lv = machineDef(m.type).kind === 'drill' ? RULES.drillLevelSpeed[Math.max(0, Math.min(4, (m.lvl ?? 1) - 1))] : 1;
+    return Math.round((machineDef(m.type).kw ?? 100) * lv);
   }
 
   /** Ce que consomment au courant les machines d'un atelier (et des ateliers qu'il contient), en kW. */
@@ -551,26 +561,6 @@ export class Factory {
       let best: [string, { n: number; rate: number }] | null = null;
       for (const e of oreCount) if (!best || e[1].n > best[1].n) best = e;
       if (!best || best[1].n < Math.min(2, def.w * def.h)) return { ok: false, reason: 'À poser sur un filon' };
-      // Les filons sous la machine.
-      const under = new Map<string, Patch>();
-      for (let j = 0; j < def.h; j++) for (let i = 0; i < def.w; i++) { const p = this.world.patchAt(x + i, y + j); if (p && p.type !== 'eau') under.set(p.id, p); }
-      // Un filon exploité par une grande foreuse est à elle seule (et elle ne se pose pas où il y a déjà des foreuses).
-      for (const o of this.machines.values()) {
-        if (o === ignore || machineDef(o.type).kind !== 'drill') continue;
-        const big = o.type === 'super_foreuse';
-        if (!big && type !== 'super_foreuse') continue;
-        for (let j = 0; j < o.h; j++) for (let i = 0; i < o.w; i++) {
-          const p = this.world.patchAt(o.x + i, o.y + j);
-          if (p && under.has(p.id)) return { ok: false, reason: big ? 'Une grande foreuse exploite déjà ce filon' : 'Des foreuses exploitent déjà ce filon' };
-        }
-      }
-      if (type === 'super_foreuse') {
-        // Tout le filon, comme des foreuses partout dessus : 0,5 objet par seconde pour 4 cases (selon sa richesse).
-        const main = [...under.values()].filter((p) => p.type === best![0]).sort((a, b) => b.r - a.r)[0];
-        if (!main || best[1].n < 6) return { ok: false, reason: 'À poser bien au milieu d’un filon' };
-        const cells = patchCells(main).length;
-        return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * RICHNESS_RATE[main.richness] * (cells / 4), belts };
-      }
       // Une foreuse 1 × 1 : le quart d'une ancienne foreuse 2 × 2 (quatre collées valent la même chose).
       if (def.w * def.h === 1) return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate / 4, belts };
       return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate * (best[1].n / 4 * 0.5 + 0.5), belts };
@@ -1440,11 +1430,13 @@ export class Factory {
   tick(dt: number): void {
     this.clock += dt;
     this.refresh();
-    const speed = RULES.beltSpeed * this.speedMult * dt;
+    const base = RULES.beltSpeed * this.speedMult * dt;
     const gap = RULES.beltGap;
 
     for (const b of this.order) {
       if (!b.built || b.items.length === 0) continue;
+      // Chaque tapis va à la vitesse de son niveau.
+      const speed = base * beltLevelSpeed(b);
       // Sur un pont, p couvre plusieurs cases : on avance moins vite en p, avec un écart plus petit en p.
       const Lb = span(b), sp = speed / Lb, gp = gap / Lb;
       const main = this.nextOf.get(b) ?? null;
@@ -1560,6 +1552,11 @@ export class Factory {
     return n;
   }
 
+  /** Ce qu'une foreuse extrait par seconde, avec son niveau. */
+  drillRate(m: Machine): number {
+    return (m.rate ?? 0) * RULES.drillLevelSpeed[Math.max(0, Math.min(4, (m.lvl ?? 1) - 1))];
+  }
+
   /** Une foreuse 1 × 1 : elle se relie toute seule à celles qui la touchent par un côté. */
   static isSmallDrill(m: Machine): boolean {
     return m.type === 'foreuse';
@@ -1654,7 +1651,7 @@ export class Factory {
     const k = this.energy(m, def, dt);
     if (k <= 0 && !this.selfFed(m)) { m.status = this.noEnergy(m); return; }
     m.status = 'working';
-    m.drillT += dt * m.rate * (k > 0 ? k : 1) * this.pollutionMult(m);
+    m.drillT += dt * this.drillRate(m) * (k > 0 ? k : 1) * this.pollutionMult(m);
     if (m.drillT >= 1) {
       m.drillT -= 1;
       m.made++;
@@ -1915,13 +1912,15 @@ export class Factory {
     return {
       nextId: this.nextId,
       drills1: 1,
+      levels: 1,
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '']),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', 0, b.lvl ?? 1]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
+        ...(m.lvl && m.lvl > 1 ? { lvl: m.lvl } : {}),
         ...(m.plan !== undefined ? { plan: m.plan } : {}), ...(m.ports?.length ? { ports: m.ports.map((p) => ({ ...p })) } : {}),
         ...(m.seenIn ? { seenIn: { ...m.seenIn } } : {}), ...(m.seenOut ? { seenOut: { ...m.seenOut } } : {}),
         ...(m.charge ? { charge: Math.round(m.charge) } : {}),
@@ -1938,8 +1937,9 @@ export class Factory {
     // Parties d'avant : les trieurs (retirés) sont remboursés.
     const oldPicks = new Map<number, string[]>();
     for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) oldPicks.set(k, v.filter((t) => typeof t === 'string'));
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick, lvl] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1);
+      if (typeof lvl === 'number' && lvl > 1) b.lvl = Math.min(5, Math.floor(lvl));
       b.items = items.map(([t, p, o]) => (o ? { t, p, o: (o === 2 ? 2 : 1) as 1 | 2 } : { t, p }));
       if (split !== undefined && split >= 0) b.split = split as Dir;
       if (split2 !== undefined && split2 >= 0 && b.split !== undefined) b.split2 = split2 as Dir;
@@ -1956,13 +1956,16 @@ export class Factory {
     }
     this.nextId = 1;
     const oldDrills: FactorySave['machines'] = [];
+    const bigDrills: FactorySave['machines'] = [];
     for (const sm of s.machines) {
       // Chaque machine garde son numéro. (Avant, un numéro provisoire pouvait effacer
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
       sm.type = baseType(sm.type); // les anciennes « machines électriques » redeviennent des machines normales
+      if (sm.type === 'super_foreuse' && !this.machines.has(sm.id)) { bigDrills.push(sm); continue; }
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       // Ancienne foreuse 2 × 2 : coupée en quatre plus bas, une fois les autres numéros connus.
       if (!s.drills1 && sm.type === 'foreuse') { oldDrills.push(sm); continue; }
+
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, MACHINES[sm.type].kind === 'station' ? RULES.stationCoal : RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
@@ -1970,6 +1973,7 @@ export class Factory {
       // Dans un atelier, une foreuse garde le filon d'où elle vient.
       if (sm.ore && !m.ore) { m.ore = sm.ore; m.rate = sm.rate; }
       if (sm.charge) m.charge = sm.charge;
+      if (typeof sm.lvl === 'number' && sm.lvl > 1) m.lvl = Math.min(5, Math.floor(sm.lvl));
       if (typeof sm.plan === 'number') m.plan = sm.plan;
       // Les filtres d'entrée et de sortie n'existent plus : il ne reste que les étiquettes prévues.
       if (sm.ports?.length) m.ports = sm.ports.filter((p) => p && (p.io === 'in' || p.io === 'out')).map((p) => ({ rx: p.rx, ry: p.ry, io: p.io, ...(p.item ? { item: p.item } : {}) }));
@@ -2010,6 +2014,24 @@ export class Factory {
         }
       }
     }
+    // La Grande foreuse (4 × 4, 1500 pièces) est retirée : des foreuses 1 × 1 au niveau 3 sur ses cases de filon,
+    // et le reste de son prix est rendu.
+    for (const sm of bigDrills) {
+      let spent = 0, first: Machine | null = null;
+      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+        const cx = sm.x + i, cy = sm.y + j;
+        if (!this.checkMachine('foreuse', cx, cy).ok) continue;
+        const m = this.addMachine('foreuse', cx, cy, sm.built, first ? undefined : sm.id);
+        m.lvl = RULES.drillBaseMax;
+        spent += small.cost + RULES.drillLevelCost.slice(1, RULES.drillBaseMax).reduce((a, n) => a + n, 0);
+        if (!first) {
+          first = m;
+          Object.assign(m, { outBuf: sm.outBuf ?? {}, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, made: sm.made ?? 0 });
+          if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
+        }
+      }
+      this.legacyRefund += Math.max(0, 1500 - spent);
+    }
     this.dirty = true;
   }
 }
@@ -2025,12 +2047,14 @@ export interface FactorySave {
   tunnels?: { cells: number[] }[];
   /** Foreuses 1 × 1 (sans ce drapeau : une ancienne partie, ses foreuses 2 × 2 sont coupées en quatre). */
   drills1?: 1;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?][];
+  /** Tapis à niveaux (sans ce drapeau : une partie d'avant, où la vitesse était la même pour tous). */
+  levels?: 1;
   machines: {
     id: number; type: string; x: number; y: number; built: boolean;
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
-    inner?: FactorySave; size?: number; ore?: string; rate?: number; charge?: number;
+    inner?: FactorySave; size?: number; ore?: string; rate?: number; charge?: number; lvl?: number;
     plan?: number; ports?: MachinePort[]; seenIn?: Record<number, string>; seenOut?: Record<number, string>;
   }[];
 }

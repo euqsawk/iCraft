@@ -11,7 +11,10 @@ export type UnlockEffect =
   | { kind: 'sorter' }
   | { kind: 'bridge' }
   | { kind: 'vehicle'; id: 'camion' | 'train' }
-  | { kind: 'beltSpeed'; mult: number }
+  /** Les tapis peuvent monter jusqu'à ce niveau (chaque tapis s'améliore et se paie à part). */
+  | { kind: 'beltLevel'; max: number }
+  /** Les foreuses peuvent monter jusqu'à ce niveau. */
+  | { kind: 'drillLevel'; max: number }
   | { kind: 'chestSlots'; slots: number }
   | { kind: 'drone' }
   | { kind: 'robotSpeed'; mult: number }
@@ -74,7 +77,7 @@ export const BRANCHES: Branch[] = [
       n('assembleur', 'Assembleur', 'assembleur', 3, 1, 3, { vis: 60, acier: 40 }, ['tour'], 'Combine deux pièces en une pièce travaillée.', m('assembleur'), ['Plaque de fer + Vis → Engrenage', 'Engrenage + Fil → Rotor']),
       n('centrifugeuse', 'Centrifugeuse', 'centrifugeuse', 4, 2, 6, { moteur: 20, processeur: 30 }, ['haut_fourneau'], 'Enrichit l’uranium des cratères.', m('centrifugeuse'), ['Uranium → Uranium enrichi']),
       n('fabricant', 'Fabricant', 'fabricant', 4, 1, 4, { engrenage: 60, beton: 60 }, ['assembleur'], 'Assemble trois composants en machine.', m('fabricant'), ['Rotor + Stator + Vis → Moteur']),
-      n('super_foreuse', 'Grande foreuse', 'super_foreuse', 4, 0, 6, { moteur: 20, acier: 100 }, ['raffinerie'], 'La Grande foreuse (4 × 4) : posée au milieu d’un filon, elle l’exploite en entier, comme si des foreuses le couvraient partout, sans perte. Plus aucune autre foreuse ne s’y pose. Elle passe au courant avec les foreuses (400 kW).', m('super_foreuse')),
+      n('forage', 'Forage profond', 'super_foreuse', 4, 0, 6, { moteur: 20, acier: 100 }, ['raffinerie'], 'Tes foreuses peuvent monter jusqu’au niveau 5 (quatre fois plus de minerai qu’au niveau 1) : touche un groupe de foreuses pour l’améliorer.', { kind: 'drillLevel', max: 5 }),
       n('rampe', 'Rampe de lancement', 'rampe', 5, 1, 10, { alliage: 40, guidage: 2 }, ['fabricant'], 'La Rampe de lancement (4 × 4) : remplis-la de 20 structures, 8 moteurs de fusée, 4 guidages et 100 carburants. La fusée décolle : c’est la fin du voyage (et on peut recommencer).', m('rampe')),
     ],
   },
@@ -82,10 +85,10 @@ export const BRANCHES: Branch[] = [
     id: 'logistique', label: 'Logistique', nodes: [
       n('tapis', 'Tapis', 'tapis', 0, 1, 1, {}, [], 'Tracés au doigt, droits et rangés.', base),
       n('separateur', 'Séparateur', 'separateur', 1, 0, 1, { lingot_fer: 20 }, ['tapis'], 'Glisse depuis le milieu d’un tapis : un objet sur deux part dans la dérivation.', { kind: 'splitter' }),
-      n('rapide', 'Tapis rapide', 'rapide', 1, 1, 2, { plaque_fer: 30, fil_cuivre: 30 }, ['tapis'], 'Tous les tapis vont deux fois plus vite.', { kind: 'beltSpeed', mult: 2 }),
+      n('rapide', 'Tapis rapide', 'rapide', 1, 1, 2, { plaque_fer: 30, fil_cuivre: 30 }, ['tapis'], 'Tes tapis peuvent monter jusqu’au niveau 3 (deux fois plus vite) : touche un tapis pour l’améliorer.', { kind: 'beltLevel', max: 3 }),
       n('pont', 'Ponts', 'pont', 1, 2, 3, { acier: 40 }, ['tapis'], 'En traçant un tapis, continue tout droit par-delà un autre tapis : il passe par-dessus (jusqu’à 4 cases).', { kind: 'bridge' }),
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 0, 2, { plaque_fer: 60 }, ['separateur'], 'Un coffre de 2 × 2 qui garde 300 objets (un coffre simple en garde 100).', m('grand_coffre')),
-      n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tous les tapis vont trois fois plus vite qu’au départ.', { kind: 'beltSpeed', mult: 3 }),
+      n('express', 'Tapis express', 'express', 2, 1, 4, { engrenage: 80, acier: 40 }, ['rapide'], 'Tes tapis peuvent monter jusqu’au niveau 5 (trois fois plus vite qu’au départ).', { kind: 'beltLevel', max: 5 }),
       n('camion', 'Camions', 'camion', 2, 2, 4, { moteur: 10 }, ['pont'], 'Le Dépôt : pose-en deux, remplis-les par tapis comme un coffre, puis relie-les depuis la fenêtre d’un dépôt. Un camion fait les allers-retours (20 objets à la fois) ; on peut ajouter des camions et un troisième arrêt.', m('depot')),
       n('tri', 'Tri', 'tri', 3, 0, 3, { engrenage: 20 }, ['grand_coffre'], 'Un séparateur qui choisit : touche un séparateur et choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', { kind: 'sorter' }),
       n('entrepot', 'Entrepôt', 'entrepot', 4, 0, 6, { cadre: 20, acier: 100 }, ['tri'], 'Un grand bâtiment de 3 × 3 qui garde 900 objets et les range par sorte (il montre ce qu’il garde le plus).', m('entrepot')),

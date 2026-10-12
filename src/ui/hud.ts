@@ -752,7 +752,7 @@ export class Hud implements GestureHandlers {
           if (o && o.type === 'foreuse' && o !== this.moving) for (const x of f.drillGroup(o)) if (x !== this.moving) mates.add(x);
         }
         if (mates.size) {
-          const total = [...mates].reduce((a, x) => a + (x.rate ?? 0), check.rate ?? 0);
+          const total = [...mates].reduce((a, x) => a + f.drillRate(x), check.rate ?? 0);
           join = ` · groupe de ${mates.size + 1} : <b>${total.toFixed(2).replace('.', ',')} / s</b>`;
         }
       }
@@ -1108,7 +1108,7 @@ export class Hud implements GestureHandlers {
       } else if (def.kind === 'drill') {
         const patch = this.game.world.patchAt(m.x, m.y) ?? this.game.world.patchAt(m.x + 1, m.y + 1);
         title = `Foreuse · ${m.ore ? item(m.ore).name.toLowerCase() : '?'}`;
-        text = `${STATUS_TEXT[m.status]}. Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(m.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
+        text = `${STATUS_TEXT[m.status]}. Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${this.game.view.drillRate(m).toFixed(2).replace('.', ',')} par seconde.`;
       } else if (def.kind === 'sell') {
         const g = this.game, n = g.sellCount(m);
         const t = Math.ceil(g.nextPickup), mm = Math.floor(t / 60), ss = String(t % 60).padStart(2, '0');
@@ -1163,8 +1163,11 @@ export class Hud implements GestureHandlers {
         const parts = Object.entries(r.by).sort((a, c) => c[1] - a[1]).map(([k, v]) => `${esc(item(k).name.toLowerCase())} ${fmtN(v)}`);
         meter = `<p><b>Compteur : ${fmtN(r.total)} objet${r.total >= 2 ? 's' : ''} par seconde</b>${parts.length ? ` (${parts.join(', ')})` : ''}, sur les 20 dernières secondes. La gomme le retire avant le tapis.</p>`;
       }
-      const info = `<h3>${splitter ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${splitter}${meter}
-        <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.length} ${ICONS.coinSm}</p>`;
+      const lmin = Math.min(...chain.map((c) => c.lvl ?? 1)), lmax = Math.max(...chain.map((c) => c.lvl ?? 1));
+      const bup = this.game.beltUpgrade(b);
+      const lvText = `<p class="lv-line"><span class="lv-dot l${lmin}"></span><b>Niveau ${lmin}${lmax > lmin ? ` à ${lmax}` : ''}</b> · ${fmtN(RULES.beltSpeed * RULES.beltLevelSpeed[lmin - 1])} case${lmin > 1 ? 's' : ''} par seconde</p>`;
+      const info = `<h3>${splitter ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${lvText}${splitter}${meter}
+        <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.reduce((a, c) => a + RULES.beltCost + Game.levelValue(RULES.beltLevelCost, c.lvl), 0)} ${ICONS.coinSm}</p>`;
       const feeders = (b.feeds ?? []).map((d) => f.machineAt(b.x + DX[d], b.y + DY[d])).filter((m): m is Machine => !!m);
       const fed = b.split !== undefined ? f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) : null;
       const fed2 = b.split2 !== undefined ? f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2]) : null;
@@ -1174,8 +1177,18 @@ export class Hud implements GestureHandlers {
         : fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre. Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.</p>` : '';
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
       const sortBtn = isSplit ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.itemIcons.get(b.filter)}" alt="">Changer le tri` : this.game.isUnlocked('tri') ? 'Trier un objet' : 'Voir le séparateur'}</button></div>` : '';
-      const actions = `${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
-      if (!this.setPopover(`b${sel.x},${sel.y}`, info + linkInfo, actions)) return;
+      const upBtn = !bup ? '' : bup.locked
+        ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Niveau ${bup.to} : ${bup.to <= 3 ? 'Tapis rapide' : 'Tapis express'}</button></div>`
+        : `<div class="row"><button class="btn primary" data-act="lvl"${this.game.money < bup.price ? ' disabled' : ''}>Niveau ${bup.to} · ${bup.cells.length} case${bup.cells.length > 1 ? 's' : ''} · ${ICONS.coinSm}${fmt(bup.price)}</button></div>`;
+      const actions = `${upBtn}${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
+      if (!this.setPopover(`b${sel.x},${sel.y}:${lmin}-${lmax}:${bup ? `${bup.price}${bup.locked ? 'L' : ''}${this.game.money >= bup.price ? '$' : ''}` : ''}`, info + linkInfo, actions)) return;
+      const lb = p.querySelector<HTMLButtonElement>('[data-act="lvl"]');
+      if (lb) lb.onclick = () => {
+        const done = this.game.upgradeBelt(b);
+        if (done) this.toast(`Tapis au niveau ${(bup?.to ?? 2)}`, 'good');
+        this.popKey = '';
+        this.renderPopover();
+      };
       const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
       if (so) so.onclick = () => this.openSortPicker(b);
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
@@ -1684,7 +1697,7 @@ export class Hud implements GestureHandlers {
       if (def.kind === 'drill') {
         const patch = g.world.patchAt(mm.x, mm.y) ?? g.world.patchAt(mm.x + 1, mm.y + 1);
         title = `${def.name} · ${mm.ore ? item(mm.ore).name.toLowerCase() : '?'}`;
-        status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${(mm.rate ?? 0).toFixed(2).replace('.', ',')} par seconde.`;
+        status += ` Filon ${patch ? RICHNESS_LABEL[patch.richness] : ''} : ${g.view.drillRate(mm).toFixed(2).replace('.', ',')} par seconde.`;
       }
       if (def.kind === 'station') {
         const nd = g.stationCapacity(mm);
@@ -1941,7 +1954,7 @@ export class Hud implements GestureHandlers {
     if (def.kind === 'drill' && crew.length > 1) {
       // Un groupe de foreuses collées : tout ce qu'il extrait, et par combien de sorties ça part.
       const by = new Map<string, number>();
-      for (const x of crew) if (x.ore) by.set(x.ore, (by.get(x.ore) ?? 0) + (x.rate ?? 0));
+      for (const x of crew) if (x.ore) by.set(x.ore, (by.get(x.ore) ?? 0) + f.drillRate(x));
       const outs = f.drillOutletTotal(mm);
       const total = [...by.values()].reduce((a, n) => a + n, 0);
       cap = `${crew.length} foreuses collées · un seul groupe`;
@@ -1955,8 +1968,8 @@ export class Hud implements GestureHandlers {
       const ore = mm.ore;
       cap = ore ? `Extrait du ${esc(item(ore).name.toLowerCase())}` : 'Pas de filon dessous';
       if (ore) {
-        flow = `${this.mpItem(ore, null, false, 1, `filon ${patch ? RICHNESS_LABEL[patch.richness] : ''}`)}${MP_ARROW}${this.mpItem(ore, mm.rate ?? 0, true)}`;
-        foot = `<span>${(mm.rate ?? 0) > 0 ? `1 toutes les ${secs(1 / (mm.rate ?? 1))}` : ''}</span>`;
+        flow = `${this.mpItem(ore, null, false, 1, `filon ${patch ? RICHNESS_LABEL[patch.richness] : ''}`)}${MP_ARROW}${this.mpItem(ore, f.drillRate(mm), true)}`;
+        foot = `<span>${f.drillRate(mm) > 0 ? `1 toutes les ${secs(1 / f.drillRate(mm))}` : ''}</span>`;
       }
     } else {
       const ri = this.ratesRecipe(mm), auto = this.autoRecipe(mm);
@@ -1991,6 +2004,29 @@ export class Hud implements GestureHandlers {
       card.append(this.fuelBar(mm));
     }
     body.append(card);
+    if (def.kind === 'drill') body.append(this.levelCard(mm));
+  }
+
+  /** Niveau d'une foreuse (de tout son groupe) : ce qu'il apporte, et le bouton pour monter d'un niveau. */
+  private levelCard(mm: Machine): HTMLElement {
+    const g = this.game, f = g.view;
+    const crew = f.drillGroup(mm), all = crew.length > 1 ? crew : [mm];
+    const up = g.drillUpgrade(mm);
+    const lv = Math.min(...all.map((x) => x.lvl ?? 1));
+    const mixed = all.some((x) => (x.lvl ?? 1) !== lv);
+    const pips = [1, 2, 3, 4, 5].map((i) => `<i class="${i <= lv ? 'on' : i <= g.drillMaxLevel ? '' : 'lock'}"></i>`).join('');
+    const card = h('div', 'card lvlcard');
+    const speed = (n: number) => `×${String(RULES.drillLevelSpeed[n - 1]).replace('.', ',')}`;
+    card.innerHTML = `<div class="lv-row"><div class="lv-t"><b>Niveau ${lv}${mixed ? '+' : ''}</b><small>${speed(lv)} de minerai${all.length > 1 ? ` · ${all.length} foreuses` : ''}</small></div><span class="lv-pips">${pips}</span></div>`;
+    if (up) {
+      const b = h('button', `btn ${up.locked ? '' : 'primary'} lv-btn`, up.locked
+        ? `${ICONS.lock}Niveau ${up.to} : Forage profond`
+        : `Niveau ${up.to} · ${speed(up.to)}<span class="lv-price">${ICONS.coinSm}${fmt(up.price)}</span>`);
+      b.disabled = up.locked || g.money < up.price;
+      b.onclick = () => { if (g.upgradeDrills(mm)) { this.toast(`${up.drills.length > 1 ? `${up.drills.length} foreuses` : 'Foreuse'} au niveau ${up.to}`, 'good'); this.refreshSheet(); } };
+      card.append(b);
+    } else card.append(h('p', 'muted small', 'Niveau le plus haut.'));
+    return card;
   }
 
   /** Avancement de la pièce en cours (0 à 1). */
@@ -2168,7 +2204,7 @@ export class Hud implements GestureHandlers {
       for (const [k, v] of Object.entries(rec.in)) maxIn[k] = v / rec.time;
       for (const [k, v] of Object.entries(rec.out)) maxOut[k] = v / rec.time;
     }
-    if (def.kind === 'drill' && mm.ore) maxOut[mm.ore] = mm.rate ?? 0;
+    if (def.kind === 'drill' && mm.ore) maxOut[mm.ore] = f.drillRate(mm);
     // Le combustible : ce qu'elle brûle en travaillant, si elle n'est pas au courant.
     if (def.coal && !f.powered(mm)) for (const t of ['charbon', 'carburant']) if (maxIn[t] === undefined) maxIn[t] = 1 / (RULES.coalMachineSeconds * (t === 'carburant' ? RULES.carburantMult : 1));
     type Entry = { side: 'top' | 'right' | 'bottom' | 'left'; io: 'in' | 'out'; item?: string; kind: 'belt' | 'planned' | 'ghost'; port?: number; x?: number; y?: number };

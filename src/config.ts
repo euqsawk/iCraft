@@ -113,8 +113,17 @@ export const RULES = {
   /** Pont : un tapis passe par-dessus d'autres tapis, sur 4 cases au plus ; prix en plus des cases. */
   bridgeSpan: 4,
   bridgeCost: 5,
-  /** Vitesse des tapis, en cases par seconde. */
+  /** Vitesse des tapis, en cases par seconde (au niveau 1). */
   beltSpeed: 1.5,
+  /** Niveaux de tapis : vitesse (× la vitesse de base) et prix par case pour monter à ce niveau. */
+  beltLevelSpeed: [1, 1.5, 2, 2.5, 3],
+  beltLevelCost: [0, 2, 4, 8, 16],
+  /** Niveaux de foreuses : extraction (× celle du niveau 1) et prix par foreuse pour monter à ce niveau. */
+  drillLevelSpeed: [1, 1.5, 2, 3, 4],
+  drillLevelCost: [0, 20, 40, 80, 160],
+  /** Niveau le plus haut sans rien débloquer (tapis, foreuses). */
+  beltBaseMax: 2,
+  drillBaseMax: 3,
   /** Écart minimal entre deux objets sur un tapis, en cases. */
   beltGap: 0.5,
   robotSpeed: 4.5,

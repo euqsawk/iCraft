@@ -1050,3 +1050,22 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .mf-cont { flex: 1; height: 10px; border-radius: 3px; background: #E3EDE8; overflow: hidden; }
 .mf-cont > span { display: block; height: 100%; background: #3C4350; border-radius: 3px; }
 .mfuel.low .mf-cont > span { background: var(--coral); }
+
+/* Niveaux (foreuses, tapis) */
+.lvlcard { gap: 10px; }
+.lv-row { display: flex; align-items: center; gap: 10px; }
+.lv-t { flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.lv-t b { font-size: 16px; font-weight: 900; }
+.lv-t small { font-size: 12px; font-weight: 700; color: var(--ink2); }
+.lv-pips { display: flex; gap: 4px; }
+.lv-pips i { width: 16px; height: 16px; border-radius: 5px; background: #E3EDE8; }
+.lv-pips i.on { background: var(--ink); }
+.lv-pips i.lock { background: repeating-linear-gradient(45deg, #E3EDE8 0 3px, #F4F8F6 3px 6px); }
+.lv-btn { min-height: 48px; border-radius: 16px; font-size: 15px; justify-content: space-between; padding: 0 14px; }
+.lv-btn .lv-price { display: inline-flex; align-items: center; gap: 3px; }
+.lv-btn svg.lock { width: 12px; height: 12px; }
+.popover p.lv-line, .lv-line { display: block; }
+.lv-line .lv-dot { display: inline-block; vertical-align: -1px; margin-right: 5px; }
+.lv-dot { width: 12px; height: 12px; border-radius: 4px; flex: none; }
+.lv-dot.l1 { background: #9FB3A9; } .lv-dot.l2 { background: #E0A82E; } .lv-dot.l3 { background: #F47C64; } .lv-dot.l4 { background: #6B4FA0; } .lv-dot.l5 { background: #4B8BD1; }
+.popover .btn svg.lock { width: 11px; height: 11px; }

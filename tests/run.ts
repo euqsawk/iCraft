@@ -12,7 +12,6 @@ import { HAND_FACTOR, maxCraftable } from '../src/sim/craft.ts';
 import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
 import { ROCKET_NEEDS, type Machine } from '../src/sim/factory.ts';
-import { patchCells } from '../src/world/world.ts';
 import { key } from '../src/sim/geom.ts';
 
 let failed = 0, passed = 0;
@@ -1257,29 +1256,77 @@ test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
   const b = other.placePlan(plan, 20, 10, 10)!;
   assert(b && b.inner && [...b.inner.machines.values()].some((x) => x.type === 'presse') && m0 - other.money === other.planPrice(plan), 'atelier posé depuis le plan');
 });
-test('grande foreuse : tout le filon, sans perte ; seule sur son filon', () => {
-  const g = new Game('TEST-SF');
-  g.money = 1e6; g.world.reveal(-10, -4, 20);
-  g.unlocks.add('super_foreuse');
-  const p = g.world.patchAt(-12, -4)!;
-  const cells = patchCells(p).length;
-  const c = g.factory.checkMachine('super_foreuse', -14, -6);
-  assert(c.ok && c.ore === 'fer' && Math.abs(c.rate! - 0.5 * (cells / 4)) < 1e-9, `débit ${c.rate} pour ${cells} cases`);
-  // Une place de foreuse sur le même filon, hors de la grande foreuse.
-  let spot: { x: number; y: number } | null = null;
-  for (let y = -9; y <= 1 && !spot; y++) for (let x = -17; x <= -7 && !spot; x++) {
-    const out = x + 1 < -14 || x > -11 || y + 1 < -6 || y > -3;
-    if (out && g.factory.checkMachine('foreuse', x, y).ok) spot = { x, y };
-  }
-  assert(spot, 'une place de foreuse');
-  const d = g.placeMachine('foreuse', spot!.x, spot!.y);
-  assert(d && !g.factory.checkMachine('super_foreuse', -14, -6).ok, 'pas de grande foreuse sur un filon déjà exploité');
-  g.removeMachine(d!);
-  const sf = g.placeMachine('super_foreuse', -14, -6)!;
-  assert(sf && sf.rate! > 3 && !g.factory.checkMachine('foreuse', spot!.x, spot!.y).ok, 'le filon est à elle');
-  sf.built = true; sf.fuel = 10; g.pending = []; g.factory.markBuilt();
-  run(g, 1.4);
-  assert(sf.made >= 5, `elle extrait vite : ${sf.made} en 1,4 s`);
+test('niveaux de foreuses : tout le groupe monte d’un coup, il extrait plus ; au-delà du 3, Forage profond', () => {
+  const g = new Game('TEST-DL');
+  g.money = 1e6; g.world.reveal(-10, -4, 20); g.drones[0].cargo = null;
+  const a = g.placeMachine('foreuse', -13, -4)!, b = g.placeMachine('foreuse', -12, -4)!;
+  for (const m of [a, b]) { m.built = true; m.fuel = 10; }
+  g.pending = []; g.factory.markBuilt();
+  const base = g.factory.drillRate(a);
+  const up = g.drillUpgrade(a)!;
+  assert(up.to === 2 && up.drills.length === 2 && up.price === 2 * RULES.drillLevelCost[1], `prix : ${up.price}`);
+  const m0 = g.money;
+  assert(g.upgradeDrills(b) && a.lvl === 2 && b.lvl === 2 && g.money === m0 - up.price, 'le groupe passe au niveau 2');
+  assert(Math.abs(g.factory.drillRate(a) - base * RULES.drillLevelSpeed[1]) < 1e-9, 'il extrait plus');
+  assert(g.upgradeDrills(a) && a.lvl === 3, 'niveau 3');
+  assert(g.drillUpgrade(a)!.locked && !g.upgradeDrills(a) && a.lvl === 3, 'niveau 4 : à débloquer');
+  g.unlocks.add('forage'); (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(g.drillMaxLevel === 5 && g.upgradeDrills(a) && g.upgradeDrills(a) && a.lvl === 5 && !g.drillUpgrade(a), 'jusqu’au niveau 5');
+  const m1 = g.money;
+  g.removeMachine(b);
+  assert(g.money - m1 === MACHINES.foreuse.cost + RULES.drillLevelCost.slice(1).reduce((x, n) => x + n, 0), 'supprimer rend aussi les niveaux');
+});
+test('niveaux de tapis : on paie chaque case du tapis ; il va plus vite ; au-delà du 2, Tapis rapide', () => {
+  const g = new Game('TEST-BL');
+  g.money = 1e6; g.world.reveal(-6, 2, 20);
+  assert(g.placeBelts(trace(g, [[-4.5, 9.5], [3.5, 9.5]]).result()), 'tapis');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const b0 = g.factory.beltAt(-4, 9)!;
+  const n = g.factory.chainOf(b0).length;
+  const up = g.beltUpgrade(b0)!;
+  assert(up.to === 2 && up.cells.length === n && up.price === n * RULES.beltLevelCost[1], `prix : ${up.price} pour ${n} cases`);
+  // Un objet met moins de temps à traverser un tapis de niveau 2.
+  const cross = () => {
+    for (const c of g.factory.chainOf(b0)) c.items = [];
+    b0.items = [{ t: 'charbon', p: 0 }];
+    let t = 0;
+    const end = g.factory.beltAt(3, 9)!;
+    while (!(end.items[0]?.p >= 0.74) && t < 30) { g.factory.tick(1 / 30); t += 1 / 30; }
+    return t;
+  };
+  const t1 = cross();
+  assert(g.upgradeBelt(b0) && g.factory.chainOf(b0).every((c) => c.lvl === 2), 'tout le tapis au niveau 2');
+  const t2 = cross();
+  assert(t2 < t1 / 1.3, `plus vite : ${t1.toFixed(2)} s puis ${t2.toFixed(2)} s`);
+  assert(g.beltUpgrade(b0)!.locked && !g.upgradeBelt(b0), 'niveau 3 : à débloquer (Tapis rapide)');
+  // Un bout ajouté repart au niveau 1 : seul lui monte (et seul lui se paie).
+  assert(g.placeBelts(trace(g, [[3.5, 9.5], [6.5, 9.5]]).result()), 'rallonge');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.factory.markBuilt();
+  const up2 = g.beltUpgrade(b0)!;
+  assert(up2.to === 2 && up2.cells.length === g.factory.chainOf(b0).length - n, `seule la rallonge : ${up2.cells.length}`);
+  const m0 = g.money;
+  g.removeChain(b0);
+  assert(g.money > m0 + n * (RULES.beltCost + RULES.beltLevelCost[1]) - 1, 'supprimer rend aussi les niveaux');
+});
+test('ancienne partie : tapis rapides, Grande foreuse et son déblocage deviennent des niveaux', () => {
+  const g = new Game('TEST-LV');
+  g.money = 1000; g.world.reveal(-10, -3, 20);
+  assert(g.placeBelts(trace(g, [[-4.5, 9.5], [0.5, 9.5]]).result()), 'tapis');
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  delete s.factory.levels;
+  s.unlocks = [...s.unlocks, 'rapide', 'super_foreuse'];
+  s.factory.machines.push({ id: 950, type: 'super_foreuse', x: -14, y: -6, built: true, inBuf: {}, outBuf: { fer: 5 }, fuel: 8, burn: 0, craft: null, drillT: 0, made: 3 });
+  s.factory.nextId = 951;
+  const g2 = new Game(s.seed, s);
+  assert([...g2.factory.belts.values()].every((b) => b.lvl === 3), 'tapis rapides : niveau 3');
+  assert(g2.unlocks.has('forage') && !g2.unlocks.has('super_foreuse') && g2.drillMaxLevel === 5, 'Forage profond');
+  const small = [...g2.factory.machines.values()].filter((m) => m.type === 'foreuse');
+  assert(small.length >= 6 && small.every((m) => m.lvl === RULES.drillBaseMax) && small.some((m) => m.id === 950 && m.fuel === 8), `foreuses : ${small.length}`);
+  const spent = small.length * (MACHINES.foreuse.cost + RULES.drillLevelCost[1] + RULES.drillLevelCost[2]);
+  assert(g2.money === s.money + 1500 - spent, `rendu : ${g2.money - s.money}`);
+  assert(!g2.factory.machines.has(951) || g2.factory.machines.get(951)!.type === 'foreuse', 'plus de Grande foreuse');
 });
 test('lignes dans les deux sens : du carburant vers la mine, du minerai au retour ; jusqu’à 6 arrêts', () => {
   const g = new Game('TEST-V3');
@@ -1597,13 +1644,13 @@ test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   g.palier = 2;
   g.lab = { lingot_fer: 100, plaque_fer: 200, fil_cuivre: 100 };
   assert(g.unlock('presse') && g.hasMachine('presse'), 'presse');
-  assert(g.unlock('rapide') && g.factory.speedMult === 2, 'tapis rapide');
+  assert(g.unlock('rapide') && g.beltMaxLevel === 3, 'tapis rapide : niveau 3 possible');
   assert(g.unlock('separateur') && g.unlock('grand_coffre') && g.hasMachine('grand_coffre') && g.factory.chestSlots === 10, 'grand coffre : une machine à part');
   assert(g.unlock('drone2') && g.drones.length === 2, 'deuxième drone');
   g.setDronePriority(1, 'noyau');
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
-  assert(g2.hasMachine('presse') && g2.factory.speedMult === 2 && g2.palier === 2 && g2.drones.length === 2, 'sauvegarde de l’arbre');
+  assert(g2.hasMachine('presse') && g2.beltMaxLevel === 3 && g2.palier === 2 && g2.drones.length === 2, 'sauvegarde de l’arbre');
   assert(g2.drones[1].priorities[0] === 'noyau' && g2.drones[1].priorities.length === 5 && JSON.stringify(g2.lab) === JSON.stringify(g.lab), 'priorités et labo');
 });
 test('une sauvegarde d’avant les paliers garde ses déblocages et repart au palier 1', () => {

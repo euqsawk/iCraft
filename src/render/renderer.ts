@@ -93,6 +93,9 @@ interface MachineView {
   status: string;
 }
 
+/** Couleur des chevrons d'un tapis selon son niveau (1 discret, puis jaune, corail, violet, bleu). */
+const BELT_LEVEL_COLORS = [PALETTE.roller, 0xe0a82e, 0xf47c64, 0x6b4fa0, 0x4b8bd1];
+
 /** La variante du dessin d'un bâtiment : le minerai d'une foreuse, une forme d'arbre selon sa place. */
 function iconVariant(m: Machine): number | string {
   if ((m.type === 'foreuse' || m.type === 'super_foreuse') && m.ore) return m.ore;
@@ -564,14 +567,24 @@ export class GameRenderer {
       gs.stroke({ width: 14, color: PALETTE.shadow, cap: 'round', join: 'round' });
       line(g, list, 0);
       g.stroke({ width: 14, color: PALETTE.white, cap: 'round', join: 'round' });
-      // Rouleaux discrets : un chevron par case, dans le sens du tapis.
-      for (const b of list) {
-        const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
-        const fx = DX[b.dir], fy = DY[b.dir];
-        const px = -fy, py = fx;
-        g.moveTo(cx - fx * 2 + px * 3.2, cy - fy * 2 + py * 3.2).lineTo(cx + fx * 1.2, cy + fy * 1.2).lineTo(cx - fx * 2 - px * 3.2, cy - fy * 2 - py * 3.2);
+      // Rouleaux discrets : un chevron par case, dans le sens du tapis, à la couleur de son niveau
+      // (deux chevrons à partir du niveau 4).
+      for (let lv = 1; lv <= 5; lv++) {
+        let any = false;
+        for (const b of list) {
+          if ((b.lvl ?? 1) !== lv) continue;
+          any = true;
+          const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
+          const fx = DX[b.dir], fy = DY[b.dir];
+          const px = -fy, py = fx;
+          const offs = lv >= 4 ? [-2.2, 2.2] : [0];
+          for (const o of offs) {
+            const ox = cx + fx * o, oy = cy + fy * o;
+            g.moveTo(ox - fx * 2 + px * 3.2, oy - fy * 2 + py * 3.2).lineTo(ox + fx * 1.2, oy + fy * 1.2).lineTo(ox - fx * 2 - px * 3.2, oy - fy * 2 - py * 3.2);
+          }
+        }
+        if (any) g.stroke({ width: lv === 1 ? 2 : 2.4, color: BELT_LEVEL_COLORS[lv - 1], cap: 'round', join: 'round' });
       }
-      g.stroke({ width: 2, color: PALETTE.roller, cap: 'round', join: 'round' });
       // Séparateurs : un losange blanc cerclé (comme sur la maquette).
       for (const b of list) {
         if (b.split === undefined) continue;
@@ -1155,7 +1168,8 @@ export class GameRenderer {
     const ores = [...new Set(this.game.view.drillGroup(m).map((x) => x.ore).filter((o): o is string => !!o))];
     const short = (o: string) => item(o).name.replace('Minerai de ', '').replace("Minerai d'", '').replace('Minerai d’', '');
     const names = ores.slice(0, 2).map(short).join(' + ') + (ores.length > 2 ? ' …' : '');
-    return names.replace(/^./, (c) => c.toUpperCase()) || 'Foreuse';
+    const lv = Math.min(...this.game.view.drillGroup(m).map((x) => x.lvl ?? 1));
+    return (names.replace(/^./, (c) => c.toUpperCase()) || 'Foreuse') + (lv > 1 ? ` · niv. ${lv}` : '');
   }
 
   private machineAbove(m: Machine): boolean {
