@@ -1121,3 +1121,43 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .ach-row .ach-gives { color: var(--green); font-weight: 800; }
 .ach-row:not(.done) .ach-gives { color: var(--ink2); opacity: .8; }
 .skin-btn .scan-ico svg { width: 38px; height: 48px; }
+
+/* ---------- Arbre en étoile ---------- */
+.tree.star .star-view { position: absolute; inset: 0; overflow: hidden; touch-action: none; cursor: grab; background-image: radial-gradient(#C4D9CE 1.2px, transparent 1.5px); background-size: 24px 24px; }
+.tree.star .star-view:active { cursor: grabbing; }
+.star-svg { display: block; width: 100%; height: 100%; font-family: inherit; }
+.star-svg .tn { cursor: pointer; }
+.star-svg .star-chip { pointer-events: none; }
+.tree.star.far .tl { display: none; }
+.tn-halo.ready { animation: starPulse 1.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes starPulse { 0%, 100% { opacity: .18; transform: scale(1); } 50% { opacity: .34; transform: scale(1.12); } }
+.star-fade.top { position: absolute; left: 0; right: 0; top: 0; height: calc(var(--top) + 96px); background: linear-gradient(var(--ground) 70%, rgba(220, 235, 227, 0)); pointer-events: none; }
+.tree.star .tree-top { z-index: 2; }
+.star-legend { position: absolute; z-index: 2; left: 16px; right: 16px; top: calc(var(--top) + 56px); max-width: 520px; margin: 0 auto; display: flex; justify-content: space-between; gap: 6px; padding: 7px 12px; border-radius: 14px; background: rgba(255, 255, 255, .85); font-size: 11px; font-weight: 800; color: var(--ink2); pointer-events: none; }
+.star-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.star-legend .lg { width: 12px; height: 12px; border-radius: 7px; box-sizing: border-box; }
+.star-legend .lg.done { background: #fff; border: 2.5px solid var(--ink); box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 6px var(--ink); }
+.star-legend .lg.open { background: #fff; border: 2px dashed var(--ink); }
+.star-legend .lg.far { background: #EEF4F0; border: 2px solid #C3D3CA; }
+.star-legend .lg.next { background: #E5EEE9; border: 2px dashed #C9D8D0; }
+.star-bottom { position: absolute; z-index: 2; left: 16px; right: 16px; bottom: calc(var(--bottom) + 10px); display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; pointer-events: none; }
+.star-go, .star-zoom { pointer-events: auto; }
+.star-go { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.star-k { font-size: 11px; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; color: var(--ink2); }
+.star-chips { display: flex; flex-wrap: wrap; gap: 6px; max-width: 290px; }
+.star-chipbtn { position: relative; height: 32px; padding: 0 11px; border-radius: 16px; color: #fff; font-size: 13px; font-weight: 900; box-shadow: 0 3px 0 rgba(46, 58, 75, .18); white-space: nowrap; }
+.star-chipbtn .tree-dot { top: -2px; right: -2px; border: 2px solid #fff; width: 10px; height: 10px; border-radius: 6px; }
+.star-zoom { display: flex; flex-direction: column; gap: 8px; }
+.star-zb { width: 48px; height: 48px; border-radius: 16px; background: #fff; box-shadow: 0 4px 0 var(--shadow); display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: 900; color: var(--ink); }
+.star-zb.dark { background: var(--ink); box-shadow: 0 4px 0 #1C2430; }
+.star-zb:active, .star-chipbtn:active { transform: translateY(2px); }
+.tree.star.has-sheet .star-bottom, .tree.star.has-sheet .star-legend { display: none; }
+.star-sheet { z-index: 3; animation: sheetUp .2s ease-out; }
+.star-sheet:empty { display: none; }
+@keyframes sheetUp { from { transform: translateY(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+.star-sheet .ts-head { align-items: center; }
+.star-sheet .ts-icon { border: 3px dashed var(--bc); box-sizing: border-box; border-radius: 28px; background: #fff; }
+.star-sheet .ts-icon.mystery { border-color: #C3D1CA; background: #E3ECE7; }
+.star-sheet .ts-name { flex: 1; }
+.ts-branch { font-size: 12px; font-weight: 800; }
+.ts-close { flex: none; }
