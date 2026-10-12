@@ -1124,7 +1124,7 @@ test('toundras lointaines (titane, cristal pur), fusée, monte-charge', () => {
   run(g, 60);
   assert((chest.inBuf.verre ?? 0) >= 5 && (chest.inBuf.sable ?? 0) < 20, `monte-charge : ${JSON.stringify(chest.inBuf)}`);
 });
-test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
+test('météo, arbres décoratifs, plans d’ateliers', () => {
   const g = new Game('TEST-P1');
   const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
   g.money = 1e6; g.world.reveal(8, 8, 25);
@@ -1136,21 +1136,11 @@ test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
   g.played = [...Array(40).keys()].map((i) => i * RULES.weatherSpan + 1).find((t) => { g.played = t; return g.weather === 'pluie'; })!;
   run(g, 0.1);
   assert(g.factory.truckMult === RULES.rainTruck, 'la pluie ralentit les camions');
-  // Pollution : un générateur qui brûle salit le sol ; au-delà du seuil, les machines ralentissent.
-  for (const id of ['generateur', 'arbre', 'filtre', 'pompe', 'presse']) g.unlocks.add(id);
+  // Plus de pollution : un arbre est un simple décor.
+  for (const id of ['arbre', 'presse']) g.unlocks.add(id);
   apply();
-  const four = g.placeMachine('four', 10, 10)!;
-  four.built = true; g.pending = []; g.factory.markBuilt();
-  const k = `${Math.floor(11 / 16)},${Math.floor(11 / 16)}`;
-  g.pollution.set(k, 200);
-  assert(g.factory.pollutionMult(four) < 1, 'pollution : machines plus lentes');
   const tree = g.placeMachine('arbre', 13, 10)!;
-  tree.built = true; g.factory.markBuilt();
-  const p0 = g.pollution.get(k)!;
-  run(g, 10);
-  assert(g.pollution.get(k)! < p0, `les arbres nettoient : ${p0} → ${g.pollution.get(k)}`);
-  const g2 = new Game('TEST-P1', JSON.parse(JSON.stringify(g.serialize())));
-  assert((g2.pollution.get(k) ?? 0) > 0, 'pollution sauvegardée');
+  assert(tree && !('pollution' in g), 'arbre posé, pas de pollution');
   // Plans : l'intérieur d'un atelier, reposé ailleurs (dans une autre partie).
   g.unlocks.add('module'); apply();
   const a = g.placeMachine('atelier', 20, 20)!;

@@ -404,7 +404,7 @@ export class Hud implements GestureHandlers {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor' || m.kind === 'filter') return 'electricite';
+    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
     if (m.kind === 'storage') return 'stockage';
     return 'outils';
@@ -423,7 +423,7 @@ export class Hud implements GestureHandlers {
     const placed = new Set([...this.game.view.machines.values()].map((x) => x.type));
     if (this.machineType && machineDef(this.machineType).unique && placed.has(this.machineType)) this.machineType = 'foreuse';
     const inside = !!this.game.inAtelier;
-    const OUTSIDE_ONLY = ['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre', 'base_robot'];
+    const OUTSIDE_ONLY = ['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'base_robot'];
     const list = BUILDABLE.filter((m) => this.game.hasMachine(m.id) && !m.gift && !(m.unique && placed.has(m.id))
       // Dans un atelier : ni foreuse, ni station, ni générateur, ni dépôt ; les entrées et sorties, seulement là.
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
@@ -703,7 +703,7 @@ export class Hud implements GestureHandlers {
     if (!m.built) return null;
     const kind = machineDef(m.type).kind;
     if (kind === 'storage') return () => this.openChest(m);
-    if (['crafter', 'drill', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'rocket', 'filter'].includes(kind)) return () => this.openMachine(m);
+    if (['crafter', 'drill', 'generator', 'atelier', 'solar', 'battery', 'pump', 'reactor', 'rocket'].includes(kind)) return () => this.openMachine(m);
     return null;
   }
 
@@ -1488,19 +1488,16 @@ export class Hud implements GestureHandlers {
         sheet.append(acts);
         return;
       }
-      if (def.kind === 'pump' || def.kind === 'reactor' || def.kind === 'filter') {
+      if (def.kind === 'pump' || def.kind === 'reactor') {
         const wn = g.view.waterNetOf(mm);
         const waterLine = wn ? `Réseau d’eau : ${fmtN(wn.demand)} L/s demandés pour ${fmtN(wn.supply)} L/s pompés.` : 'Aucun tuyau ne la touche.';
         const sub = def.kind === 'pump' ? `${status} 40 L/s. ${waterLine}`
-          : def.kind === 'reactor' ? `${status} Eau : ${Math.round((mm.water ?? 0) * 100)} %. ${wn ? waterLine : 'Relie-le par un tuyau à une pompe, sinon il ne démarre pas.'}`
-          : `${status} Pollution ici : ${Math.round(g.view.pollutionAt(mm))}. Au courant, il en retire ${RULES.filterClean} par seconde.`;
+          : `${status} Eau : ${Math.round((mm.water ?? 0) * 100)} %. ${wn ? waterLine : 'Relie-le par un tuyau à une pompe, sinon il ne démarre pas.'}`;
         sheet.append(this.sheetHead(def.name, esc(sub), close));
         const card = h('div', 'card');
         if (def.kind === 'reactor') {
           const rods = mm.inBuf.uranium_enrichi ?? 0;
           card.innerHTML = `${this.gauge('Barreaux', rods, RULES.fuelStack, rods <= 1).replace(this.itemIcons.get('charbon')!, this.itemIcons.get('uranium_enrichi')!)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${(mm.water ?? 0) * 100}%"></span></span><b>${Math.round((mm.water ?? 0) * 100)} %</b></div>${this.powerCard(mm)}<p class="muted small">Un barreau d’uranium enrichi dure 2 minutes à pleine charge ; apporte-les par tapis.</p>`;
-        } else if (def.kind === 'filter') {
-          card.innerHTML = this.powerCard(mm);
         } else {
           card.innerHTML = `<p class="muted small">${esc(waterLine)}</p>`;
         }

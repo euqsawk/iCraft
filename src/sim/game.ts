@@ -98,6 +98,7 @@ export interface GameSave {
   stats?: { made: Record<string, number>; used: Record<string, number> };
   achievements?: string[];
   rockets?: number;
+  /** Ancienne pollution (retirée) : ignorée au chargement. */
   pollution?: Record<string, number>;
   gifts?: Record<string, number>;
   ordersDone?: number;
@@ -109,7 +110,7 @@ export interface GameSave {
 }
 
 /** Ce qu'on ne pose pas dans un atelier (ça vit sur la carte). */
-const NOT_IN_ATELIER = new Set(['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'filtre', 'base_robot']);
+const NOT_IN_ATELIER = new Set(['generateur', 'depot', 'gare', 'foreuse', 'solaire', 'batterie', 'pompe', 'centrale', 'rampe', 'arbre', 'base_robot']);
 
 export class Game {
   readonly world: World;
@@ -406,7 +407,6 @@ export class Game {
     this.world = new World(seed);
     this.factory = new Factory(this.world);
     this.factory.onDeliver = (m, item) => this.receive(m, item, 1);
-    this.factory.pollution = this.pollution;
     this.factory.onRocket = (m) => { this.rockets++; this.emit({ type: 'rocket', id: m.id, n: this.rockets }); };
     this.factory.buildingAccepts = (m, item) => this.accepts(m, item) > 0;
     if (save) {
@@ -1467,8 +1467,6 @@ export class Game {
 
   /** Fusées lancées. */
   rockets = 0;
-  /** Pollution par morceau de carte (« cx,cy »). */
-  readonly pollution = new Map<string, number>();
 
   /** Le temps qu'il fait : un temps tiré de la graine toutes les 200 secondes (clair le plus souvent). */
   get weather(): 'clair' | 'pluie' | 'neige' {
@@ -1565,9 +1563,6 @@ export class Game {
       this.emit({ type: 'toast', text: w === 'pluie' ? 'Il pleut : les camions roulent moins vite' : w === 'neige' ? 'Il neige : les panneaux solaires donnent moitié moins' : 'Le temps se dégage', tone: 'info' });
     }
     this.lastWeather = w;
-    // La pollution retombe lentement d'elle-même.
-    const decay = Math.max(0, 1 - 0.002 * dt);
-    for (const [k, v] of this.pollution) { const nv = v * decay; if (nv < 0.05) this.pollution.delete(k); else this.pollution.set(k, nv); }
     this.achT += dt;
     if (this.achT > 2) { this.achT = 0; this.checkAchievements(); }
     this.statT += dt;
@@ -1597,7 +1592,6 @@ export class Game {
       look: this.look, tips: this.tips, played: Math.floor(this.played),
       gifts: this.gifts, ordersDone: this.ordersDone, earned: this.earned,
       stats: this.factory.stats, achievements: [...this.achievements], rockets: this.rockets,
-      pollution: Object.fromEntries([...this.pollution].filter(([, v]) => v >= 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])),
     };
   }
 
@@ -1614,7 +1608,6 @@ export class Game {
     for (const id of [...this.achievements]) if (!ACHIEVEMENTS.some((a) => a.id === id)) this.achievements.delete(id);
     this.achQuiet = true;
     this.rockets = s.rockets ?? 0;
-    for (const [k, v] of Object.entries(s.pollution ?? {})) this.pollution.set(k, v);
     // Les chantiers d'une ancienne partie se terminent tout de suite (plus de drones pour les construire).
     for (const j of s.pending ?? []) {
       if (j.kind === 'belt') { const b = this.factory.belts.get(j.k); if (b) b.built = true; }

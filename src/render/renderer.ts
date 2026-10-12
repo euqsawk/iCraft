@@ -201,9 +201,7 @@ export class GameRenderer {
   private glowLayer = new Container();
   private lightRT: RenderTexture | null = null;
   private lightSprite = new Sprite();
-  /** Pollution : un voile brun sur les morceaux de carte pollués. Météo : pluie ou neige, à l'écran. */
-  private smogG = new Graphics();
-  private smogT = 1;
+  /** Météo : pluie ou neige, à l'écran. */
   private weatherG = new Graphics();
   /** La fusée : debout sur sa rampe pendant le compte à rebours, puis le décollage. */
   private rocketG = new Graphics();
@@ -229,7 +227,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.smogG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -2150,24 +2148,6 @@ export class GameRenderer {
     if (a.t > 1) this.tpAnim = null;
   }
 
-  /** Le voile de pollution, morceau de carte par morceau de carte. */
-  private drawSmog(dt: number): void {
-    this.smogT += dt;
-    if (this.smogT < 0.5) return;
-    this.smogT = 0;
-    const g = this.smogG;
-    g.clear();
-    if (this.game.inAtelier) return;
-    const span = CHUNK * CELL;
-    for (const [k, v] of this.game.pollution) {
-      if (v < 5) continue;
-      const [cx, cy] = k.split(',').map(Number);
-      const x = cx * span, y = cy * span;
-      if (!this.inView(x + span / 2, y + span / 2, span)) continue;
-      g.roundRect(x - CELL, y - CELL, span + CELL * 2, span + CELL * 2, CELL * 3).fill({ color: 0x8a7a58, alpha: Math.min(0.22, v / 400) });
-    }
-  }
-
   /** Pluie (traits obliques) ou neige (flocons qui dérivent), dessinées à l'écran. */
   private drawWeather(): void {
     const g = this.weatherG;
@@ -2236,7 +2216,6 @@ export class GameRenderer {
     this.updateActors();
     this.drawRockets(dt);
     this.drawTeleport(dt);
-    this.drawSmog(dt);
     this.drawNight();
     this.drawWeather();
     this.drawOverlay();
