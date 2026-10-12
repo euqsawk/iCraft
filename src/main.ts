@@ -56,7 +56,8 @@ async function chooseGame(loading: HTMLElement): Promise<{ game: Game; slot: num
     loading.classList.remove('hidden');
     const game = new Game(choice.seed || randomSeedCode());
     game.look = look;
-    if (choice.freight) game.startFreight();
+    // Le train de fret est le mode de base ; le bac à sable s'en passe.
+    if (!choice.sandbox) game.startFreight();
     return { game, slot: choice.slot, fresh: true, savedAt: Date.now() };
   }
 }

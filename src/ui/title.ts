@@ -7,7 +7,7 @@ import { deleteSlot, lastSlot, listSlots, saveSlot, SLOTS } from '../save/storag
 import type { GameSave } from '../sim/game.ts';
 import { checkForUpdate, copyText, screenToast } from './update.ts';
 
-export type TitleChoice = { kind: 'load'; slot: number } | { kind: 'new'; slot: number; seed: string; freight?: boolean };
+export type TitleChoice = { kind: 'load'; slot: number } | { kind: 'new'; slot: number; seed: string; sandbox?: boolean };
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 const fmt = (n: number) => Math.floor(n).toLocaleString('fr-FR').replace(/ | /g, ' ');
@@ -127,10 +127,10 @@ export function showTitle(): Promise<TitleChoice> {
         input.autocapitalize = 'characters';
         input.autocomplete = 'off';
         const mode = h('label', 'mode-opt');
-        mode.innerHTML = '<input type="checkbox"><span><b>Train de fret (plus difficile)</b><small>Un train passe toutes les 20 minutes (10 min en route, 10 min à quai) et prend une commande dans son coffre. Tout livré : une prime. Sinon : une amende fixe, annoncée à l’avance.</small></span>';
+        mode.innerHTML = '<input type="checkbox"><span><b>Bac à sable</b><small>Sans le train de fret : personne ne vient réclamer de commande ni d’amende, tu construis à ton rythme.</small></span>';
         const box2 = mode.querySelector('input') as HTMLInputElement;
         const go = h('button', 'btn primary big', 'Commencer');
-        go.onclick = () => { close(); finish({ kind: 'new', slot, seed: input.value.trim().toUpperCase(), freight: box2.checked }); };
+        go.onclick = () => { close(); finish({ kind: 'new', slot, seed: input.value.trim().toUpperCase(), sandbox: box2.checked }); };
         const cancel = h('button', 'btn', 'Annuler');
         cancel.onclick = close;
         box.append(input, mode, go, cancel);

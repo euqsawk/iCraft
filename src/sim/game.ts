@@ -1346,6 +1346,17 @@ export class Game {
   linkBeltToMachine(b: Belt, dir: Dir): boolean {
     const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m || dir === b.dir || dir === b.split || dir === b.split2) return false;
+    // Au milieu d'un tapis qui continue, c'est une dérivation : il faut le Séparateur (et le Séparateur à 3 sorties pour les deux côtés).
+    const ax = b.x + DX[b.dir], ay = b.y + DY[b.dir];
+    const continues = !!this.view.beltAt(ax, ay) || !!this.view.machineAt(ax, ay) || b.split !== undefined;
+    if (continues && !this.isUnlocked('separateur')) {
+      this.emit({ type: 'toast', text: 'Nourrir une machine depuis le milieu d’un tapis : débloque le Séparateur (Logistique)', tone: 'warn' });
+      return false;
+    }
+    if (b.split !== undefined && !this.isUnlocked('separateur2')) {
+      this.emit({ type: 'toast', text: 'Nourrir les deux côtés : débloque le Séparateur à 3 sorties (Logistique)', tone: 'warn' });
+      return false;
+    }
     // Le tapis nourrit déjà une machine d'un côté : il peut aussi nourrir celle de l'autre côté (un objet sur trois chacune).
     if (b.split !== undefined) {
       if (b.split2 !== undefined || b.splitJump || !this.view.machineAt(b.x + DX[b.split], b.y + DY[b.split])) return false;
@@ -1579,7 +1590,6 @@ export class Game {
     return r < 0.62 ? 'clair' : r < 0.87 ? 'pluie' : 'neige';
   }
 
-  private lastWeather: string | null = null;
 
   /** Succès obtenus. */
   achievements = new Set<string>();
@@ -1663,10 +1673,6 @@ export class Game {
     const w = this.weather;
     this.factory.truckMult = w === 'pluie' ? RULES.rainTruck : w === 'neige' ? 0.85 : 1;
     this.factory.solarMult = w === 'neige' ? RULES.snowSolar : w === 'pluie' ? 0.8 : 1;
-    if (this.lastWeather !== null && w !== this.lastWeather) {
-      this.emit({ type: 'toast', text: w === 'pluie' ? 'Il pleut : les camions roulent moins vite' : w === 'neige' ? 'Il neige : les panneaux solaires donnent moitié moins' : 'Le temps se dégage', tone: 'info' });
-    }
-    this.lastWeather = w;
     this.achT += dt;
     if (this.achT > 2) { this.achT = 0; this.checkAchievements(); }
     this.statT += dt;
