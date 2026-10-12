@@ -1550,7 +1550,7 @@ test('le Noyau ne prend que ce que demande sa mission, puis passe au palier 2', 
   g.lab = { presse: 0, lingot_fer: 20 } as Record<string, number>;
   assert(g.unlock('presse') && g.nodeState(NODE.tour) === 'available', 'le tour devient disponible après la presse');
 });
-test('Laboratoire : il garde les objets, débloquer les consomme', () => {
+test('Laboratoire : il ne prend que ce qu’il faut à ce palier, débloquer le consomme', () => {
   const g = new Game('TEST-41');
   g.money = 10000; g.world.reveal(6, 6, 20);
   const lab = g.giveBuilding('laboratoire')!;
@@ -1559,9 +1559,10 @@ test('Laboratoire : il garde les objets, débloquer les consomme', () => {
   run(g, 30);
   assert(lab.built && g.hasLab(), 'laboratoire construit');
   assert(g.receive(lab, 'fer', 5) === 0, 'le minerai ne sert à rien au labo');
-  assert(g.receive(lab, 'lingot_fer', 30) === 30 && g.receive(lab, 'lingot_fer', 1000) === 470, 'plafond de 500');
+  const need = g.labNeeds().lingot_fer ?? 0;
+  assert(need > 0 && g.receive(lab, 'lingot_fer', 1000) === need && g.receive(lab, 'lingot_fer', 5) === 0, `seulement ce qu’il faut à ce palier : ${need}`);
   assert(!g.unlock('tour'), 'le tour demande le palier 2');
-  assert(g.unlock('presse') && g.lab.lingot_fer === 480 && g.hasMachine('presse'), `presse : ${g.lab.lingot_fer}`);
+  assert(g.unlock('presse') && g.lab.lingot_fer === need - 20 && g.hasMachine('presse'), `presse : ${g.lab.lingot_fer}`);
   assert(!g.unlock('trefileuse'), 'la tréfileuse demande du cuivre');
   g.receive(lab, 'lingot_cuivre', 20);
   assert(g.unlockableCount() >= 1 && g.unlock('trefileuse') && (g.lab.lingot_cuivre ?? 0) === 0, 'tréfileuse');

@@ -2903,7 +2903,7 @@ export class Hud implements GestureHandlers {
     this.closePopover();
     const g = this.game;
     this.openSheet((sheet, close) => {
-      sheet.append(this.sheetHead('Laboratoire', `Il garde les objets qui servent à débloquer l’arbre (${RULES.labCap} de chaque au plus).`, close));
+      sheet.append(this.sheetHead('Laboratoire', 'Il ne prend que ce qu’il faut encore pour les déblocages possibles à ce palier.', close));
       const open = ALL_NODES.filter((x) => g.nodeState(x) === 'available')
         .sort((a, b) => Number(g.canAfford(b)) - Number(g.canAfford(a)) || a.palier - b.palier);
       if (open.length === 0) {

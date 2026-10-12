@@ -513,7 +513,8 @@ export class Game {
     if (m.type === 'noyau') return this.noyauNeeds()[item] ?? 0;
     if (m.type === 'comptoir') return this.comptoirNeeds()[item] ?? 0;
     if (m.type === 'quai') return this.freight ? Math.max(0, (this.freight.req[item] ?? 0) - (m.inBuf[item] ?? 0)) : 0;
-    if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? Math.max(0, RULES.labCap - (this.lab[item] ?? 0), this.labNeeds()[item] ?? 0) : 0;
+    // Le Laboratoire ne prend que ce qu'il faut encore pour les déblocages possibles à ce palier (rien en réserve).
+    if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? this.labNeeds()[item] ?? 0 : 0;
     return 0;
   }
 
