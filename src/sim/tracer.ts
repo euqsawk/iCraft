@@ -172,7 +172,7 @@ export class BeltTracer {
       if (this.factory.inside(m, cx, cy)) return;
       // Un groupe de foreuses est une seule machine : le doigt qui passe sur une voisine du groupe part d'elle.
       const here = this.factory.machineAt(cx, cy);
-      if (here && here !== m && m.type === 'foreuse' && here.type === 'foreuse' && (!m.built || !here.built || this.factory.drillGroup(m).includes(here))) {
+      if (here && here !== m && m.type === 'foreuse' && here.type === 'foreuse' && this.factory.drillGroup(m).includes(here)) {
         this.startMachine = here;
         this.move(fx, fy);
         return;

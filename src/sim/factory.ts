@@ -1576,9 +1576,9 @@ export class Factory {
     return 1;
   }
 
-  /** Une foreuse 1 × 1 : elle se relie toute seule à celles qui la touchent par un côté. */
-  static isSmallDrill(m: Machine): boolean {
-    return m.type === 'foreuse';
+  /** Les foreuses (2 × 2) ne se relient plus entre elles : chacune sort son minerai par ses propres tapis. */
+  static isSmallDrill(_m: Machine): boolean {
+    return false;
   }
 
   /** Les groupes : foreuses 1 × 1 construites qui se touchent par un côté, de n'importe quelle forme. */
@@ -1602,7 +1602,7 @@ export class Factory {
   /** Le groupe d'une foreuse 1 × 1 (elle seule si elle n'en touche aucune ; vide pour une autre machine). */
   drillGroup(m: Machine): Machine[] {
     this.refresh();
-    return this.drillGroups.get(m) ?? (Factory.isSmallDrill(m) ? [m] : []);
+    return this.drillGroups.get(m) ?? (machineDef(m.type).kind === 'drill' ? [m] : []);
   }
 
   /** Nombre de sorties d'une machine : tapis qui en partent et liaisons directes. */
@@ -1932,6 +1932,7 @@ export class Factory {
     return {
       nextId: this.nextId,
       drills1: 1,
+      drills2: 1,
       levels: 1,
       cables: [...this.cables],
       pipes: [...this.pipes],
@@ -1987,8 +1988,8 @@ export class Factory {
       // Bâtiments retirés du jeu (drones et revente) : leur prix est rendu.
       if (REMOVED_COST[sm.type] !== undefined) { this.legacyRefund += REMOVED_COST[sm.type]; continue; }
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
-      // Ancienne foreuse 2 × 2 : coupée en quatre plus bas, une fois les autres numéros connus.
-      if (!s.drills1 && sm.type === 'foreuse') { oldDrills.push(sm); continue; }
+      // Foreuse 1 × 1 (parties d'entre-deux) : regroupée en foreuses 2 × 2 plus bas, une fois les autres numéros connus.
+      if (s.drills1 && !s.drills2 && sm.type === 'foreuse') { oldDrills.push(sm); continue; }
 
       const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
@@ -2017,36 +2018,54 @@ export class Factory {
     for (const st of s.tunnels ?? []) this.legacyRefund += (st.cells.length + 1) * 4;
     // Les trieurs d'avant (retirés, comme les filtres) sont remboursés.
     this.legacyRefund += oldPicks.size * 20;
-    // Les foreuses 2 × 2 d'avant deviennent quatre foreuses 1 × 1 (un groupe), sur les cases de filon ;
-    // la première garde son numéro, son charbon et ce qu'elle contenait. Les cases sans filon sont remboursées.
-    const small = MACHINES.foreuse;
-    for (const sm of oldDrills) {
-      let first: Machine | null = null;
-      for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-        const cx = sm.x + i, cy = sm.y + j;
-        if (this.cellMachine.has(key(cx, cy)) || this.belts.has(key(cx, cy))) { this.legacyRefund += small.cost; continue; }
-        const inherited = !!sm.ore; // dans un atelier : le filon d'où elle vient
-        if (!inherited && !this.checkMachine('foreuse', cx, cy).ok) { this.legacyRefund += small.cost; continue; }
-        const m = this.addMachine('foreuse', cx, cy, sm.built, first ? undefined : sm.id);
-        if (inherited) { m.ore = sm.ore; m.rate = (sm.rate ?? 0) / 4; }
-        if (!first) {
-          first = m;
-          Object.assign(m, { inBuf: sm.inBuf ?? {}, outBuf: sm.outBuf ?? {}, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, made: sm.made ?? 0 });
-          if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
-          if (sm.links?.length) m.links = [...sm.links];
-        }
+    // Les petites foreuses 1 × 1 (parties d'entre-deux) redeviennent des foreuses 2 × 2 : chaque carré qui en
+    // couvre le plus en reprend le numéro, le charbon, le contenu et le meilleur niveau. Celles qui ne trouvent
+    // pas de place sont remboursées, avec leurs niveaux.
+    const big = MACHINES.foreuse;
+    const smallLevels = [0, 20, 40, 80, 160];
+    const left = new Map(oldDrills.map((sm) => [key(sm.x, sm.y), sm]));
+    for (const sm of [...oldDrills].sort((a, b) => a.y - b.y || a.x - b.x)) {
+      if (!left.has(key(sm.x, sm.y))) continue;
+      let best: { x: number; y: number; cover: typeof oldDrills } | null = null;
+      for (const [ox, oy] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) {
+        const x = sm.x + ox, y = sm.y + oy;
+        const cover = [[0, 0], [1, 0], [0, 1], [1, 1]].map(([i, j]) => left.get(key(x + i, y + j))).filter((c): c is (typeof oldDrills)[number] => !!c);
+        if (!cover.includes(sm)) continue;
+        const inherited = !!sm.ore;
+        if (!inherited && !this.checkMachine('foreuse', x, y).ok) continue;
+        if (inherited && [[0, 0], [1, 0], [0, 1], [1, 1]].some(([i, j]) => this.cellMachine.has(key(x + i, y + j)) || this.belts.has(key(x + i, y + j)))) continue;
+        if (!best || cover.length > best.cover.length) best = { x, y, cover };
       }
+      if (!best) {
+        left.delete(key(sm.x, sm.y));
+        this.legacyRefund += 10 + smallLevels.slice(1, sm.lvl ?? 1).reduce((a, n) => a + n, 0);
+        continue;
+      }
+      for (const c of best.cover) left.delete(key(c.x, c.y));
+      const lead = best.cover[0];
+      const m = this.addMachine('foreuse', best.x, best.y, best.cover.some((c) => c.built), lead.id);
+      if (lead.ore) { m.ore = lead.ore; m.rate = best.cover.reduce((a, c) => a + (c.rate ?? 0), 0) * 4 / best.cover.length; }
+      const lvl = Math.max(...best.cover.map((c) => c.lvl ?? 1));
+      if (lvl > 1) m.lvl = Math.min(5, Math.floor(lvl));
+      const outBuf: Record<string, number> = {};
+      for (const c of best.cover) for (const [k, v] of Object.entries(c.outBuf ?? {})) outBuf[k] = (outBuf[k] ?? 0) + v;
+      Object.assign(m, { inBuf: lead.inBuf ?? {}, outBuf, fuel: Math.min(best.cover.reduce((a, c) => a + (c.fuel ?? 0), 0), RULES.fuelStack), burn: lead.burn ?? 0, made: best.cover.reduce((a, c) => a + (c.made ?? 0), 0) });
+      if (lead.carb) m.carb = Math.min(lead.carb, m.fuel);
+      const links = best.cover.flatMap((c) => c.links ?? []);
+      if (links.length) m.links = [...new Set(links)];
+      // Quatre petites valaient 40 pièces, comme une grande ; moins de quatre : la grande est offerte.
+      this.legacyRefund += Math.max(0, best.cover.length * 10 - big.cost);
     }
-    // La Grande foreuse (4 × 4, 1500 pièces) est retirée : des foreuses 1 × 1 au niveau 3 sur ses cases de filon,
+    // La Grande foreuse (4 × 4, 1500 pièces) est retirée : quatre foreuses 2 × 2 au niveau 3 sur ses cases,
     // et le reste de son prix est rendu.
     for (const sm of bigDrills) {
       let spent = 0, first: Machine | null = null;
-      for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+      for (const [i, j] of [[0, 0], [2, 0], [0, 2], [2, 2]]) {
         const cx = sm.x + i, cy = sm.y + j;
         if (!this.checkMachine('foreuse', cx, cy).ok) continue;
         const m = this.addMachine('foreuse', cx, cy, sm.built, first ? undefined : sm.id);
         m.lvl = 3;
-        spent += small.cost + RULES.drillLevelCost[1] + RULES.drillLevelCost[2];
+        spent += big.cost + RULES.drillLevelCost[1] + RULES.drillLevelCost[2];
         if (!first) {
           first = m;
           Object.assign(m, { outBuf: sm.outBuf ?? {}, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, made: sm.made ?? 0 });
@@ -2070,6 +2089,8 @@ export interface FactorySave {
   tunnels?: { cells: number[] }[];
   /** Foreuses 1 × 1 (sans ce drapeau : une ancienne partie, ses foreuses 2 × 2 sont coupées en quatre). */
   drills1?: 1;
+  /** Foreuses redevenues 2 × 2 (sans groupes). */
+  drills2?: 1;
   belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?][];
   /** Tapis à niveaux (sans ce drapeau : une partie d'avant, où la vitesse était la même pour tous). */
   levels?: 1;

@@ -127,7 +127,7 @@ export const RULES = {
   beltLevelCost: [0, 2, 4, 8, 16],
   /** Niveaux de foreuses : extraction (× celle du niveau 1) et prix par foreuse pour monter à ce niveau. */
   drillLevelSpeed: [1, 1.5, 2, 3, 4],
-  drillLevelCost: [0, 20, 40, 80, 160],
+  drillLevelCost: [0, 80, 160, 320, 640],
   /** Niveaux de machines (fours, presses…) : vitesse, et prix (× le prix de la machine) pour monter à ce niveau. */
   machineLevelSpeed: [1, 1.5, 2],
   machineLevelCost: [0, 1, 2],

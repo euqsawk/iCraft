@@ -736,19 +736,7 @@ export class Hud implements GestureHandlers {
     if (def.kind === 'drill' && check.ok && check.ore) {
       const rate = (check.rate ?? 0).toFixed(2).replace('.', ',');
       const tail = this.tool === 'move' ? 'déplacer ici' : `${ICONS.coinSm}${def.cost}`;
-      // Collée à d'autres foreuses : elle rejoint leur groupe, on montre ce que le groupe fera ensemble.
-      let join = '';
-      if (type === 'foreuse') {
-        const f = this.game.view, mates = new Set<Machine>();
-        for (let d = 0; d < 4; d++) {
-          const o = f.machineAt(p.x + DX[d], p.y + DY[d]);
-          if (o && o.type === 'foreuse' && o !== this.moving) for (const x of f.drillGroup(o)) if (x !== this.moving) mates.add(x);
-        }
-        if (mates.size) {
-          const total = [...mates].reduce((a, x) => a + f.drillRate(x), check.rate ?? 0);
-          join = ` · groupe de ${mates.size + 1} : <b>${total.toFixed(2).replace('.', ',')} / s</b>`;
-        }
-      }
+      const join = '';
       this.showBubble(s.x, s.y - 8, `<span class="rate"><img src="${this.itemIcons.get(check.ore)}" alt=""><b>${rate} / s</b></span> ${esc(item(check.ore).name.toLowerCase())}${join} · ${tail}${onBelt}`, false);
       return;
     }

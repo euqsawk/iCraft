@@ -1228,7 +1228,7 @@ export class GameRenderer {
     const badge = new Graphics();
     const W = def.w * CELL, H = def.h * CELL;
     const isDrill = def.kind === 'drill';
-    const small = m.type === 'foreuse';
+    const small = m.type === 'foreuse' && def.w === 1;
     const bw = small ? W - 2 : isDrill ? W - 8 : W - 2, bh = small ? H - 2 : isDrill ? H - 8 : H - 2, br = small ? 7 : isDrill ? 12 : def.w === 1 ? 7 : 15;
     // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
     const bare = def.kind === 'lamp' || def.kind === 'tree';

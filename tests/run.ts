@@ -570,47 +570,44 @@ test('deux machines collées se relient sans tapis', () => {
   assert(!g.linkMachines(four, far), 'pas de liaison entre machines éloignées');
 });
 
-test('foreuses 1 × 1 : collées en L, un seul groupe ; deux sorties se partagent le minerai, le charbon se partage', () => {
+test('foreuses 2 × 2 collées : elles ne se relient pas, chacune sort son minerai', () => {
   const g = new Game('TEST-G1');
   g.money = 10000; g.world.reveal(-10, -3, 20);
-  const ds = [[-14, -5], [-13, -5], [-12, -5], [-12, -4], [-12, -3]].map(([x, y]) => g.placeMachine('foreuse', x, y)!);
-  assert(ds.every(Boolean), 'cinq foreuses posées sur le filon');
-  const a = g.placeMachine('coffre', -18, -5)!, b = g.placeMachine('coffre', -12, 1)!;
-  assert(g.placeBelts(trace(g, [[-13.5, -4.5], [-17.5, -4.5]]).result()), 'sortie A');
-  assert(g.placeBelts(trace(g, [[-11.5, -2.5], [-11.5, 1.5]]).result()), 'sortie B');
+  const a = g.placeMachine('foreuse', -14, -5)!, b = g.placeMachine('foreuse', -12, -5)!;
+  assert(a && b && a.w === 2 && b.h === 2, 'deux foreuses 2 × 2 posées côte à côte');
   run(g, 40);
-  assert(ds.every((m) => m.built) && g.factory.drillGroup(ds[0]).length === 5, `groupe : ${g.factory.drillGroup(ds[0]).length}`);
-  assert(g.factory.drillOutlets(ds[1]).length === 2, 'deux foreuses ont une sortie');
-  for (const m of ds) { m.fuel = 0; m.burn = 0; m.made = 0; m.outBuf = {}; }
-  a.inBuf = {}; b.inBuf = {};
-  ds[2].fuel = 10; // tout le charbon dans une seule foreuse
-  run(g, 120);
-  assert(ds.every((m) => m.made > 0), `toutes travaillent avec le charbon d’une seule : ${ds.map((m) => m.made).join(', ')}`);
-  const na = a.inBuf.fer ?? 0, nb = b.inBuf.fer ?? 0;
-  assert(na + nb > 30 && Math.abs(na - nb) <= Math.max(3, (na + nb) * 0.15), `partage : ${na} / ${nb}`);
+  assert(a.built && b.built && g.factory.drillGroup(a).length === 1 && g.factory.drillGroup(b).length === 1, 'pas de groupe');
+  const c = g.placeMachine('coffre', -18, -5)!;
+  assert(g.placeBelts(trace(g, [[-14.5, -4.5], [-17.5, -4.5]]).result()), 'une sortie pour la première seulement');
+  for (const m of [a, b]) { m.outBuf = {}; m.made = 0; m.fuel = 10; }
+  c.inBuf = {};
+  run(g, 60);
+  assert((c.inBuf.fer ?? 0) > 0 && (c.inBuf.fer ?? 0) <= a.made + 1, `le coffre ne reçoit que la première : ${c.inBuf.fer} / ${a.made}`);
 });
-test('ancienne partie : une foreuse 2 × 2 devient quatre foreuses 1 × 1 (cases sans filon remboursées)', () => {
+test('anciennes parties : foreuses 2 × 2 gardées telles quelles ; petites foreuses 1 × 1 regroupées en 2 × 2', () => {
   const g = new Game('TEST-G2');
   g.world.reveal(-10, -3, 20);
-  const s = g.factory.serialize();
-  delete s.drills1;
-  const old = (id: number, x: number, y: number) => ({ id, type: 'foreuse', x, y, built: true, inBuf: {}, outBuf: { fer: 3 }, fuel: 7, burn: 0, craft: null, drillT: 0, made: 12 });
-  const cells = (x: number, y: number) => [[x, y], [x + 1, y], [x, y + 1], [x + 1, y + 1]];
-  const ok = (x: number, y: number) => g.factory.checkMachine('foreuse', x, y).ok;
-  assert(cells(-13, -4).every(([x, y]) => ok(x, y)), 'un carré tout sur le filon');
-  const missing = cells(-14, -2).filter(([x, y]) => !ok(x, y)).length;
-  assert(missing > 0 && missing < 4, 'un carré à moitié sur le filon');
-  s.machines.push(old(900, -13, -4), old(901, -14, -2));
-  s.nextId = 902;
-  g.factory.load(s);
-  const at = (x: number, y: number) => g.factory.machineAt(x, y);
-  const four = cells(-13, -4).map(([x, y]) => at(x, y));
-  assert(four.every((m) => m?.type === 'foreuse' && m.w === 1), 'quatre petites foreuses');
-  assert(four[0]!.id === 900 && four[0]!.fuel === 7 && four[0]!.outBuf.fer === 3, 'la première garde son numéro, son charbon et son contenu');
-  assert(new Set(four.map((m) => m!.id)).size === 4, 'numéros distincts');
-  assert(cells(-14, -2).filter(([x, y]) => at(x, y)).length === 4 - missing, 'seulement sur le filon');
-  assert(g.factory.legacyRefund === missing * MACHINES.foreuse.cost, `remboursé : ${g.factory.legacyRefund}`);
-  assert(g.factory.serialize().drills1 === 1, 'nouvelle sauvegarde marquée');
+  const base = g.factory.serialize();
+  const old = (id: number, x: number, y: number, extra = {}) => ({ id, type: 'foreuse', x, y, built: true, inBuf: {}, outBuf: { fer: 3 }, fuel: 7, burn: 0, craft: null, drillT: 0, made: 12, ...extra });
+  // Avant les petites foreuses : une 2 × 2 reste une 2 × 2.
+  const s1 = JSON.parse(JSON.stringify(base));
+  delete s1.drills1; delete s1.drills2;
+  s1.machines.push(old(900, -13, -4)); s1.nextId = 901;
+  g.factory.load(s1);
+  const m = g.factory.machineAt(-12, -3);
+  assert(m?.id === 900 && m.w === 2 && m.fuel === 7, 'ancienne 2 × 2 intacte');
+  // Entre-deux : quatre petites en carré → une grande (meilleur niveau, charbon et contenu additionnés).
+  const s2 = JSON.parse(JSON.stringify(base));
+  delete s2.drills2; s2.drills1 = 1;
+  s2.machines.push(old(910, -13, -4, { lvl: 2 }), old(911, -12, -4), old(912, -13, -3), old(913, -12, -3, { lvl: 3, fuel: 2 }));
+  s2.nextId = 914;
+  g.factory.load(s2);
+  const big = g.factory.machineAt(-13, -4);
+  assert(big?.id === 910 && big.w === 2 && big.lvl === 3, `une grande au niveau 3 : ${big?.id} ${big?.w} ${big?.lvl}`);
+  assert(big!.outBuf.fer === 12 && big!.made === 48, 'contenu additionné');
+  assert([...g.factory.machines.values()].filter((x) => x.type === 'foreuse').length === 1, 'une seule');
+  assert(g.factory.legacyRefund === 0, `rien à rembourser : ${g.factory.legacyRefund}`);
+  assert(g.factory.serialize().drills2 === 1, 'nouvelle sauvegarde marquée');
 });
 test('séparateur à 3 sorties : un tiers de chaque côté ; trieur à 2 objets', () => {
   const setup = (tri: boolean) => {
@@ -654,7 +651,7 @@ test('une foreuse sur du charbon s’alimente toute seule', () => {
   run(g, 40);
   assert((m.outBuf.charbon ?? 0) > 0, 'une fois sa case pleine, elle envoie le reste');
 });
-test('une machine sans charbon attend ; un charbon dure 40 s de travail pour une petite foreuse', () => {
+test('une machine sans charbon attend ; un charbon dure 10 s de travail pour une foreuse', () => {
   const g = new Game('TEST-20');
   g.money = 10000; g.world.reveal(-6, 2, 20);
   const m = g.placeMachine('foreuse', -13, -5)!;
@@ -664,9 +661,8 @@ test('une machine sans charbon attend ; un charbon dure 40 s de travail pour une
   run(g, 5);
   assert(m.made === 0 && m.status === 'nofuel', `état ${m.status}`);
   g.factory.addFuel(m, 1);
-  // Une foreuse 1 × 1 brûle quatre fois moins : un charbon dure 40 s de travail.
-  run(g, 45);
-  const expect = 40 * m.rate!;
+  run(g, 15);
+  const expect = 10 * m.rate!;
   assert(m.fuel === 0 && Math.abs(m.made - expect) <= 1.5, `fabriqués avec 1 charbon : ${m.made} (attendu ${expect.toFixed(1)})`);
   assert(g.factory.lowFuel(m), 'le voyant devrait clignoter');
 });
@@ -1171,27 +1167,28 @@ test('météo, pollution (arbres, filtres), plans d’ateliers', () => {
   const b = other.placePlan(plan, 20, 10, 10)!;
   assert(b && b.inner && [...b.inner.machines.values()].some((x) => x.type === 'presse') && m0 - other.money === other.planPrice(plan), 'atelier posé depuis le plan');
 });
-test('niveaux de foreuses : chaque niveau dans l’arbre ; tout le groupe monte d’un coup et extrait plus', () => {
+test('niveaux de foreuses : chaque niveau dans l’arbre ; chaque foreuse monte à part et extrait plus', () => {
   const g = new Game('TEST-DL');
   g.money = 1e6; g.world.reveal(-10, -4, 20);
-  const a = g.placeMachine('foreuse', -13, -4)!, b = g.placeMachine('foreuse', -12, -4)!;
-  for (const m of [a, b]) { m.built = true; m.fuel = 10; }
+  const a = g.placeMachine('foreuse', -13, -4)!;
+  assert(a, 'foreuse posée');
+  a.built = true; a.fuel = 10;
   g.pending = []; g.factory.markBuilt();
   const base = g.factory.drillRate(a);
   const unlock = (...ids: string[]) => { for (const id of ids) g.unlocks.add(id); (g as unknown as { applyUnlocks(): void }).applyUnlocks(); };
   assert(g.drillUpgrade(a)!.locked && !g.upgradeDrills(a), 'niveau 2 : à débloquer');
   unlock('foreuse2', 'foreuse3');
   const up = g.drillUpgrade(a)!;
-  assert(up.to === 2 && up.drills.length === 2 && up.price === 2 * RULES.drillLevelCost[1], `prix : ${up.price}`);
+  assert(up.to === 2 && up.drills.length === 1 && up.price === RULES.drillLevelCost[1], `prix : ${up.price}`);
   const m0 = g.money;
-  assert(g.upgradeDrills(b) && a.lvl === 2 && b.lvl === 2 && g.money === m0 - up.price, 'le groupe passe au niveau 2');
-  assert(Math.abs(g.factory.drillRate(a) - base * RULES.drillLevelSpeed[1]) < 1e-9, 'il extrait plus');
+  assert(g.upgradeDrills(a) && a.lvl === 2 && g.money === m0 - up.price, 'niveau 2');
+  assert(Math.abs(g.factory.drillRate(a) - base * RULES.drillLevelSpeed[1]) < 1e-9, 'elle extrait plus');
   assert(g.upgradeDrills(a) && a.lvl === 3, 'niveau 3');
   assert(g.drillUpgrade(a)!.locked && !g.upgradeDrills(a) && a.lvl === 3, 'niveau 4 : à débloquer');
   unlock('foreuse4', 'forage');
   assert(g.drillMaxLevel === 5 && g.upgradeDrills(a) && g.upgradeDrills(a) && a.lvl === 5 && !g.drillUpgrade(a), 'jusqu’au niveau 5');
   const m1 = g.money;
-  g.removeMachine(b);
+  g.removeMachine(a);
   assert(g.money - m1 === MACHINES.foreuse.cost + RULES.drillLevelCost.slice(1).reduce((x, n) => x + n, 0), 'supprimer rend aussi les niveaux');
 });
 test('niveaux de tapis : chaque niveau dans l’arbre ; on paie chaque case ; il va plus vite', () => {
@@ -1262,7 +1259,7 @@ test('ancienne partie : tapis rapides, Grande foreuse et son déblocage devienne
   assert([...g2.factory.belts.values()].every((b) => b.lvl === 3), 'tapis rapides : niveau 3');
   assert(g2.unlocks.has('forage') && !g2.unlocks.has('super_foreuse') && g2.drillMaxLevel === 5, 'Forage profond');
   const small = [...g2.factory.machines.values()].filter((m) => m.type === 'foreuse');
-  assert(small.length >= 6 && small.every((m) => m.lvl === 3) && small.some((m) => m.id === 950 && m.fuel === 8), `foreuses : ${small.length}`);
+  assert(small.length >= 2 && small.every((m) => m.lvl === 3) && small.some((m) => m.id === 950 && m.fuel === 8), `foreuses : ${small.length}`);
   const spent = small.length * (MACHINES.foreuse.cost + RULES.drillLevelCost[1] + RULES.drillLevelCost[2]);
   assert(g2.money === s.money + 1500 - spent, `rendu : ${g2.money - s.money}`);
   assert(!g2.factory.machines.has(951) || g2.factory.machines.get(951)!.type === 'foreuse', 'plus de Grande foreuse');
