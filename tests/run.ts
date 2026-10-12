@@ -584,6 +584,33 @@ test('foreuses 2 × 2 collées : elles ne se relient pas, chacune sort son miner
   run(g, 60);
   assert((c.inBuf.fer ?? 0) > 0 && (c.inBuf.fer ?? 0) <= a.made + 1, `le coffre ne reçoit que la première : ${c.inBuf.fer} / ${a.made}`);
 });
+test('train de fret : commande annoncée, coffre du quai, prime si plein, amende fixe sinon (puis les coffres)', () => {
+  const g = new Game('TEST-FR');
+  assert(!g.freight && ![...g.factory.machines.values()].some((m) => m.type === 'quai'), 'pas de train sans le mode');
+  g.startFreight();
+  const fr = g.freight!, q = g.quai();
+  assert(fr.phase === 'away' && fr.t === 600 && Object.keys(fr.req).length === 2, `commande : ${JSON.stringify(fr.req)}`);
+  assert(q.w === 6 && !g.removeMachine(q), 'le quai reste en place');
+  const [k, n] = Object.entries(fr.req)[0];
+  assert(g.accepts(q, k) === n && g.accepts(q, 'uranium') === 0, 'il ne prend que sa commande');
+  assert(g.receive(q, k, n + 5) === n, 'pas plus que demandé');
+  for (let i = 0; i < 600; i++) g.tick(1);
+  assert(fr.phase === 'here', 'à quai après 10 minutes');
+  for (const [kk, nn] of Object.entries(fr.req)) g.receive(q, kk, nn);
+  const m0 = g.money, reward = fr.reward;
+  for (let i = 0; i < 600; i++) g.tick(1);
+  assert(fr.phase === 'away' && fr.visit === 2 && g.money === m0 + reward && fr.streak === 1, `prime : ${g.money - m0}`);
+  assert(Object.values(q.inBuf).every((x) => !x), 'il a tout pris');
+  // Incomplet : l'amende ; sans assez de pièces, il prend le reste dans un coffre.
+  g.money = 10;
+  const chest = g.factory.addMachine('coffre', 30, 30, true);
+  chest.inBuf = { lingot_fer: 1000 };
+  const fine = fr.fine;
+  for (let i = 0; i < 1200; i++) g.tick(1);
+  assert(g.money === 0 && fr.last && !fr.last.ok && fr.last.paid === 10 && fr.last.taxed === Math.ceil((fine - 10) / 3), `amende : ${JSON.stringify(fr.last)}`);
+  const g2 = new Game('TEST-FR', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.freight?.visit === fr.visit && g2.freight.phase === fr.phase && [...g2.factory.machines.values()].filter((m) => m.type === 'quai').length === 1, 'sauvegardé');
+});
 test('anciennes parties : foreuses 2 × 2 gardées telles quelles ; petites foreuses 1 × 1 regroupées en 2 × 2', () => {
   const g = new Game('TEST-G2');
   g.world.reveal(-10, -3, 20);

@@ -1,4 +1,5 @@
 // Interface en HTML par-dessus le jeu, et logique des outils (tracer, poser, gommer, déplacer).
+import { clock } from '../sim/freight.ts';
 import { BIOME_COLORS, CELL, CHUNK, PALETTE, RULES } from '../config.ts';
 import { FLUIDS, isFuel, item, itemLabel, ITEM_LIST, RAW_IDS } from '../data/items.ts';
 import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machines.ts';
@@ -144,6 +145,8 @@ export class Hud implements GestureHandlers {
   private xpText!: HTMLElement;
   private money!: HTMLElement;
   private orderCard!: HTMLButtonElement;
+  private freightPill!: HTMLElement;
+  private freightT = 0;
   private minimap!: HTMLCanvasElement;
   private dayIcon!: HTMLElement;
   private weatherIcon!: HTMLElement;
@@ -239,6 +242,8 @@ export class Hud implements GestureHandlers {
       this.closePopover();
     };
     row.append(this.orderCard, mm);
+    this.freightPill = h('button', 'freight-pill hidden');
+    this.freightPill.onclick = () => this.openFreight();
 
     this.palette = h('div', 'palette hidden');
 
@@ -263,7 +268,7 @@ export class Hud implements GestureHandlers {
     this.bubble = h('div', 'bubble hidden');
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
-    this.root.append(top, row, this.palette, this.toolOpts, toolbar, this.bubble, this.popover, this.toasts);
+    this.root.append(top, row, this.freightPill, this.palette, this.toolOpts, toolbar, this.bubble, this.popover, this.toasts);
     this.tree = new TreeScreen(this.root, this.game, this.itemIcons, () => { this.renderPalette(); this.refreshLevel(); });
     // On ne reconstruit pas une feuille pendant qu'un doigt appuie dessus (le bouton serait perdu).
     const press = (on: boolean) => () => { this.pressing = on; };
@@ -320,6 +325,7 @@ export class Hud implements GestureHandlers {
       case 'palier': {
         this.refreshLevel();
         this.refreshOrder();
+    this.refreshFreight();
         this.renderPalette();
         this.lvlBadge.classList.add('bump');
         setTimeout(() => this.lvlBadge.classList.remove('bump'), 400);
@@ -333,6 +339,7 @@ export class Hud implements GestureHandlers {
       case 'view': this.onView(); break;
       case 'rocket': this.rocketLaunched(e.n); break;
       case 'order': this.refreshOrder(); this.sheetDirty = true; break;
+      case 'freight': this.refreshFreight(); if (this.sheetKind === 'freight') this.sheetDirty = true; break;
       case 'gift': this.onGift(e.building, e.id, !!e.again); break;
       case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
       case 'orderDone': this.celebrate(e.order); break;
@@ -688,6 +695,7 @@ export class Hud implements GestureHandlers {
     const rb = this.game.robot;
     if (!this.game.inAtelier && Math.hypot(w.x - rb.x, w.y - (rb.y - 0.85)) < 1.05) { this.openRobot(); return; }
     if (m?.type === 'noyau') { this.closePopover(); this.openNoyau(); return; }
+    if (m?.type === 'quai') { this.closePopover(); this.openFreight(); return; }
     if (m?.built && m.type === 'comptoir') { this.closePopover(); this.openOrders(); return; }
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
     const sheet = m ? this.sheetOf(m) : null;
@@ -1043,7 +1051,7 @@ export class Hud implements GestureHandlers {
       if (this.erased.has(ck)) continue;
       this.erased.add(ck);
       const m = this.game.view.machineAt(cx, cy);
-      if (m?.type === 'noyau' || (m && machineDef(m.type).gift)) continue;
+      if (m && (!machineDef(m.type).buildable || machineDef(m.type).gift)) continue;
       this.game.removeAt(cx, cy);
     }
     this.lastErase = { x, y };
@@ -1297,7 +1305,7 @@ export class Hud implements GestureHandlers {
   // ---------- Inventaires en grand : robot, coffre, fabrication ----------
 
   /** Feuille ouverte : pour la rafraîchir régulièrement. */
-  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | 'stop' | 'splitter' | '' = '';
+  private sheetKind: 'robot' | 'chest' | 'sell' | 'building' | 'machine' | 'line' | 'stop' | 'splitter' | 'freight' | '' = '';
   private machineId = -1;
   private chestId = -1;
   private liveTimer = 0;
@@ -2815,6 +2823,49 @@ export class Hud implements GestureHandlers {
   }
 
   /** La mission du Noyau : ce qu'il demande pour passer au palier suivant. */
+  /** La pastille du train de fret, sous la mission : où il en est et ce qu'il manque. */
+  private refreshFreight(): void {
+    const fr = this.game.freight, p = this.freightPill;
+    p.classList.toggle('hidden', !fr || !!this.game.inAtelier);
+    if (!fr) return;
+    const left = Object.values(this.game.freightMissing()).reduce((a, n) => a + n, 0);
+    const total = Object.values(fr.req).reduce((a, n) => a + n, 0) || 1;
+    const here = fr.phase === 'here';
+    const urgent = here && left > 0 && fr.t < 120;
+    p.classList.toggle('here', here);
+    p.classList.toggle('urgent', urgent);
+    p.innerHTML = `${ICONS.transport}<span>${here ? `À quai · part dans <b>${clock(fr.t)}</b>` : `Train dans <b>${clock(fr.t)}</b>`}</span><span class="fp-bar"><span style="width:${Math.round((1 - left / total) * 100)}%"></span></span><small>${left ? `${left} à livrer` : 'prêt'}</small>`;
+  }
+
+  /** Le Quai du train : la commande, le compte à rebours, la prime et l'amende annoncées. */
+  openFreight(): void {
+    this.closePopover();
+    const g = this.game;
+    if (!g.freight) return;
+    this.openSheet((sheet, close) => {
+      const fr = g.freight!;
+      const q = g.quai();
+      const here = fr.phase === 'here';
+      sheet.append(this.sheetHead('Train de fret', here ? `À quai : il repart dans ${clock(fr.t)}` : `En route : il arrive dans ${clock(fr.t)}, puis reste 10 minutes à quai`, close));
+      const card = h('div', 'card');
+      card.innerHTML = `<p><b>Commande n° ${fr.visit}</b></p>${this.costRows(Object.entries(fr.req).map(([k, v]) => [k, q.inBuf[k] ?? 0, v]))}
+        <p class="muted">Relie des tapis au Quai : son coffre garde la commande jusqu’au départ du train (tu peux le remplir avant qu’il arrive).</p>`;
+      sheet.append(card);
+      const deal = h('div', 'card freight-deal');
+      deal.innerHTML = `<div class="fd-row good"><b>Tout livré</b><span>+${fmt(fr.reward)} pièces</span></div>
+        <div class="fd-row bad"><b>Il manque quelque chose</b><span>amende de ${fmt(fr.fine)} pièces</span></div>
+        <p class="muted small">L’amende est fixe. Si tu n’as pas assez de pièces, le train prend le reste dans tes coffres.${fr.streak > 1 ? ` · ${fr.streak} trains pleins d’affilée` : ''}</p>`;
+      sheet.append(deal);
+      if (fr.last) {
+        const l = fr.last;
+        const last = h('div', 'card');
+        last.innerHTML = `<p class="muted small">Dernier train : ${l.ok ? `parti plein, +${fmt(l.reward)} pièces` : `parti avec ${l.missing} objets manquants, ${fmt(l.paid)} pièces d’amende${l.taxed ? ` et ${l.taxed} objets pris dans tes coffres` : ''}`}.</p>`;
+        sheet.append(last);
+      }
+    }, true);
+    this.sheetKind = 'freight';
+  }
+
   openNoyau(): void {
     this.closePopover();
     const g = this.game;
@@ -3190,6 +3241,12 @@ export class Hud implements GestureHandlers {
   /** Appelé à chaque image. */
   update(dt: number): void {
     this.edgeScroll(dt);
+    this.freightT += dt;
+    if (this.freightT > 0.5 && this.game.freight) {
+      this.freightT = 0;
+      this.refreshFreight();
+      if (this.sheetKind === 'freight' && this.overlay) this.sheetDirty = true;
+    }
     this.tips.setHidden(!!this.r.loupe || !!this.overlay || this.tree.isOpen || !!this.root.querySelector('.gift-card, .move-banner'));
     this.tips.update(dt);
     this.popTimer += dt;

@@ -1320,7 +1320,7 @@ export class Factory {
   canAccept(m: Machine, item: string): boolean {
     if (!m.built) return false;
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') return this.buildingAccepts(m, item);
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'freight') return this.buildingAccepts(m, item);
     if (def.kind === 'storage') return this.storageRoom(m, item) > 0;
     if (def.kind === 'port_out') return !!this.host && this.bufCount(this.host.outBuf) < ATELIER_BUFFER;
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) return true;
@@ -1334,7 +1334,7 @@ export class Factory {
 
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions') { this.onDeliver(m, item); return; }
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'freight') { this.onDeliver(m, item); return; }
     if (def.kind === 'port_out') { if (this.host) this.host.outBuf[item] = (this.host.outBuf[item] ?? 0) + 1; return; }
     if (def.kind === 'rocket') { m.inBuf[item] = (m.inBuf[item] ?? 0) + 1; return; }
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) {

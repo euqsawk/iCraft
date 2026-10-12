@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'base';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'base' | 'freight';
 
 export interface MachineDef {
   id: string;
@@ -231,6 +231,10 @@ export const MACHINES: Record<string, MachineDef> = {
   sortie: {
     id: 'sortie', name: 'Sortie', kind: 'port_out', coal: false, w: 1, h: 1, cost: 5, unlock: 1, recipes: [], buildable: true,
     hint: 'Dans un atelier : ce qu’un tapis y apporte sort de l’atelier',
+  },
+  quai: {
+    id: 'quai', name: 'Quai du train', kind: 'freight', coal: false, w: 6, h: 2, cost: 0, unlock: 1, recipes: [], buildable: false,
+    hint: 'Le train de fret : remplis son coffre avant son départ',
   },
   noyau: {
     id: 'noyau', name: 'Noyau', kind: 'core', coal: false, w: 4, h: 4, cost: 0, unlock: 1, recipes: [], buildable: false,

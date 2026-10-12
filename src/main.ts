@@ -56,6 +56,7 @@ async function chooseGame(loading: HTMLElement): Promise<{ game: Game; slot: num
     loading.classList.remove('hidden');
     const game = new Game(choice.seed || randomSeedCode());
     game.look = look;
+    if (choice.freight) game.startFreight();
     return { game, slot: choice.slot, fresh: true, savedAt: Date.now() };
   }
 }

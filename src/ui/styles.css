@@ -1150,3 +1150,24 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .star-sheet .ts-name { flex: 1; }
 .ts-branch { font-size: 12px; font-weight: 800; }
 .ts-close { flex: none; }
+
+/* ---------- Train de fret ---------- */
+.freight-pill { position: absolute; left: 16px; top: calc(var(--top) + 128px); height: 34px; max-width: calc(100% - 32px); padding: 0 12px 0 8px; box-sizing: border-box; border-radius: 17px; background: #fff; box-shadow: 0 3px 0 var(--shadow); display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 800; color: var(--ink); white-space: nowrap; }
+.freight-pill.hidden { display: none; }
+.freight-pill svg { width: 20px; height: 20px; flex: none; }
+.freight-pill b { font-weight: 900; font-variant-numeric: tabular-nums; }
+.freight-pill .fp-bar { width: 46px; height: 6px; border-radius: 3px; background: #E3EDE8; overflow: hidden; flex: none; }
+.freight-pill .fp-bar > span { display: block; height: 100%; background: var(--yellow); border-radius: 3px; }
+.freight-pill small { font-size: 11px; font-weight: 800; color: var(--ink2); }
+.freight-pill.here { background: #FFF6DC; }
+.freight-pill.urgent { background: #FDE3DC; animation: fpPulse 1s ease-in-out infinite; }
+@keyframes fpPulse { 50% { transform: scale(1.04); } }
+.freight-deal { display: flex; flex-direction: column; gap: 8px; }
+.fd-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-radius: 12px; font-size: 13px; }
+.fd-row.good { background: var(--green-light, #E3EDE8); color: var(--green, #2E6B51); }
+.fd-row.bad { background: #FDE3DC; color: #B4442E; }
+.fd-row span { font-weight: 900; }
+.mode-opt { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 16px; background: #F4F8F6; text-align: left; cursor: pointer; }
+.mode-opt input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--coral); flex: none; }
+.mode-opt b { display: block; font-size: 14px; font-weight: 900; }
+.mode-opt small { display: block; font-size: 12px; font-weight: 700; color: var(--ink2); line-height: 1.35; margin-top: 2px; }

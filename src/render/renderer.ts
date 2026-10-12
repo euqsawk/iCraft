@@ -8,6 +8,7 @@ import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Line, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
+import { clock } from '../sim/freight.ts';
 import { DX, DY, unkey } from '../sim/geom.ts';
 import type { CableTracer } from '../sim/cables.ts';
 import type { BeltTracer } from '../sim/tracer.ts';
@@ -203,6 +204,11 @@ export class GameRenderer {
   private lightSprite = new Sprite();
   /** Météo : pluie ou neige, à l'écran. */
   private weatherG = new Graphics();
+  /** Le train de fret sur son quai, et son compte à rebours. */
+  private trainG = new Graphics();
+  private trainText: Text | null = null;
+  private trainP = 0;
+  private trainLeaving = false;
   /** La fusée : debout sur sa rampe pendant le compte à rebours, puis le décollage. */
   private rocketG = new Graphics();
   private rocketAnim: { x: number; y: number; t: number } | null = null;
@@ -227,7 +233,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -1273,8 +1279,18 @@ export class GameRenderer {
     const small = m.type === 'foreuse' && def.w === 1;
     const bw = small ? W - 2 : isDrill ? W - 8 : W - 2, bh = small ? H - 2 : isDrill ? H - 8 : H - 2, br = small ? 7 : isDrill ? 12 : def.w === 1 ? 7 : 15;
     // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
-    const bare = def.kind === 'lamp' || def.kind === 'tree';
-    if (bare) {
+    const bare = def.kind === 'lamp' || def.kind === 'tree' || def.kind === 'freight';
+    if (def.kind === 'freight') {
+      // Le Quai du train : la voie en haut (traverses et rails), le quai en bas, avec sa bande jaune.
+      const x0 = -W / 2, y0 = -H / 2;
+      body.roundRect(x0, y0 + CELL + 3, W, CELL - 1, 6).fill(PALETTE.shadow);
+      body.roundRect(x0, y0 + CELL, W, CELL - 2, 6).fill(0xEDE6D6);
+      body.rect(x0 + 4, y0 + CELL + 2, W - 8, 3).fill(PALETTE.yellow);
+      for (let i = 0; i < def.w / 2; i++) body.roundRect(x0 + 6 + i * CELL * 2 + 6, y0 + CELL + 9, CELL - 6, 8, 3).fill({ color: 0xC8BFA9, alpha: 0.8 });
+      for (let x = x0 + 3; x < x0 + W - 3; x += 9) body.roundRect(x, y0 + 3, 6, CELL - 6, 1.5).fill(0x9A7B5B);
+      body.rect(x0, y0 + 6, W, 3).fill(0x7D8A99).rect(x0, y0 + CELL - 9, W, 3).fill(0x7D8A99);
+      body.roundRect(x0 - 2, y0 + 2, 5, CELL - 4, 2).fill(PALETTE.coral).roundRect(x0 + W - 3, y0 + 2, 5, CELL - 4, 2).fill(PALETTE.coral);
+    } else if (bare) {
       icon.scale.set(1.35);
       if (!m.built) icon.alpha = 0.4;
     } else if (m.built && small) {
@@ -1304,8 +1320,8 @@ export class GameRenderer {
       body.stroke({ width: 2, color: PALETTE.ink, alpha: 0.45 });
       icon.alpha = 0.4;
     }
-    const tex = buildingTexture(m.type, iconVariant(m));
-    if (tex) {
+    const tex = def.kind === 'freight' ? null : buildingTexture(m.type, iconVariant(m));
+    if (def.kind === 'freight') { /* dessiné à part */ } else if (tex) {
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
       const size = Math.round(Math.min(bw, bh) * (bare ? 0.7 : 0.68));
@@ -2192,6 +2208,54 @@ export class GameRenderer {
     if (a.t > 1) this.tpAnim = null;
   }
 
+  /** Le train de fret : il arrive par la droite, reste à quai, repart par la gauche ; au-dessus, le compte à rebours. */
+  private drawTrain(dt: number): void {
+    const g = this.trainG;
+    g.clear();
+    const fr = this.game.freight;
+    const q = fr && !this.game.inAtelier ? [...this.game.view.machines.values()].find((m) => m.type === 'quai') : undefined;
+    if (!fr || !q) { if (this.trainText) this.trainText.visible = false; return; }
+    const here = fr.phase === 'here';
+    if (here && this.trainP < 1) this.trainLeaving = false;
+    if (!here && this.trainP > 0) this.trainLeaving = true;
+    this.trainP = Math.max(0, Math.min(1, this.trainP + (here ? dt : -dt) / 2.5));
+    const x0 = q.x * CELL, y0 = q.y * CELL, W = q.w * CELL;
+    if (!this.trainText) {
+      this.trainText = new Text({ text: '', style: { fontFamily: FONT, fontSize: 11, fontWeight: '900', fill: PALETTE.ink }, resolution: 3 });
+      this.trainText.anchor.set(0.5, 1);
+      this.trainG.addChild(this.trainText);
+    }
+    const t = this.trainText;
+    t.visible = true;
+    const left = Object.values(this.game.freightMissing()).reduce((a, n) => a + n, 0);
+    const clk = clock(fr.t);
+    t.text = here ? `Train à quai · part dans ${clk}${left ? ` · il manque ${left}` : ' · plein'}` : `Train de fret · arrive dans ${clk}`;
+    t.style.fill = here && left ? PALETTE.coral : PALETTE.ink;
+    t.position.set(x0 + W / 2, y0 - 4);
+    if (this.trainP <= 0) return;
+    const e = this.trainP * this.trainP * (3 - 2 * this.trainP);
+    const off = (1 - e) * W * 1.4 * (this.trainLeaving ? -1 : 1);
+    const a = Math.min(1, e * 1.6);
+    const cy = y0 + CELL / 2, car = (W - 10) / 3;
+    for (let i = 0; i < 3; i++) {
+      const cx = x0 + 5 + i * car + off;
+      const loco = i === 0;
+      g.roundRect(cx + 1, cy - 9 + 3, car - 3, 18, 5).fill({ color: PALETTE.shadow, alpha: a });
+      g.roundRect(cx + 1, cy - 9, car - 3, 18, 5).fill({ color: loco ? PALETTE.coral : 0x5D6B7D, alpha: a });
+      if (loco) {
+        g.roundRect(cx + 5, cy - 6, 12, 8, 2).fill({ color: 0xBFE3F2, alpha: a });
+        g.circle(cx + car - 10, cy - 1, 3.2).fill({ color: PALETTE.yellow, alpha: a });
+      } else {
+        // Le wagon se remplit avec ce qui est livré.
+        const tot = Object.values(fr.req).reduce((s, n) => s + n, 0) || 1;
+        const fill = Math.max(0, Math.min(1, 1 - left / tot));
+        g.roundRect(cx + 5, cy - 5, (car - 13) * fill, 10, 3).fill({ color: PALETTE.yellow, alpha: a * 0.9 });
+        g.roundRect(cx + 5, cy - 5, car - 13, 10, 3).stroke({ width: 1.5, color: 0x3A4656, alpha: a });
+      }
+      if (i < 2) g.rect(cx + car - 3, cy - 1.5, 4, 3).fill({ color: PALETTE.ink, alpha: a });
+    }
+  }
+
   /** Pluie (traits obliques) ou neige (flocons qui dérivent), dessinées à l'écran. */
   private drawWeather(): void {
     const g = this.weatherG;
@@ -2259,6 +2323,7 @@ export class GameRenderer {
     this.drawItems();
     this.updateActors();
     this.drawRockets(dt);
+    this.drawTrain(dt);
     this.drawTeleport(dt);
     this.drawNight();
     this.drawWeather();

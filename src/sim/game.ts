@@ -1,7 +1,8 @@
 // L'état complet d'une partie : monde, usine, robot, argent, paliers, laboratoire et commandes.
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
-import { itemLabel } from '../data/items.ts';
+import { item as itemDef, itemLabel } from '../data/items.ts';
+const itemValue = (id: string): number => itemDef(id).value;
 import { World } from '../world/world.ts';
 import { Factory, stopRules, type Belt, type StopRule, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
@@ -12,6 +13,7 @@ import { SKIN, skinOf } from '../data/skins.ts';
 import { ALL_NODES, BASE_UNLOCKS, LAB_ITEMS, NODE, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 import { MAX_PALIER, palierMission } from '../data/paliers.ts';
 import { cleanLook, DEFAULT_LOOK, type RobotLook } from '../data/look.ts';
+import { FREIGHT_AWAY, FREIGHT_DOCK, freightOrder, newFreight, type FreightState } from './freight.ts';
 
 /** Ce qu'un drone fait en premier ; ensuite il fait le reste dans l'ordre habituel. */
 /** Bâtiments offerts par le Noyau, dans l'ordre. */
@@ -43,6 +45,7 @@ export type GameEvent =
   | { type: 'factory' }
   | { type: 'view' }
   | { type: 'rocket'; id: number; n: number }
+  | { type: 'freight' }
   | { type: 'gift'; building: GiftType; id: number; again?: boolean }
   | { type: 'unlock'; id: string }
   /** Le robot s'est téléporté à sa base (d'où il partait). */
@@ -98,6 +101,8 @@ export interface GameSave {
   stats?: { made: Record<string, number>; used: Record<string, number> };
   achievements?: string[];
   rockets?: number;
+  /** Le train de fret (mode à cocher au début d'une partie). */
+  freight?: FreightState;
   /** Ancienne pollution (retirée) : ignorée au chargement. */
   pollution?: Record<string, number>;
   gifts?: Record<string, number>;
@@ -402,6 +407,8 @@ export class Game {
   private listeners: ((e: GameEvent) => void)[] = [];
   private lastRobotCell = '';
   readonly noyau: Machine;
+  /** Le train de fret, si la partie a été lancée avec ce mode. */
+  freight: FreightState | null = null;
 
   constructor(seed: string, save?: GameSave) {
     this.world = new World(seed);
@@ -505,6 +512,7 @@ export class Game {
   accepts(m: Machine, item: string): number {
     if (m.type === 'noyau') return this.noyauNeeds()[item] ?? 0;
     if (m.type === 'comptoir') return this.comptoirNeeds()[item] ?? 0;
+    if (m.type === 'quai') return this.freight ? Math.max(0, (this.freight.req[item] ?? 0) - (m.inBuf[item] ?? 0)) : 0;
     if (m.type === 'laboratoire') return LAB_ITEMS.has(item) ? Math.max(0, RULES.labCap - (this.lab[item] ?? 0), this.labNeeds()[item] ?? 0) : 0;
     return 0;
   }
@@ -522,6 +530,9 @@ export class Game {
     } else if (m.type === 'laboratoire') {
       this.lab[item] = (this.lab[item] ?? 0) + k;
       this.emit({ type: 'lab' });
+    } else if (m.type === 'quai') {
+      m.inBuf[item] = (m.inBuf[item] ?? 0) + k;
+      this.emit({ type: 'freight' });
     } else if (m.type === 'comptoir') {
       for (const l of this.order?.lines ?? []) {
         if (l.item !== item) continue;
@@ -533,6 +544,98 @@ export class Game {
     }
     this.emit({ type: 'deliver', item, at: m.type });
     return k;
+  }
+
+  // ---------- Train de fret ----------
+
+  /** Le Quai du train (posé s'il manque, au plus près du départ). */
+  quai(): Machine {
+    const f = this.factory;
+    const have = [...f.machines.values()].find((m) => m.type === 'quai');
+    if (have) return have;
+    for (let r = 0; r <= 14; r++) {
+      for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
+        const x = -3 + i, y = 7 + j;
+        if (f.checkMachine('quai', x, y).ok) return f.addMachine('quai', x, y, true);
+      }
+    }
+    return f.addMachine('quai', -3, 7, true);
+  }
+
+  /** Lance le mode train de fret (au début d'une partie) : le Quai est posé, la première commande annoncée. */
+  startFreight(): void {
+    if (this.freight) return;
+    this.quai();
+    this.freight = newFreight(this.world.seed, this.palier);
+    this.emit({ type: 'freight' });
+  }
+
+  private stepFreight(dt: number): void {
+    const fr = this.freight!;
+    fr.t -= dt;
+    if (fr.t > 0) return;
+    if (fr.phase === 'away') {
+      fr.phase = 'here';
+      fr.t = FREIGHT_DOCK;
+      this.emit({ type: 'toast', text: 'Le train de fret est à quai : il repart dans 10 minutes', tone: 'info' });
+    } else {
+      this.freightDeparts();
+      fr.phase = 'away';
+      fr.t = FREIGHT_AWAY;
+      fr.visit++;
+      Object.assign(fr, freightOrder(this.world.seed, fr.visit, this.palier));
+    }
+    this.emit({ type: 'freight' });
+  }
+
+  /** Ce qu'il reste à mettre dans le coffre du train. */
+  freightMissing(): Record<string, number> {
+    const out: Record<string, number> = {};
+    if (!this.freight) return out;
+    const q = this.quai();
+    for (const [k, v] of Object.entries(this.freight.req)) { const left = v - (q.inBuf[k] ?? 0); if (left > 0) out[k] = left; }
+    return out;
+  }
+
+  /** Le train repart : il prend sa commande ; prime si tout y est, sinon l'amende annoncée. */
+  private freightDeparts(): void {
+    const fr = this.freight!;
+    const q = this.quai();
+    const missing = Object.values(this.freightMissing()).reduce((a, n) => a + n, 0);
+    for (const [k, v] of Object.entries(fr.req)) {
+      const take = Math.min(v, q.inBuf[k] ?? 0);
+      if (take > 0) { q.inBuf[k] -= take; if (!q.inBuf[k]) delete q.inBuf[k]; }
+    }
+    if (missing === 0) {
+      fr.streak++;
+      this.earn(fr.reward);
+      fr.last = { ok: true, missing: 0, paid: 0, taxed: 0, reward: fr.reward };
+      this.emit({ type: 'toast', text: `Le train repart plein : +${fr.reward} pièces`, tone: 'good' });
+      return;
+    }
+    fr.streak = 0;
+    const paid = Math.min(this.money, fr.fine);
+    this.money -= paid;
+    this.emit({ type: 'money' });
+    // Pas assez de pièces : il prélève le reste dans les coffres (à la valeur des objets).
+    let rest = fr.fine - paid, taxed = 0;
+    for (const m of this.factory.machines.values()) {
+      if (rest <= 0) break;
+      if (machineDef(m.type).kind !== 'storage') continue;
+      for (const buf of [m.inBuf, m.outBuf]) {
+        for (const k of Object.keys(buf)) {
+          if (rest <= 0) break;
+          const val = Math.max(1, itemValue(k));
+          const n = Math.min(buf[k], Math.ceil(rest / val));
+          if (n <= 0) continue;
+          buf[k] -= n; if (!buf[k]) delete buf[k];
+          rest -= n * val; taxed += n;
+        }
+      }
+    }
+    fr.last = { ok: false, missing, paid, taxed, reward: 0 };
+    this.emit({ type: 'toast', text: `Le train repart sans tout (${missing} manquants) : amende de ${fr.fine} pièces${taxed ? `, ${taxed} objets pris dans tes coffres` : ''}`, tone: 'warn' });
   }
 
   /** Passe au palier suivant quand la mission du Noyau est terminée. */
@@ -1170,7 +1273,7 @@ export class Game {
   removeMachine(m: Machine): boolean {
     const def = machineDef(m.type);
     if (!def.buildable) {
-      this.emit({ type: 'toast', text: 'Le Noyau reste en place', tone: 'warn' });
+      this.emit({ type: 'toast', text: `${def.name} reste en place`, tone: 'warn' });
       return false;
     }
     if (def.gift) {
@@ -1548,6 +1651,7 @@ export class Game {
   tick(dt: number): void {
     this.time += dt;
     this.played += dt;
+    if (this.freight) this.stepFreight(dt);
     const light = this.daylight;
     this.factory.daylight = light;
     const night = light < 0.5;
@@ -1592,6 +1696,7 @@ export class Game {
       look: this.look, tips: this.tips, played: Math.floor(this.played),
       gifts: this.gifts, ordersDone: this.ordersDone, earned: this.earned,
       stats: this.factory.stats, achievements: [...this.achievements], rockets: this.rockets,
+      ...(this.freight ? { freight: { ...this.freight, req: { ...this.freight.req } } } : {}),
     };
   }
 
@@ -1608,6 +1713,7 @@ export class Game {
     for (const id of [...this.achievements]) if (!ACHIEVEMENTS.some((a) => a.id === id)) this.achievements.delete(id);
     this.achQuiet = true;
     this.rockets = s.rockets ?? 0;
+    if (s.freight) { this.freight = { ...s.freight, req: { ...s.freight.req } }; this.quai(); }
     // Les chantiers d'une ancienne partie se terminent tout de suite (plus de drones pour les construire).
     for (const j of s.pending ?? []) {
       if (j.kind === 'belt') { const b = this.factory.belts.get(j.k); if (b) b.built = true; }
