@@ -1281,15 +1281,17 @@ export class GameRenderer {
     // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
     const bare = def.kind === 'lamp' || def.kind === 'tree' || def.kind === 'freight';
     if (def.kind === 'freight') {
-      // Le Quai du train : la voie en haut (traverses et rails), le quai en bas, avec sa bande jaune.
-      const x0 = -W / 2, y0 = -H / 2;
-      body.roundRect(x0, y0 + CELL + 3, W, CELL - 1, 6).fill(PALETTE.shadow);
-      body.roundRect(x0, y0 + CELL, W, CELL - 2, 6).fill(0xEDE6D6);
-      body.rect(x0 + 4, y0 + CELL + 2, W - 8, 3).fill(PALETTE.yellow);
-      for (let i = 0; i < def.w / 2; i++) body.roundRect(x0 + 6 + i * CELL * 2 + 6, y0 + CELL + 9, CELL - 6, 8, 3).fill({ color: 0xC8BFA9, alpha: 0.8 });
+      // Le Quai du train : la voie sur toute la longueur (5 cases de rails de chaque côté, puis un tunnel),
+      // le quai au milieu, en bas, avec sa bande jaune. Les tunnels sont dessinés par-dessus le train (drawTrain).
+      const x0 = -W / 2, y0 = -H / 2, side = (def.w - 6) / 2 * CELL, px = x0 + side, pw = 6 * CELL;
+      body.roundRect(x0 + CELL, y0 + CELL + 4, W - 2 * CELL, CELL - 10, 4).fill({ color: 0xCFC7B2, alpha: 0.7 });
+      body.roundRect(px, y0 + CELL + 3, pw, CELL - 1, 6).fill(PALETTE.shadow);
+      body.roundRect(px, y0 + CELL, pw, CELL - 2, 6).fill(0xEDE6D6);
+      body.rect(px + 4, y0 + CELL + 2, pw - 8, 3).fill(PALETTE.yellow);
+      for (let i = 0; i < 3; i++) body.roundRect(px + 12 + i * CELL * 2, y0 + CELL + 9, CELL - 6, 8, 3).fill({ color: 0xC8BFA9, alpha: 0.8 });
+      body.rect(x0, y0 + 2, W, CELL - 4).fill({ color: 0xB9AE95, alpha: 0.55 });
       for (let x = x0 + 3; x < x0 + W - 3; x += 9) body.roundRect(x, y0 + 3, 6, CELL - 6, 1.5).fill(0x9A7B5B);
       body.rect(x0, y0 + 6, W, 3).fill(0x7D8A99).rect(x0, y0 + CELL - 9, W, 3).fill(0x7D8A99);
-      body.roundRect(x0 - 2, y0 + 2, 5, CELL - 4, 2).fill(PALETTE.coral).roundRect(x0 + W - 3, y0 + 2, 5, CELL - 4, 2).fill(PALETTE.coral);
     } else if (bare) {
       icon.scale.set(1.35);
       if (!m.built) icon.alpha = 0.4;
@@ -2232,27 +2234,45 @@ export class GameRenderer {
     t.text = here ? `Train à quai · part dans ${clk}${left ? ` · il manque ${left}` : ' · plein'}` : `Train de fret · arrive dans ${clk}`;
     t.style.fill = here && left ? PALETTE.coral : PALETTE.ink;
     t.position.set(x0 + W / 2, y0 - 4);
-    if (this.trainP <= 0) return;
-    const e = this.trainP * this.trainP * (3 - 2 * this.trainP);
-    const off = (1 - e) * W * 1.4 * (this.trainLeaving ? -1 : 1);
-    const a = Math.min(1, e * 1.6);
-    const cy = y0 + CELL / 2, car = (W - 10) / 3;
-    for (let i = 0; i < 3; i++) {
-      const cx = x0 + 5 + i * car + off;
-      const loco = i === 0;
-      g.roundRect(cx + 1, cy - 9 + 3, car - 3, 18, 5).fill({ color: PALETTE.shadow, alpha: a });
-      g.roundRect(cx + 1, cy - 9, car - 3, 18, 5).fill({ color: loco ? PALETTE.coral : 0x5D6B7D, alpha: a });
-      if (loco) {
-        g.roundRect(cx + 5, cy - 6, 12, 8, 2).fill({ color: 0xBFE3F2, alpha: a });
-        g.circle(cx + car - 10, cy - 1, 3.2).fill({ color: PALETTE.yellow, alpha: a });
-      } else {
-        // Le wagon se remplit avec ce qui est livré.
-        const tot = Object.values(fr.req).reduce((s, n) => s + n, 0) || 1;
-        const fill = Math.max(0, Math.min(1, 1 - left / tot));
-        g.roundRect(cx + 5, cy - 5, (car - 13) * fill, 10, 3).fill({ color: PALETTE.yellow, alpha: a * 0.9 });
-        g.roundRect(cx + 5, cy - 5, car - 13, 10, 3).stroke({ width: 1.5, color: 0x3A4656, alpha: a });
+    // Le train roule entre les deux tunnels : il sort de celui de droite, s'arrête au quai, repart dans celui de gauche.
+    const xL = x0 + CELL, xR = x0 + W - CELL;
+    const px = x0 + (q.w - 6) / 2 * CELL, cy = y0 + CELL / 2, car = (6 * CELL - 10) / 3, len = car * 3;
+    if (this.trainP > 0) {
+      const e = this.trainP * this.trainP * (3 - 2 * this.trainP);
+      const startOff = xR - (px + 5) + 4, endOff = -((px + 5 + len) - xL) - 4;
+      const off = (1 - e) * (this.trainLeaving ? endOff : startOff);
+      const tot = Object.values(fr.req).reduce((s, n) => s + n, 0) || 1;
+      const fill = Math.max(0, Math.min(1, 1 - left / tot));
+      // Un rectangle coupé aux bouches des tunnels.
+      const clip = (x: number, w: number): [number, number] | null => { const a0 = Math.max(x, xL), a1 = Math.min(x + w, xR); return a1 > a0 ? [a0, a1 - a0] : null; };
+      for (let i = 0; i < 3; i++) {
+        const cx = px + 5 + i * car + off;
+        const loco = i === 0;
+        const r1 = clip(cx + 1, car - 3);
+        if (!r1) continue;
+        g.roundRect(r1[0], cy - 6, r1[1], 18, 5).fill(PALETTE.shadow);
+        g.roundRect(r1[0], cy - 9, r1[1], 18, 5).fill(loco ? PALETTE.coral : 0x5D6B7D);
+        const whole = cx + 1 >= xL && cx + car - 2 <= xR;
+        if (!whole) continue;
+        if (loco) {
+          g.roundRect(cx + 5, cy - 6, 12, 8, 2).fill(0xBFE3F2);
+          g.circle(cx + 7, cy + 3, 2.6).fill(PALETTE.yellow);
+        } else {
+          // Le wagon se remplit avec ce qui est livré.
+          g.roundRect(cx + 5, cy - 5, (car - 13) * fill, 10, 3).fill({ color: PALETTE.yellow, alpha: 0.9 });
+          g.roundRect(cx + 5, cy - 5, car - 13, 10, 3).stroke({ width: 1.5, color: 0x3A4656 });
+        }
+        if (i < 2 && cx + car + 1 <= xR) g.rect(cx + car - 3, cy - 1.5, 4, 3).fill(PALETTE.ink);
       }
-      if (i < 2) g.rect(cx + car - 3, cy - 1.5, 4, 3).fill({ color: PALETTE.ink, alpha: a });
+    }
+    // Les deux tunnels, par-dessus : une butte d'herbe, un portail de pierre, une bouche noire.
+    for (const [tx, dir] of [[x0, 1], [x0 + W, -1]] as const) {
+      g.ellipse(tx + dir * CELL * 0.35, y0 + CELL * 0.9, CELL * 1.25, CELL * 1.05).fill(0x9CC38A);
+      g.ellipse(tx + dir * CELL * 0.35, y0 + CELL * 0.75, CELL * 1.05, CELL * 0.85).fill(0xB2D49E);
+      const gx = dir === 1 ? tx + 2 : tx - CELL - 2;
+      g.roundRect(gx - 3, y0 - 4, CELL + 6, CELL + 6, 9).fill(0x8E9AA6);
+      g.roundRect(gx - 3, y0 - 4, CELL + 6, 5, 3).fill(0xA9B4BE);
+      g.moveTo(gx + 2, y0 + CELL - 1).lineTo(gx + 2, y0 + 8).arc(gx + CELL / 2, y0 + 8, CELL / 2 - 2, Math.PI, 0).lineTo(gx + CELL - 2, y0 + CELL - 1).closePath().fill(0x1E2733);
     }
   }
 

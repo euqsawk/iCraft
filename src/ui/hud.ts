@@ -2850,6 +2850,34 @@ export class Hud implements GestureHandlers {
     p.innerHTML = `${ICONS.transport}<span>${here ? `À quai · part dans <b>${clock(fr.t)}</b>` : `Train dans <b>${clock(fr.t)}</b>`}</span><span class="fp-bar"><span style="width:${Math.round((1 - left / total) * 100)}%"></span></span><small>${left ? `${left} à livrer` : 'prêt'}</small>`;
   }
 
+  /** La fenêtre qui présente le train de fret (une seule fois, après 10 minutes de jeu). */
+  private openFreightIntro(): void {
+    const g = this.game;
+    this.openSheet((sheet, close) => {
+      const fr = g.freight!;
+      sheet.append(this.sheetHead('Le train de fret', fr.phase === 'here' ? 'Il est à quai !' : `Il arrive dans ${clock(fr.t)}`, close));
+      const card = h('div', 'card');
+      card.innerHTML = `<p><b>Un gros train vient chercher des matériaux</b> sur le Quai, sous le Noyau. Il sort du tunnel, reste <b>10 minutes</b> à quai, puis repart pendant <b>10 minutes</b> : il revient toutes les 20 minutes.</p>
+        <p>Sa commande est annoncée à l’avance : relie des tapis au Quai pour remplir son coffre (avant qu’il arrive ou pendant qu’il est là).</p>
+        <div class="freight-deal"><div class="fd-row good"><b>Tout livré</b><span>une prime</span></div><div class="fd-row bad"><b>Il manque quelque chose</b><span>une amende fixe</span></div></div>
+        <p class="muted small">L’amende est annoncée avec la commande. Sans assez de pièces, le train prend le reste dans tes coffres.</p>
+        ${this.costRows(Object.entries(fr.req).map(([k, v]) => [k, g.quai().inBuf[k] ?? 0, v]))}`;
+      sheet.append(card);
+      const row = h('div', 'row');
+      const see = h('button', 'btn', 'Voir le quai');
+      see.onclick = () => {
+        close();
+        const q = g.quai();
+        this.r.focusOn(q.x + q.w / 2, q.y + q.h / 2, 0.9);
+      };
+      const ok = h('button', 'btn primary', 'Compris');
+      ok.onclick = close;
+      row.append(see, ok);
+      sheet.append(row);
+    }, true);
+    this.sheetKind = 'freight';
+  }
+
   /** Le Quai du train : la commande, le compte à rebours, la prime et l'amende annoncées. */
   openFreight(): void {
     this.closePopover();
@@ -3257,6 +3285,12 @@ export class Hud implements GestureHandlers {
     this.freightT += dt;
     if (this.freightT > 0.5 && this.game.freight) {
       this.freightT = 0;
+      // Au bout de 10 minutes de jeu (le premier train arrive à 20), une fenêtre explique le train.
+      const fr = this.game.freight;
+      if (!fr.explained && this.game.played >= 600 && !this.overlay && !this.tree.isOpen && !this.r.introRunning && !this.game.inAtelier && !this.root.querySelector('.gift-card, .move-banner')) {
+        fr.explained = true;
+        this.openFreightIntro();
+      }
       this.refreshFreight();
       if (this.sheetKind === 'freight' && this.overlay) this.sheetDirty = true;
     }

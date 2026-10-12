@@ -549,8 +549,8 @@ export class Game {
 
   // ---------- Train de fret ----------
 
-  /** Où va le Quai : toujours en bas, centré sous le Noyau, à 20 cases de lui. */
-  static readonly QUAI_AT = { x: -1, y: 24 };
+  /** Où va le Quai (18 × 2 avec ses rails et ses tunnels) : toujours en bas, centré sous le Noyau, à 20 cases de lui. */
+  static readonly QUAI_AT = { x: -7, y: 24 };
 
   /** Le Quai du train (posé s'il manque, à sa place sous le Noyau ; ramené là si la place est libre). */
   quai(relocate = false): Machine {
@@ -561,14 +561,21 @@ export class Game {
         f.removeMachine(have);
         const m = f.addMachine('quai', x, y, true, have.id);
         m.inBuf = have.inBuf;
+        this.revealQuai(m);
         return m;
       }
+      if (relocate) this.revealQuai(have);
       return have;
     }
     // Rien ne doit l'empêcher : ce qui est sous lui (filon, lac) reste dessous.
     const m = f.addMachine('quai', x, y, true);
-    this.world.reveal(x + 3, y + 1, 6);
+    this.revealQuai(m);
     return m;
+  }
+
+  /** Le train se voit même si le robot n'est jamais allé jusque-là : le brouillard est levé sur toute la voie. */
+  private revealQuai(q: Machine): void {
+    for (let x = q.x - 1; x <= q.x + q.w + 1; x += 3) this.world.reveal(x, q.y + 1, 4);
   }
 
   /** Lance le mode train de fret (au début d'une partie) : le Quai est posé, la première commande annoncée. */

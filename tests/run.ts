@@ -599,13 +599,13 @@ test('train de fret : commande annoncée, coffre du quai, prime si plein, amende
   assert(!g.freight && ![...g.factory.machines.values()].some((m) => m.type === 'quai'), 'pas de train sans le mode');
   g.startFreight();
   const fr = g.freight!, q = g.quai();
-  assert(fr.phase === 'away' && fr.t === 600 && Object.keys(fr.req).length === 2, `commande : ${JSON.stringify(fr.req)}`);
-  assert(q.w === 6 && q.x === -1 && q.y === 24 && !g.removeMachine(q), `le quai, sous le Noyau à 20 cases, reste en place : ${q.x},${q.y}`);
+  assert(fr.phase === 'away' && fr.t === 1200 && Object.keys(fr.req).length === 2 && g.world.isRevealed(-6, 25) && g.world.isRevealed(10, 25), `commande : ${JSON.stringify(fr.req)}`);
+  assert(q.w === 18 && q.x === -7 && q.y === 24 && !g.removeMachine(q), `le quai, sous le Noyau à 20 cases, reste en place : ${q.x},${q.y}`);
   const [k, n] = Object.entries(fr.req)[0];
   assert(g.accepts(q, k) === n && g.accepts(q, 'uranium') === 0, 'il ne prend que sa commande');
   assert(g.receive(q, k, n + 5) === n, 'pas plus que demandé');
-  for (let i = 0; i < 600; i++) g.tick(1);
-  assert(fr.phase === 'here', 'à quai après 10 minutes');
+  for (let i = 0; i < 1200; i++) g.tick(1);
+  assert(fr.phase === 'here', 'le premier train arrive après 20 minutes');
   for (const [kk, nn] of Object.entries(fr.req)) g.receive(q, kk, nn);
   const m0 = g.money, reward = fr.reward;
   for (let i = 0; i < 600; i++) g.tick(1);

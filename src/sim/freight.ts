@@ -25,6 +25,8 @@ export interface FreightState {
   streak: number;
   /** Ce qui s'est passé au dernier départ. */
   last?: { ok: boolean; missing: number; paid: number; taxed: number; reward: number };
+  /** La fenêtre qui explique le train a été montrée (après 10 minutes de jeu). */
+  explained?: boolean;
 }
 
 /** Ce que vaut une commande (en pièces) selon le palier. */
@@ -50,8 +52,11 @@ export function freightOrder(seed: string, visit: number, palier: number): Pick<
   return { req, fine: Math.round(value), reward: Math.round(value * 1.5) };
 }
 
+/** Le premier train d'une partie n'arrive qu'au bout de 20 minutes (on a le temps de s'installer). */
+export const FREIGHT_FIRST = 1200;
+
 export function newFreight(seed: string, palier: number): FreightState {
-  return { phase: 'away', t: FREIGHT_AWAY, visit: 1, streak: 0, ...freightOrder(seed, 1, palier) };
+  return { phase: 'away', t: FREIGHT_FIRST, visit: 1, streak: 0, ...freightOrder(seed, 1, palier) };
 }
 
 /** Temps lisible : « 7:42 ». */
