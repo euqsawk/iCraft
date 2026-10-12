@@ -1573,7 +1573,6 @@ export class Hud implements GestureHandlers {
     const def = machineDef(m.type);
     if (def.kind === 'crafter' || def.kind === 'drill') {
       this.overlay?.classList.add('see-map');
-      this.frameMachine(m);
     }
   }
 
@@ -1586,27 +1585,9 @@ export class Hud implements GestureHandlers {
     const body = this.overlay?.querySelector('.mtab-body');
     if (body) body.scrollTop = 0;
     this.refreshSheet();
-    this.reframe();
   }
 
-  /** La fenêtre a changé de hauteur (onglet) : la machine reste visible au-dessus. */
-  private reframe(): void {
-    if (!this.overlay?.classList.contains('see-map')) return;
-    const m = this.game.view.machines.get(this.sheetKind === 'chest' ? this.chestId : this.machineId);
-    if (m) this.frameMachine(m);
-  }
 
-  /** La caméra place la machine au milieu de ce qui reste visible au-dessus de la fenêtre. */
-  private frameMachine(m: Machine): void {
-    const sheet = this.overlay?.firstElementChild as HTMLElement | null;
-    if (!sheet) return;
-    const cam = this.r.camera;
-    // Entre le bas du bandeau du haut (mission) et le haut de la fenêtre.
-    const top = this.root.querySelector('.order-card')?.getBoundingClientRect().bottom ?? 120;
-    const ys = (Math.min(top, cam.height * 0.3) + cam.height - sheet.offsetHeight) / 2;
-    const zoom = Math.min(2.2, Math.max(1, cam.zoom));
-    this.r.focusOn(m.x + m.w / 2, m.y + m.h / 2 + (cam.height / 2 - ys) / (zoom * CELL), zoom, 0.45);
-  }
 
   /** Nom, pastille d'état, bouton fermer. */
   private machHead(title: string, mm: Machine, close: () => void): HTMLElement {
@@ -2294,7 +2275,6 @@ export class Hud implements GestureHandlers {
     this.sheetKind = 'chest';
     if (this.game.view.isStop(m) && this.game.stationKind(m)) {
       this.overlay?.classList.add('see-map');
-      this.frameMachine(m);
     }
   }
 
@@ -2320,7 +2300,7 @@ export class Hud implements GestureHandlers {
     const list: ['lines' | 'arr' | 'dep', string][] = [['lines', 'Lignes'], ['arr', `Arrivées${arr ? ` <small>${fmt(arr)}</small>` : ''}`], ['dep', `Départs${dep ? ` <small>${fmt(dep)}</small>` : ''}`]];
     for (const [id, label] of list) {
       const b = h('button', `mtab${this.stopTab === id ? ' on' : ''}`, label);
-      b.onclick = () => { if (this.stopTab === id) return; this.stopTab = id; this.refreshSheet(); this.reframe(); };
+      b.onclick = () => { if (this.stopTab === id) return; this.stopTab = id; this.refreshSheet(); };
       tabs.append(b);
     }
     sheet.append(tabs);
