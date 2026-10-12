@@ -1,4 +1,4 @@
-// L'apparence du robot, choisie en début de partie.
+// L'apparence du robot : sa couleur et son nom, choisis en début de partie, et le skin qu'il porte.
 
 export interface RobotColor { id: string; label: string; main: number; light: number }
 export const ROBOT_COLORS: RobotColor[] = [
@@ -10,17 +10,9 @@ export const ROBOT_COLORS: RobotColor[] = [
   { id: 'rose', label: 'Rose', main: 0xf29bc0, light: 0xf7c1d8 },
 ];
 
-export type Accessory = 'aucun' | 'antenne' | 'casquette' | 'helice' | 'noeud';
-export const ACCESSORIES: { id: Accessory; label: string }[] = [
-  { id: 'aucun', label: 'Rien' },
-  { id: 'antenne', label: 'Antenne' },
-  { id: 'casquette', label: 'Casquette' },
-  { id: 'helice', label: 'Hélice' },
-  { id: 'noeud', label: 'Nœud' },
-];
-
-export interface RobotLook { color: string; accessory: Accessory; name: string }
-export const DEFAULT_LOOK: RobotLook = { color: 'jaune', accessory: 'aucun', name: 'Boulon' };
+/** Couleur (celle du Boulon d'origine), skin porté (gagné avec un succès) et nom. */
+export interface RobotLook { color: string; skin: string; name: string }
+export const DEFAULT_LOOK: RobotLook = { color: 'jaune', skin: 'origine', name: 'Boulon' };
 export const ROBOT_NAMES = ['Boulon', 'Pixel', 'Rivet', 'Clé', 'Volt', 'Bricole', 'Tournevis', 'Écrou'];
 
 export function robotColor(look: RobotLook): RobotColor {
@@ -31,7 +23,7 @@ export function cleanLook(l: Partial<RobotLook> | undefined): RobotLook {
   const name = (l?.name ?? '').trim().slice(0, 14) || DEFAULT_LOOK.name;
   return {
     color: ROBOT_COLORS.some((c) => c.id === l?.color) ? l!.color! : DEFAULT_LOOK.color,
-    accessory: ACCESSORIES.some((a) => a.id === l?.accessory) ? l!.accessory! : 'aucun',
+    skin: typeof l?.skin === 'string' && /^[a-z]{2,16}$/.test(l.skin) ? l.skin : 'origine',
     name,
   };
 }

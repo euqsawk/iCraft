@@ -1,5 +1,5 @@
 // Présentation d'une nouvelle partie : le robot, son apparence, son usine.
-import { ACCESSORIES, cleanLook, DEFAULT_LOOK, ROBOT_COLORS, ROBOT_NAMES, type RobotLook } from '../data/look.ts';
+import { cleanLook, DEFAULT_LOOK, ROBOT_COLORS, ROBOT_NAMES, type RobotLook } from '../data/look.ts';
 import { robotSvg } from '../render/robotShapes.ts';
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -39,10 +39,9 @@ export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
           <div class="custom">
             <p class="custom-label">Couleur</p>
             <div class="swatches">${ROBOT_COLORS.map((c) => `<button class="swatch${c.id === look.color ? ' on' : ''}" data-color="${c.id}" style="background:${hex(c.main)}" aria-label="${esc(c.label)}"></button>`).join('')}</div>
-            <p class="custom-label">Accessoire</p>
-            <div class="accs">${ACCESSORIES.map((a) => `<button class="acc${a.id === look.accessory ? ' on' : ''}" data-acc="${a.id}">${robotSvg({ ...look, accessory: a.id }, { beam: false, cls: 'robot-svg mini' })}<small>${esc(a.label)}</small></button>`).join('')}</div>
             <p class="custom-label">Nom</p>
             <div class="name-row"><input class="field name" maxlength="14" value="${esc(look.name)}" autocomplete="off" aria-label="Nom du robot"><button class="btn dice" aria-label="Un nom au hasard">🎲</button></div>
+            <p class="custom-note">D’autres skins se gagnent avec les succès : à choisir ensuite dans la fenêtre du robot.</p>
           </div>`;
       } else {
         body = `
@@ -70,16 +69,6 @@ export function showIntro(start: RobotLook = DEFAULT_LOOK): Promise<RobotLook> {
           b.onclick = () => {
             look.color = b.dataset.color!;
             screen.querySelectorAll('[data-color]').forEach((x) => x.classList.toggle('on', x === b));
-            screen.querySelectorAll<HTMLButtonElement>('[data-acc]').forEach((x) => {
-              x.innerHTML = `${robotSvg({ ...look, accessory: x.dataset.acc as RobotLook['accessory'] }, { beam: false, cls: 'robot-svg mini' })}<small>${esc(ACCESSORIES.find((a) => a.id === x.dataset.acc)!.label)}</small>`;
-            });
-            refreshPreview();
-          };
-        });
-        screen.querySelectorAll<HTMLButtonElement>('[data-acc]').forEach((b) => {
-          b.onclick = () => {
-            look.accessory = b.dataset.acc as RobotLook['accessory'];
-            screen.querySelectorAll('[data-acc]').forEach((x) => x.classList.toggle('on', x === b));
             refreshPreview();
           };
         });

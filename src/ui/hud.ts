@@ -9,7 +9,8 @@ import { Game, type GameEvent, type OfflineReport } from '../sim/game.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
-import { ACHIEVEMENTS } from '../data/achievements.ts';
+import { ACHIEVEMENT_OF_SKIN, ACHIEVEMENTS, FAMILIES, fmtNum, ROMAN, UNIQUE_ACHIEVEMENTS } from '../data/achievements.ts';
+import { RARITY_NAME, SKINS, skinOf, skinSvg } from '../data/skins.ts';
 import { loadPlans, savePlans, type AtelierPlan } from '../save/plans.ts';
 import { BeltTracer } from '../sim/tracer.ts';
 import { DX, DY } from '../sim/geom.ts';
@@ -26,6 +27,9 @@ import { buildingSvgUrl } from '../render/buildingIcons.ts';
 import { swipeToClose } from './swipe.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'transport';
+
+/** 100 k, 1 M : les grands paliers en court. */
+const shortNum = (n: number) => n >= 1e6 ? `${String(n / 1e6).replace('.', ',')} M` : n >= 1e4 ? `${String(n / 1e3).replace('.', ',')} k` : fmtNum(n);
 
 const STATUS_TEXT: Record<string, string> = {
   idle: 'En attente',
@@ -680,7 +684,7 @@ export class Hud implements GestureHandlers {
     const f = this.game.view;
     const m = f.machineAt(cx, cy);
     const rb = this.game.robot;
-    if (!this.game.inAtelier && Math.hypot(w.x - rb.x, w.y - (rb.y - 0.6)) < 0.9) { this.openRobot(); return; }
+    if (!this.game.inAtelier && Math.hypot(w.x - rb.x, w.y - (rb.y - 0.85)) < 1.05) { this.openRobot(); return; }
     if (m?.type === 'noyau') { this.closePopover(); this.openNoyau(); return; }
     if (m?.built && m.type === 'comptoir') { this.closePopover(); this.openOrders(); return; }
     if (m?.built && m.type === 'laboratoire') { this.closePopover(); this.openLab(); return; }
@@ -1338,13 +1342,22 @@ export class Hud implements GestureHandlers {
       const g = this.game, r = g.robot;
       const speed = g.robotSpeedMult > 1 ? ` · chenilles : ×${String(g.robotSpeedMult).replace('.', ',')}` : '';
       sheet.append(this.sheetHead(g.look.name, esc(`${r.moving ? 'Il roule.' : 'À l’arrêt.'} Touche le sol pour l’envoyer explorer : sa lampe dissipe le brouillard${speed}.`), close));
-      sheet.append(this.scanCard(close));
+      sheet.append(this.skinCard(close), this.scanCard(close));
       const home = this.homeCard(close);
       if (home) sheet.append(home);
     }, true);
     this.sheetKind = 'robot';
   }
 
+
+  /** Apparence : le skin porté ; toucher ouvre la page des skins. */
+  private skinCard(close: () => void): HTMLElement {
+    const g = this.game;
+    const owned = SKINS.filter((s) => g.ownsSkin(s.id)).length;
+    const btn = h('button', 'card scan-btn skin-btn', `<span class="scan-ico">${skinSvg(g.look.skin, { look: g.look })}</span><span class="pl"><b>Skin : ${esc(skinOf(g.look.skin).name)}</b><small>${owned} sur ${SKINS.length} gagnés · toucher pour changer</small></span><i>›</i>`);
+    btn.onclick = () => { close(); this.openAchievements('skins'); };
+    return btn;
+  }
 
   /** Retour à la base : le robot se téléporte à côté de sa base (débloquée au palier 5, posée une fois). */
   private homeCard(close: () => void): HTMLElement | null {
@@ -2493,21 +2506,101 @@ export class Hud implements GestureHandlers {
     }, true);
   }
 
-  /** Les succès : obtenus, et ceux qui restent (avec un indice). */
-  private openAchievements(): void {
+  /** Onglet ouvert dans la page des succès. */
+
+  private achTab: 'skins' | 'tiers' | 'once' = 'skins';
+
+  /** Les succès et les skins qu'ils donnent : choisir le skin du robot, voir les paliers et les succès uniques. */
+  openAchievements(tab?: 'skins' | 'tiers' | 'once'): void {
     const g = this.game;
+    if (tab) this.achTab = tab;
     this.openSheet((sheet, close) => {
+      sheet.classList.add('ach-sheet');
+      const owned = SKINS.filter((s) => g.ownsSkin(s.id)).length;
       const n = ACHIEVEMENTS.filter((a) => g.achievements.has(a.id)).length;
-      sheet.append(this.sheetHead('Succès', `${n} sur ${ACHIEVEMENTS.length}`, close));
-      const card = h('div', 'card ach');
-      for (const a of ACHIEVEMENTS) {
-        const done = g.achievements.has(a.id);
-        const row = h('div', `ach-row${done ? ' done' : ''}`);
-        row.innerHTML = `<span class="ach-ico">${done ? '★' : '☆'}</span><div><b>${esc(a.name)}</b><small>${esc(a.hint)}</small></div>`;
-        card.append(row);
-      }
-      sheet.append(card);
+      sheet.append(this.sheetHead('Succès', esc(`${n} sur ${ACHIEVEMENTS.length} · ${owned} skins sur ${SKINS.length}. Chaque succès donne un skin au robot.`), close));
+      const tabs = h('div', 'mtabs');
+      const body = h('div', 'mtab-body ach-body');
+      const render = () => {
+        tabs.innerHTML = '';
+        for (const [id, label] of [['skins', 'Skins'], ['tiers', 'À paliers'], ['once', 'Uniques']] as const) {
+          const b = h('button', `mtab${this.achTab === id ? ' on' : ''}`, label);
+          b.onclick = () => { if (this.achTab !== id) { this.achTab = id; render(); } };
+          tabs.append(b);
+        }
+        body.innerHTML = '';
+        if (this.achTab === 'skins') this.achSkins(body, render);
+        else if (this.achTab === 'tiers') this.achTiers(body, render);
+        else this.achOnce(body);
+      };
+      render();
+      sheet.append(tabs, body);
     });
+  }
+
+  /** Porter un skin gagné (ou dire comment le gagner). */
+  private wearSkin(id: string, done: () => void): void {
+    const g = this.game;
+    if (g.setSkin(id)) { this.toast(`${g.look.name} porte maintenant : ${skinOf(id).name}`, 'good'); done(); return; }
+    const a = ACHIEVEMENT_OF_SKIN[id];
+    if (a) this.toast(`${skinOf(id).name} : succès « ${a.name} » · ${a.hint}`, 'info');
+  }
+
+  /** Onglet Skins : tous les skins, le porté entouré ; toucher un skin gagné le met au robot. */
+  private achSkins(body: HTMLElement, redraw: () => void): void {
+    const g = this.game;
+    const grid = h('div', 'skin-grid');
+    const order = [...SKINS].sort((a, b) => Number(g.ownsSkin(b.id)) - Number(g.ownsSkin(a.id)));
+    for (const s of order) {
+      const own = g.ownsSkin(s.id), worn = g.look.skin === s.id;
+      const a = ACHIEVEMENT_OF_SKIN[s.id];
+      const card = h('button', `skin-card r-${s.rarity}${own ? '' : ' locked'}${worn ? ' worn' : ''}`);
+      card.innerHTML = `<span class="sk-pic">${skinSvg(s.id, { look: g.look, gray: !own, anim: own })}</span>`
+        + `<b>${esc(s.name)}</b><small>${worn ? 'Porté' : own ? RARITY_NAME[s.rarity] : esc(a ? a.name : '')}</small>`;
+      card.onclick = () => this.wearSkin(s.id, redraw);
+      grid.append(card);
+    }
+    body.append(grid);
+  }
+
+  /** Onglet À paliers : chaque famille, sa progression vers le prochain palier et ses 4 skins. */
+  private achTiers(body: HTMLElement, redraw: () => void): void {
+    const g = this.game;
+    for (const f of FAMILIES) {
+      const have = f.value(g);
+      const owns = f.goals.map((_, i) => g.achievements.has(`${f.id}${i + 1}`));
+      const first = owns.indexOf(false);
+      const done = first < 0 ? 4 : first;
+      const next = f.goals[Math.min(done, 3)], prev = done ? f.goals[done - 1] : 0;
+      const frac = done === 4 ? 1 : Math.max(0, Math.min(1, (have - prev) / (next - prev)));
+      const card = h('div', 'card tier-card');
+      card.style.setProperty('--fam', f.color);
+      card.innerHTML = `<div class="tier-head"><b>${esc(f.name)}</b><small>${done === 4 ? `${fmtNum(have)} ${f.unit} · complet` : `${fmtNum(have)} / ${fmtNum(next)} ${f.unit}`}</small></div>`
+        + `<div class="tier-bar"><i style="width:${(frac * 100).toFixed(1)}%"></i></div><p class="tier-what">${esc(f.what)}</p>`;
+      const row = h('div', 'tier-skins');
+      f.skins.forEach((sid, i) => {
+        const own = owns[i];
+        const b = h('button', `tier-skin${own ? ' own' : ''}${i === done ? ' next' : ''}${g.look.skin === sid ? ' worn' : ''}`);
+        b.innerHTML = `${skinSvg(sid, { gray: !own, anim: own })}<small>${ROMAN[i]} · ${shortNum(f.goals[i])}</small>${own ? '<em>✓</em>' : ''}`;
+        b.onclick = () => this.wearSkin(sid, redraw);
+        row.append(b);
+      });
+      card.append(row);
+      body.append(card);
+    }
+  }
+
+  /** Onglet Uniques : les grandes étapes, chacune son skin. */
+  private achOnce(body: HTMLElement): void {
+    const g = this.game;
+    const card = h('div', 'card ach');
+    for (const a of UNIQUE_ACHIEVEMENTS) {
+      const done = g.achievements.has(a.id);
+      const row = h('div', `ach-row once${done ? ' done' : ''}`);
+      row.innerHTML = `<span class="ach-skin">${skinSvg(a.skin, { gray: !done, anim: done })}</span><div><b>${esc(a.name)}</b><small>${esc(a.hint)}</small><small class="ach-gives">${done ? '✓ ' : ''}Skin : ${esc(skinOf(a.skin).name)} · ${RARITY_NAME[a.rarity]}</small></div>`;
+      card.append(row);
+    }
+    body.append(card);
   }
 
   private setPopover(k: string, info: string, actions: string): boolean {

@@ -16,7 +16,9 @@ import { hashString, rng } from '../world/rng.ts';
 import { Camera } from './camera.ts';
 import { buildingTexture } from './buildingIcons.ts';
 import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
-import { PROPELLER, robotShapes, type Shape } from './robotShapes.ts';
+import { ITEM_SPRITE_SCALE, orbitItemTexture, SKIN_ANCHOR, SKIN_SCALE, SKIN_SPRITE_SCALE, skinTexture } from './skinTextures.ts';
+import { orbitPoint, skinBody, skinOf } from '../data/skins.ts';
+import { SKIN_ART } from '../data/skinArt.ts';
 
 /** Contour d'un rectangle arrondi qui part du milieu du bord haut, dans le sens des aiguilles d'une montre. */
 function trackPoints(x: number, y: number, w: number, h: number, r: number): { x: number; y: number }[] {
@@ -174,7 +176,7 @@ export class GameRenderer {
   private noyauView: { root: Container; ring: Graphics; badge: Graphics; progress: number; pulse: number } | null = null;
   private itemTextures = new Map<string, Texture>();
   private itemPool: Sprite[] = [];
-  private robotView!: { root: Container; shadow: Graphics; body: Container; beam: Graphics; glow: Graphics; flip: Container; shape: Graphics; spin: Graphics; look: string };
+  private robotView!: { root: Container; shadow: Graphics; body: Container; beam: Graphics; flip: Container; sprite: Sprite; back: Container; front: Container; items: { back: Sprite; front: Sprite }[]; dur: number; wobble: boolean; look: string };
   private beltsDirty = true;
   private time = 0;
   preview: Preview = null;
@@ -245,6 +247,7 @@ export class GameRenderer {
     game.on((e) => {
       if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
       if (e.type === 'deliver' && e.at === 'noyau' && this.noyauView) this.noyauView.pulse = 1;
+      if (e.type === 'look') this.refreshLook();
       if (e.type === 'teleport') this.tpAnim = { fx: e.fromX * CELL, fy: e.fromY * CELL, t: 0 };
       if (e.type === 'rocket') {
         const m = game.factory.machines.get(e.id);
@@ -1451,41 +1454,58 @@ export class GameRenderer {
     const shadow = new Graphics().ellipse(0, 1, 17, 4).fill(PALETTE.shadow);
     const flip = new Container();
     const body = new Container();
-    const beam = new Graphics().poly([10, -20, 34, -40, 46, -26]).fill(PALETTE.beam);
-    const g = new Graphics();
-    const spin = new Graphics();
-    spin.position.set(PROPELLER.x, PROPELLER.y);
-    const glow = new Graphics().circle(10, -20, 9).fill({ color: PALETTE.yellow, alpha: 0.5 });
-    const lamp = new Graphics().circle(10, -20, 5).fill(PALETTE.lamp).stroke({ width: 2.5, color: PALETTE.ink });
-    body.addChild(g, glow, lamp, spin);
+    // Le faisceau de la lampe part du côté du robot, à mi-hauteur.
+    const beam = new Graphics().poly([13, -18, 38, -38, 50, -24]).fill(PALETTE.beam);
+    // Le skin (une image) et les objets qui tournent autour : derrière, puis devant.
+    const art = new Container();
+    art.scale.set(SKIN_SCALE);
+    const back = new Container(), front = new Container();
+    const sprite = new Sprite(Texture.EMPTY);
+    sprite.anchor.set(SKIN_ANCHOR.x, SKIN_ANCHOR.y);
+    sprite.scale.set(SKIN_SPRITE_SCALE / SKIN_SCALE);
+    art.addChild(back, sprite, front);
+    body.addChild(art);
     flip.addChild(beam, body);
     // Son ombre est au sol, sous les machines (pas par-dessus quand il passe à côté).
     this.groundShadows.addChild(shadow);
     root.addChild(flip);
     this.actorLayer.addChild(root);
-    this.robotView = { root, shadow, body, beam, glow, flip, shape: g, spin, look: '' };
+    this.robotView = { root, shadow, body, beam, flip, sprite, back, front, items: [], dur: 7, wobble: true, look: '' };
     this.refreshLook();
   }
 
-  /** Redessine le robot et les drones avec l'apparence choisie. */
+  /** Met le skin choisi au robot (l'image se prépare une fois, l'ancienne reste en attendant). */
   refreshLook(): void {
     const v = this.robotView;
     const look = this.game.look;
-    const id = `${look.color}/${look.accessory}`;
-    if (v.look === id) return;
-    v.look = id;
-    const { body, spin } = robotShapes(look);
-    v.shape.clear();
-    for (const sh of body) drawShape(v.shape, sh, 0, 0);
-    v.spin.clear();
-    for (const sh of spin) drawShape(v.spin, sh, PROPELLER.x, PROPELLER.y);
+    const sid = skinOf(look.skin).id;
+    const key = sid === 'origine' ? `${sid}/${look.color}` : sid;
+    if (v.look === key) return;
+    v.look = key;
+    void skinTexture(key, skinBody(sid, look)).then((tex) => { if (v.look === key) v.sprite.texture = tex; }).catch(() => undefined);
+    v.back.removeChildren().forEach((c) => c.destroy());
+    v.front.removeChildren().forEach((c) => c.destroy());
+    v.items = [];
+    const o = SKIN_ART[sid]?.orbit;
+    if (!o) return;
+    v.dur = o.dur; v.wobble = o.wobble;
+    for (const svg of o.items) {
+      const mk = (parent: Container) => {
+        const s = new Sprite(Texture.EMPTY);
+        s.anchor.set(0.5);
+        parent.addChild(s);
+        return s;
+      };
+      const pair = { back: mk(v.back), front: mk(v.front) };
+      v.items.push(pair);
+      void orbitItemTexture(svg).then((tex) => { if (v.look === key) { pair.back.texture = tex; pair.front.texture = tex; } }).catch(() => undefined);
+    }
   }
 
   private updateActors(): void {
     const r = this.game.robot, v = this.robotView;
     v.root.position.set(r.x * CELL, r.y * CELL);
     v.shadow.position.set(r.x * CELL, r.y * CELL);
-    v.spin.scale.x = Math.cos(this.time * 18);
     // Le robot se tourne là où il roule : il regarde à gauche ou à droite, et penche vers le haut ou le bas.
     if (r.moving) {
       let d = r.heading - this.robotFace;
@@ -1498,12 +1518,23 @@ export class GameRenderer {
     let tilt = left ? this.robotFace - Math.PI : this.robotFace;
     while (tilt > Math.PI) tilt -= Math.PI * 2;
     while (tilt < -Math.PI) tilt += Math.PI * 2;
-    v.flip.rotation = Math.max(-0.55, Math.min(0.55, tilt)) * (r.moving ? 1 : 0.6);
+    v.flip.rotation = Math.max(-0.55, Math.min(0.55, tilt)) * (r.moving ? 0.6 : 0.3);
     v.body.y = r.moving ? Math.abs(Math.sin(this.time * 14)) * -1.5 : 0;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * (Math.PI * 2 / 1.8));
     v.beam.alpha = 0.5 + 0.35 * pulse;
-    v.glow.alpha = 0.4 + 0.6 * pulse;
-    v.glow.scale.set(1);
+    // Skins légendaires : les objets tournent doucement autour, derrière puis devant le robot.
+    const n = v.items.length;
+    v.items.forEach((it, k) => {
+      const p = orbitPoint(this.time / v.dur + k / n);
+      const rot = v.wobble ? -Math.cos((this.time * Math.PI * 2) / (2.2 + k * 0.4)) * 0.244 : 0;
+      for (const s of [it.back, it.front]) {
+        s.position.set(p.x, p.y);
+        s.scale.set(p.s * ITEM_SPRITE_SCALE);
+        s.rotation = rot;
+      }
+      it.front.visible = p.front;
+      it.back.visible = !p.front;
+    });
     const tp = this.tpAnim ? Math.min(1, Math.max(0, (this.tpAnim.t - 0.3) / 0.35)) : 1;
     v.root.scale.set(0.6 + 0.4 * tp, tp);
     v.root.alpha = tp;
@@ -2195,23 +2226,6 @@ export class GameRenderer {
     this.drawWeather();
     this.drawOverlay();
     this.renderLoupe();
-  }
-}
-
-/** Dessine une forme du robot (repère décalé de ox, oy). */
-function drawShape(g: Graphics, s: Shape, ox: number, oy: number): void {
-  const st = (stroke?: number, sw?: number) => { if (stroke !== undefined) g.stroke({ width: sw ?? 2, color: stroke, cap: 'round', join: 'round' }); };
-  switch (s.k) {
-    case 'rect': g.roundRect(s.x - ox, s.y - oy, s.w, s.h, s.r).fill(s.fill); break;
-    case 'circle': g.circle(s.x - ox, s.y - oy, s.r); if (s.fill !== undefined) g.fill(s.fill); st(s.stroke, s.sw); break;
-    case 'ellipse': g.ellipse(s.x - ox, s.y - oy, s.rx, s.ry); if (s.fill !== undefined) g.fill(s.fill); st(s.stroke, s.sw); break;
-    case 'poly': g.poly(s.pts.map((v, i) => v - (i % 2 ? oy : ox))); if (s.fill !== undefined) g.fill(s.fill); st(s.stroke, s.sw); break;
-    case 'line': {
-      g.moveTo(s.pts[0] - ox, s.pts[1] - oy);
-      for (let i = 2; i < s.pts.length; i += 2) g.lineTo(s.pts[i] - ox, s.pts[i + 1] - oy);
-      st(s.stroke, s.sw);
-      break;
-    }
   }
 }
 

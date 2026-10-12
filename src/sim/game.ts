@@ -7,7 +7,8 @@ import { Factory, stopRules, type Belt, type StopRule, type FactorySave, type Li
 import { DX, DY, key, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
-import { ACHIEVEMENTS } from '../data/achievements.ts';
+import { ACHIEVEMENT_OF_SKIN, ACHIEVEMENTS, OLD_ACHIEVEMENTS } from '../data/achievements.ts';
+import { SKIN, skinOf } from '../data/skins.ts';
 import { ALL_NODES, BASE_UNLOCKS, LAB_ITEMS, NODE, nodeForMachine, type UnlockNode } from '../data/unlocks.ts';
 import { MAX_PALIER, palierMission } from '../data/paliers.ts';
 import { cleanLook, DEFAULT_LOOK, type RobotLook } from '../data/look.ts';
@@ -45,7 +46,9 @@ export type GameEvent =
   | { type: 'gift'; building: GiftType; id: number; again?: boolean }
   | { type: 'unlock'; id: string }
   /** Le robot s'est téléporté à sa base (d'où il partait). */
-  | { type: 'teleport'; fromX: number; fromY: number };
+  | { type: 'teleport'; fromX: number; fromY: number }
+  | { type: 'achievement'; id: string }
+  | { type: 'look' };
 
 /** Ce qui s'est passé pendant l'absence du joueur. */
 export interface OfflineReport {
@@ -98,6 +101,8 @@ export interface GameSave {
   pollution?: Record<string, number>;
   gifts?: Record<string, number>;
   ordersDone?: number;
+  /** Pièces gagnées au total (commandes du Comptoir), pour les succès Fortune. */
+  earned?: number;
   /** Anciennes parties : revente, charbon et inventaires du robot et des drones (retirés du jeu). */
   sellT?: number;
   crew?: unknown;
@@ -389,6 +394,8 @@ export class Game {
   /** Bâtiments offerts : type → temps de jeu au moment du cadeau. */
   gifts: Record<string, number> = {};
   ordersDone = 0;
+  /** Pièces gagnées au total (les remboursements ne comptent pas). */
+  earned = 0;
   /** Pendant le calcul de la production hors ligne : objets livrés, par type. */
   private offlineGains: Record<string, number> | null = null;
   private listeners: ((e: GameEvent) => void)[] = [];
@@ -564,6 +571,7 @@ export class Game {
     const o = this.order!;
     this.order = null;
     this.ordersDone++;
+    this.earned += o.money;
     this.earn(o.money);
     this.emit({ type: 'orderDone', order: o });
     this.refreshChoices();
@@ -1476,16 +1484,40 @@ export class Game {
   achievements = new Set<string>();
   private achT = 0;
 
+  /** Juste après un chargement : les succès déjà mérités se cochent sans annonce. */
+  private achQuiet = false;
+
   private checkAchievements(): void {
+    const quiet = this.achQuiet;
+    this.achQuiet = false;
     for (const a of ACHIEVEMENTS) {
       if (this.achievements.has(a.id)) continue;
       let ok = false;
       try { ok = a.test(this); } catch { ok = false; }
       if (!ok) continue;
       this.achievements.add(a.id);
-      this.emit({ type: 'toast', text: `Succès : ${a.name}`, tone: 'good' });
+      if (!quiet) {
+        this.emit({ type: 'toast', text: `Succès : ${a.name} · nouveau skin : ${skinOf(a.skin).name}`, tone: 'good' });
+        this.emit({ type: 'achievement', id: a.id });
+      }
     }
   }
+
+  /** Le robot peut porter ce skin (le Boulon d'origine est offert, les autres se gagnent). */
+  ownsSkin(id: string): boolean {
+    if (!SKIN[id]) return false;
+    const a = ACHIEVEMENT_OF_SKIN[id];
+    return !a || this.achievements.has(a.id);
+  }
+
+  /** Change le skin du robot (s'il est gagné). */
+  setSkin(id: string): boolean {
+    if (!this.ownsSkin(id)) return false;
+    this.look = { ...this.look, skin: id };
+    this.emit({ type: 'look' });
+    return true;
+  }
+
 
   /** Statistiques : ce qui a été fabriqué, relevé toutes les 10 secondes (les 10 dernières minutes). */
   statHistory: { t: number; made: Record<string, number> }[] = [];
@@ -1563,7 +1595,7 @@ export class Game {
       unlocks: [...this.unlocks],
       palier: this.palier, palierDone: this.palierDone, lab: this.lab,
       look: this.look, tips: this.tips, played: Math.floor(this.played),
-      gifts: this.gifts, ordersDone: this.ordersDone,
+      gifts: this.gifts, ordersDone: this.ordersDone, earned: this.earned,
       stats: this.factory.stats, achievements: [...this.achievements], rockets: this.rockets,
       pollution: Object.fromEntries([...this.pollution].filter(([, v]) => v >= 0.5).map(([k, v]) => [k, Math.round(v * 10) / 10])),
     };
@@ -1577,7 +1609,10 @@ export class Game {
     // Ce qui a été retiré du jeu (tapis souterrains) est remboursé.
     this.money += this.factory.legacyRefund;
     if (s.stats) { this.factory.stats.made = { ...s.stats.made }; this.factory.stats.used = { ...s.stats.used }; }
-    for (const id of s.achievements ?? []) this.achievements.add(id);
+    for (const id of s.achievements ?? []) this.achievements.add(OLD_ACHIEVEMENTS[id] ?? id);
+    // Les anciens succès sans skin (premier lingot, plaques, camions…) disparaissent.
+    for (const id of [...this.achievements]) if (!ACHIEVEMENTS.some((a) => a.id === id)) this.achievements.delete(id);
+    this.achQuiet = true;
     this.rockets = s.rockets ?? 0;
     for (const [k, v] of Object.entries(s.pollution ?? {})) this.pollution.set(k, v);
     // Les chantiers d'une ancienne partie se terminent tout de suite (plus de drones pour les construire).
@@ -1597,6 +1632,9 @@ export class Game {
     this.tips = s.tips ? { done: [...(s.tips.done ?? [])], off: !!s.tips.off } : { done: [], off: true };
     this.played = s.played ?? 0;
     this.ordersDone = s.ordersDone ?? 0;
+    // Avant le compteur : on part de l'argent en poche (au moins ce qui a été gagné).
+    this.earned = s.earned ?? Math.max(0, Math.floor(s.money) - RULES.startMoney);
+    if (!this.ownsSkin(this.look.skin)) this.look = { ...this.look, skin: 'origine' };
     this.gifts = { ...(s.gifts ?? {}) };
     // Déjà posés avant les cadeaux : ils comptent comme offerts.
     for (const m of this.factory.machines.values()) if ((m.type === 'comptoir' || m.type === 'laboratoire') && this.gifts[m.type] === undefined) this.gifts[m.type] = 0;

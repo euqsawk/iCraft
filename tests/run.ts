@@ -1054,10 +1054,10 @@ test('tri : seul l’objet choisi part de côté ; entrepôt ; statistiques et s
   const four = g.placeMachine('four', 14, 2)!;
   four.built = true; four.inBuf = { fer: 3 }; four.fuel = 5; g.factory.markBuilt();
   run(g, 10);
-  assert((g.factory.stats.made.lingot_fer ?? 0) >= 3 && g.achievements.has('lingot'), `stats : ${JSON.stringify(g.factory.stats.made)}`);
+  assert((g.factory.stats.made.lingot_fer ?? 0) >= 3, `stats : ${JSON.stringify(g.factory.stats.made)}`);
   assert(g.ratePerMinute('lingot_fer', 60) > 0, 'débit par minute');
   const g3 = new Game('TEST-T1', JSON.parse(JSON.stringify(g.serialize())));
-  assert(g3.achievements.has('lingot') && (g3.factory.stats.made.lingot_fer ?? 0) >= 3, 'stats et succès sauvegardés');
+  assert((g3.factory.stats.made.lingot_fer ?? 0) >= 3, 'stats sauvegardées');
 });
 test('eau : pompe sur le lac, tuyaux, réacteur refroidi', () => {
   const g = new Game('TEST-W1');
@@ -1644,19 +1644,43 @@ test('un bâtiment offert disparu est rendu par le Noyau', () => {
 });
 test('apparence, conseils et temps de jeu sont sauvegardés ; une ancienne partie n’a pas de conseils', () => {
   const g = new Game('TEST-50');
-  g.look = { color: 'ciel', accessory: 'helice', name: 'Zébulon' };
+  g.look = { color: 'ciel', skin: 'origine', name: 'Zébulon' };
   g.tips.done.push('charbon');
   run(g, 2);
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
-  assert(g2.look.name === 'Zébulon' && g2.look.accessory === 'helice' && g2.tips.done[0] === 'charbon' && !g2.tips.off, 'apparence ou conseils perdus');
+  assert(g2.look.name === 'Zébulon' && g2.look.color === 'ciel' && g2.tips.done[0] === 'charbon' && !g2.tips.off, 'apparence ou conseils perdus');
   assert(g2.played >= 1, `temps de jeu ${g2.played}`);
   delete s.look; delete s.tips; s.v = 4;
   const g3 = new Game(s.seed, s);
   assert(g3.look.name === 'Boulon' && g3.tips.off, 'ancienne partie');
-  s.look = { color: 'violet-fluo', accessory: 'canon', name: '' };
+  s.look = { color: 'violet-fluo', accessory: 'canon', skin: 'chat', name: '' };
   const g4 = new Game(s.seed, s);
-  assert(g4.look.color === 'jaune' && g4.look.accessory === 'aucun' && g4.look.name === 'Boulon', 'apparence invalide nettoyée');
+  assert(g4.look.color === 'jaune' && g4.look.skin === 'origine' && g4.look.name === 'Boulon', 'apparence invalide nettoyée');
+});
+test('succès et skins : paliers Fortune, skin gagné puis porté, anciens succès repris', () => {
+  const g = new Game('TEST-SKIN');
+  assert(g.ownsSkin('origine') && !g.ownsSkin('tirelire') && !g.setSkin('tirelire'), 'au départ, le Boulon d’origine seul');
+  g.earned = 99999; run(g, 3);
+  assert(!g.achievements.has('fortune1'), 'pas avant 100 000 pièces');
+  // Les commandes du Comptoir comptent dans les pièces gagnées ; un remboursement non.
+  g.earned = 0; g.earn(500);
+  assert(g.earned === 0, 'un remboursement ne compte pas');
+  g.order = { id: 1, rarity: 'commune', lines: [], xp: 0, money: 100000 } as never;
+  (g as unknown as { completeOrder: () => void }).completeOrder();
+  assert(g.earned === 100000 && g.ordersDone === 1, `gagné ${g.earned}`);
+  run(g, 3);
+  assert(g.achievements.has('fortune1') && !g.achievements.has('fortune2'), 'Fortune I');
+  assert(g.setSkin('tirelire') && g.look.skin === 'tirelire', 'skin porté');
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.look.skin === 'tirelire' && g2.earned === 100000, 'skin et compteur sauvegardés');
+  // Une ancienne partie : objets10k devient Production I, les succès sans skin disparaissent, skin non gagné refusé.
+  s.achievements = ['objets10k', 'plaques100', 'palier3']; s.look.skin = 'dore'; delete s.earned; s.money = 30000;
+  const g3 = new Game(s.seed, s);
+  assert(g3.achievements.has('production1') && g3.achievements.has('palier3') && !g3.achievements.has('plaques100'), `migration : ${[...g3.achievements]}`);
+  assert(g3.look.skin === 'origine', 'skin non gagné retiré');
+  assert(g3.earned > 0, 'compteur estimé');
 });
 await testAsync('code de partie : export puis import, et codes invalides refusés', async () => {
   const g = new Game('TEST-51');

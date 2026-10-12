@@ -414,8 +414,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .screen-toasts { position: fixed; top: auto; bottom: calc(var(--bottom) + 24px); z-index: 9; }
 
 .robot-svg { display: block; overflow: visible; }
-.robot-svg.hero { width: 190px; height: 148px; animation: bob 2.6s ease-in-out infinite; }
-.robot-svg.mini { width: 58px; height: 45px; }
+.robot-svg.hero { width: 200px; height: 172px; animation: bob 2.6s ease-in-out infinite; }
+.robot-svg.mini { width: 46px; height: 58px; }
 .rb-spin { animation: spinx .28s linear infinite; }
 @keyframes spinx { 50% { transform: scaleX(-1); } }
 @keyframes bob { 50% { transform: translateY(-6px); } }
@@ -464,8 +464,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .error { margin: 0; font-size: 12.5px; font-weight: 800; color: var(--coral-dark); }
 .slot-card { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 20px; box-shadow: 0 4px 0 var(--shadow); padding: 10px 12px; flex-wrap: wrap; }
 .slot-card.empty { background: rgba(255, 255, 255, .55); box-shadow: none; border: 2px dashed var(--shadow); }
-.slot-robot { width: 58px; height: 46px; flex: none; display: flex; align-items: center; justify-content: center; }
-.slot-robot svg { width: 58px; height: 45px; }
+.slot-robot { width: 58px; height: 58px; flex: none; display: flex; align-items: center; justify-content: center; }
+.slot-robot svg { width: 46px; height: 58px; }
 .slot-robot.ghost { border-radius: 14px; background: #EEF4F0; }
 .slot-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .slot-info b { font-size: 15px; font-weight: 900; }
@@ -503,6 +503,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .intro-body.step0 .intro-stage { height: 230px; }
 .custom { width: 100%; display: flex; flex-direction: column; gap: 8px; text-align: left; }
 .custom-label { margin: 4px 0 0; font-size: 12px; font-weight: 900; color: var(--ink2); text-transform: uppercase; letter-spacing: .4px; }
+.custom-note { margin: 6px 0 0; font-size: 12.5px; font-weight: 700; color: var(--ink2); line-height: 1.35; }
 .swatches { display: flex; gap: 10px; justify-content: space-between; }
 .swatch { width: 44px; height: 44px; border-radius: 15px; box-shadow: 0 4px 0 rgba(0, 0, 0, .12); border: 3px solid #fff; }
 .swatch.on { outline: 3px solid var(--ink); outline-offset: 1px; }
@@ -1079,3 +1080,44 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .lv-pips i.on.l3 { background: #FFC2AE; box-shadow: inset 0 0 0 2.5px #E0674D; }
 .lv-pips i.on.l4 { background: #D8C7F2; box-shadow: inset 0 0 0 2.5px #6B4FA0; }
 .lv-pips i.on.l5 { background: #B8D6F6; box-shadow: inset 0 0 0 2.5px #3F7FC9; }
+
+/* ---------- Succès et skins ---------- */
+.skin-svg { display: block; overflow: visible; }
+.ach-body { padding-bottom: 4px; }
+.skin-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.skin-card { --bg: #E3EDE8; --fg: #24563F; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 6px 6px 8px; border-radius: 16px; background: #fff; box-shadow: 0 3px 0 var(--shadow); font: inherit; color: var(--ink); text-align: left; min-width: 0; }
+.skin-card .sk-pic { display: flex; align-items: flex-end; justify-content: center; height: 92px; border-radius: 11px; background: var(--bg); padding-bottom: 4px; overflow: hidden; }
+.skin-card .sk-pic svg { width: 64px; height: 81px; }
+.skin-card b { font-size: 12px; font-weight: 900; line-height: 1.15; margin: 4px 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skin-card small { font-size: 10.5px; font-weight: 800; color: var(--fg); margin: 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skin-card.locked small { color: var(--ink2); }
+.skin-card.locked b { color: var(--ink2); }
+.skin-card.worn { box-shadow: 0 0 0 3px var(--ink), 0 3px 0 3px var(--shadow); }
+.skin-card.r-depart { --bg: #E8EEEB; --fg: var(--ink2); }
+.skin-card.r-rare { --bg: #E1ECF8; --fg: #2C5E9E; }
+.skin-card.r-epique { --bg: var(--violet-light); --fg: var(--violet); }
+.skin-card.r-legendaire { --bg: var(--gold-light); --fg: var(--gold); }
+.skin-card.locked .sk-pic { background: #EEF3F0; }
+.tier-card { position: relative; padding-left: 20px; overflow: hidden; }
+.tier-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 7px; background: var(--fam); }
+.tier-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.tier-head b { font-size: 16px; font-weight: 900; }
+.tier-head small { font-size: 12px; font-weight: 800; color: var(--ink2); text-align: right; }
+.tier-bar { height: 8px; border-radius: 4px; background: #E3EDE8; margin-top: 8px; overflow: hidden; }
+.tier-bar i { display: block; height: 100%; min-width: 8px; border-radius: 4px; background: var(--fam); }
+.tier-what { margin: 6px 0 0; font-size: 11.5px; font-weight: 700; color: var(--ink2); }
+.tier-skins { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.tier-skin { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px 5px; border-radius: 12px; background: #EEF3F0; font: inherit; color: var(--ink2); min-width: 0; }
+.tier-skin svg { width: 44px; height: 56px; }
+.tier-skin small { font-size: 10px; font-weight: 900; white-space: nowrap; }
+.tier-skin.own { background: #F4F8F6; color: var(--ink); }
+.tier-skin.next { box-shadow: inset 0 0 0 2.5px var(--fam); }
+.tier-skin.worn { box-shadow: inset 0 0 0 2.5px var(--ink); }
+.tier-skin em { position: absolute; top: 3px; right: 4px; width: 17px; height: 17px; border-radius: 9px; background: #2E9E6A; color: #fff; font-style: normal; font-size: 11px; font-weight: 900; display: flex; align-items: center; justify-content: center; }
+.ach-row.once { opacity: 1; }
+.ach-skin { flex: none; width: 46px; height: 54px; border-radius: 12px; background: #EEF3F0; display: flex; align-items: flex-end; justify-content: center; }
+.ach-skin svg { width: 40px; height: 50px; }
+.ach-row.done .ach-skin { background: var(--gold-light); }
+.ach-row .ach-gives { color: var(--green); font-weight: 800; }
+.ach-row:not(.done) .ach-gives { color: var(--ink2); opacity: .8; }
+.skin-btn .scan-ico svg { width: 38px; height: 48px; }
