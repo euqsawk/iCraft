@@ -1359,11 +1359,6 @@ export class GameRenderer {
   // ---------- Machines ----------
 
 
-  private makeLabel(text: string): Text {
-    const t = new Text({ text, style: { fontFamily: FONT, fontSize: 11, fontWeight: '800', fill: PALETTE.ink2 }, resolution: 3 });
-    t.anchor.set(0.5, 1);
-    return t;
-  }
 
   private buildMachineView(m: Machine): MachineView {
     const def = machineDef(m.type);
@@ -1440,13 +1435,8 @@ export class GameRenderer {
     lamp.circle(-bw / 2 + 7, -bh / 2 + 7, 4.5).fill(0xffffff).circle(-bw / 2 + 7, -bh / 2 + 7, 3).fill(PALETTE.coral);
     lamp.visible = false;
     root.addChild(body, icon, badge, lamp);
-    let label: Text | null = null;
-    if (!bare) {
-      const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
-      label = this.makeLabel(name);
-      label.position.set(0, -bh / 2 - 4);
-      root.addChild(label);
-    }
+    // Plus de nom au-dessus des bâtiments : leur dessin suffit (le nom est dans leur fenêtre).
+    const label: Text | null = null;
     root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
@@ -1462,19 +1452,16 @@ export class GameRenderer {
     const badge = new Graphics();
     const tex = buildingTexture('noyau');
     if (tex) {
-      // Le dessin choisi : le cœur corail et ses quatre bras, sur tout le carré ; le nom au-dessus, comme les autres bâtiments.
+      // Le dessin choisi (le cœur corail et ses quatre bras) posé sur un socle, comme les autres bâtiments.
+      drawMachineBody(body, S - 2, S - 2, 22, PALETTE.white);
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
-      sp.width = sp.height = S - 4;
-      const label = this.makeLabel('Noyau');
-      label.position.set(0, -S / 2 + 4);
-      root.addChild(ring, sp, label, badge);
+      sp.width = sp.height = S - 18;
+      root.addChild(ring, body, sp, badge);
     } else {
       body.roundRect(-S / 2 + 12, -S / 2 + 16, S - 24, S - 24, 16).fill(0xd8644d);
       body.roundRect(-S / 2 + 12, -S / 2 + 12, S - 24, S - 24, 16).fill(PALETTE.coral);
-      const t = new Text({ text: 'Noyau', style: { fontFamily: FONT, fontSize: 13, fontWeight: '900', fill: 0xffffff }, resolution: 3 });
-      t.anchor.set(0.5);
-      root.addChild(ring, body, t, badge);
+      root.addChild(ring, body, badge);
     }
     root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
@@ -2350,7 +2337,8 @@ export class GameRenderer {
       this.trainG.addChild(this.trainText);
     }
     const t = this.trainText;
-    t.visible = true;
+    // Plus de texte au-dessus du quai : le compte à rebours est dans la pastille du haut de l'écran.
+    t.visible = false;
     const left = Object.values(this.game.freightMissing()).reduce((a, n) => a + n, 0);
     const clk = clock(fr.t);
     t.text = here ? `Train à quai · part dans ${clk}${left ? ` · il manque ${left}` : ' · plein'}` : `Train de fret · arrive dans ${clk}`;
