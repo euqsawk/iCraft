@@ -1297,6 +1297,14 @@ export class Game {
     return true;
   }
 
+  /** Vide un tapis (toute sa chaîne) : ce qu'il transportait disparaît. Renvoie le nombre d'objets jetés. */
+  emptyChain(b: Belt): number {
+    let n = 0;
+    for (const c of this.view.chainOf(b)) { n += c.items.length; c.items = []; }
+    if (n) this.emit({ type: 'factory' });
+    return n;
+  }
+
   removeChain(b: Belt): void {
     let refund = 0;
     for (const c of this.view.chainOf(b)) refund += this.refundBelt(c);

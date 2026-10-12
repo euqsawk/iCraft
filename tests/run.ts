@@ -586,6 +586,14 @@ test('foreuses 2 × 2 collées : elles ne se relient pas, chacune sort son miner
   run(g, 60);
   assert((c.inBuf.fer ?? 0) > 0 && (c.inBuf.fer ?? 0) <= a.made + 1, `le coffre ne reçoit que la première : ${c.inBuf.fer} / ${a.made}`);
 });
+test('vider un tapis : tout ce qu’il transporte disparaît', () => {
+  const g = new Game('TEST-VT');
+  g.money = 10000; g.world.reveal(6, 6, 20);
+  assert(g.placeBelts(trace(g, [[2.5, 8.5], [9.5, 8.5]]).result()), 'tapis');
+  const b = g.factory.beltAt(4, 8)!, c = g.factory.beltAt(8, 8)!;
+  b.items.push({ t: 'fer', p: 0.2 }); c.items.push({ t: 'cuivre', p: 0.5 }, { t: 'cuivre', p: 0.1 });
+  assert(g.emptyChain(b) === 3 && !b.items.length && !c.items.length, 'toute la chaîne vidée');
+});
 test('train de fret : commande annoncée, coffre du quai, prime si plein, amende fixe sinon (puis les coffres)', () => {
   const g = new Game('TEST-FR');
   assert(!g.freight && ![...g.factory.machines.values()].some((m) => m.type === 'quai'), 'pas de train sans le mode');

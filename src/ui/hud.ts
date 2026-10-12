@@ -1173,12 +1173,20 @@ export class Hud implements GestureHandlers {
       const upBtn = !bup ? '' : bup.locked
         ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Tapis niveau ${bup.to} : à débloquer (Niveaux)</button></div>`
         : `<div class="row"><button class="btn primary" data-act="lvl"${this.game.money < bup.price ? ' disabled' : ''}>Niveau ${bup.to} · ${bup.cells.length} case${bup.cells.length > 1 ? 's' : ''} · ${ICONS.coinSm}${fmt(bup.price)}</button></div>`;
-      const actions = `${upBtn}${sortBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
-      if (!this.setPopover(`b${sel.x},${sel.y}:${lmin}-${lmax}:${bup ? `${bup.price}${bup.locked ? 'L' : ''}${this.game.money >= bup.price ? '$' : ''}` : ''}`, info + linkInfo, actions)) return;
+      const emptyBtn = items ? `<div class="row"><button class="btn" data-act="empty">${ICONS.gomme}Vider le tapis</button></div>` : '';
+      const actions = `${upBtn}${sortBtn}${emptyBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
+      if (!this.setPopover(`b${sel.x},${sel.y}:${items ? 'i' : ''}:${lmin}-${lmax}:${bup ? `${bup.price}${bup.locked ? 'L' : ''}${this.game.money >= bup.price ? '$' : ''}` : ''}`, info + linkInfo, actions)) return;
       const lb = p.querySelector<HTMLButtonElement>('[data-act="lvl"]');
       if (lb) lb.onclick = () => {
         const done = this.game.upgradeBelt(b);
         if (done) this.toast(`Tapis au niveau ${(bup?.to ?? 2)}`, 'good');
+        this.popKey = '';
+        this.renderPopover();
+      };
+      const em = p.querySelector<HTMLButtonElement>('[data-act="empty"]');
+      if (em) em.onclick = () => {
+        const n = this.game.emptyChain(b);
+        if (n) this.toast(`Tapis vidé : ${n} objet${n > 1 ? 's' : ''} jeté${n > 1 ? 's' : ''}`, 'info');
         this.popKey = '';
         this.renderPopover();
       };
