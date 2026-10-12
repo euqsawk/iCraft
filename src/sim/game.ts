@@ -1,4 +1,5 @@
 // L'état complet d'une partie : monde, usine, robot, argent, paliers, laboratoire et commandes.
+import { isStationType, rotDims, type Rot } from './stations.ts';
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
 import { item as itemDef, itemLabel } from '../data/items.ts';
@@ -918,7 +919,7 @@ export class Game {
 
   // ---------- Construction ----------
 
-  placeMachine(type: string, x: number, y: number): Machine | null {
+  placeMachine(type: string, x: number, y: number, rot: Rot = 0): Machine | null {
     const def = machineDef(type);
     if (def.kind === 'meter') { this.placeMeter(x, y); return null; }
     if (def.gift) {
@@ -941,16 +942,18 @@ export class Game {
       this.emit({ type: 'toast', text: `Un seul ${def.name.toLowerCase()} par partie`, tone: 'warn' });
       return null;
     }
-    const check = this.view.checkMachine(type, x, y, undefined, true);
+    if (!isStationType(type)) rot = 0;
+    const check = this.view.checkMachine(type, x, y, undefined, true, rot);
     if (!check.ok) {
       this.emit({ type: 'toast', text: check.reason ?? 'Impossible ici', tone: 'warn' });
       return null;
     }
     if (!this.spend(def.cost)) return null;
+    const size = rotDims(def.w, def.h, rot);
     // Posée sur un tapis : les cases de tapis dessous disparaissent (remboursées). Le tapis qui arrive
     // devient l'entrée de la machine, celui qui repart devient sa sortie.
-    if (check.belts) this.earn(this.clearBeltsUnder(def.w, def.h, x, y));
-    const m = this.view.addMachine(type, x, y, false);
+    if (check.belts) this.earn(this.clearBeltsUnder(size.w, size.h, x, y));
+    const m = this.view.addMachine(type, x, y, false, undefined, rot);
     if (def.kind === 'atelier') this.view.makeInner(m, this.atelierSize);
     this.finishPlacement(m);
     return m;
@@ -1169,10 +1172,11 @@ export class Game {
       this.emit({ type: 'toast', text: kind === 'train' ? 'Une gare se relie à une autre gare' : 'Un dépôt se relie à un autre dépôt', tone: 'warn' });
       return null;
     }
-    const price = this.trackPrice(kind, this.factory.legLength(from, to)) + this.vehiclePrice(kind);
+    const price = this.trackPrice(kind, this.factory.loopLength([from.id, to.id])) + this.vehiclePrice(kind);
     if (!this.spend(price)) return null;
     const l = this.factory.addLine(kind, from, to);
     l.vehicles.push(this.factory.newVehicle());
+    this.factory.ensureRoutes();
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${kind === 'train' ? 'Train' : 'Camion'} : la ligne est ouverte`, tone: 'good' });
     return l;
@@ -1181,7 +1185,7 @@ export class Game {
   /** Prix d'un troisième arrêt : la route en plus. */
   stopPrice(l: Line, m: Machine): number {
     const before = this.factory.lineLength(l);
-    const after = this.factory.lineLength({ ...l, stops: [...l.stops, { id: m.id, load: false }] });
+    const after = this.factory.loopLength([...l.stops.map((st) => st.id), m.id], l.id);
     return this.trackPrice(l.kind, Math.max(0, after - before));
   }
 
@@ -1191,6 +1195,7 @@ export class Game {
     if (!l || l.stops.length >= RULES.maxStops || this.stationKind(m) !== l.kind || l.stops.some((st) => st.id === m.id)) return false;
     if (!this.spend(this.stopPrice(l, m))) return false;
     l.stops.push({ id: m.id, load: false });
+    this.factory.routesDirty = true;
     this.emit({ type: 'factory' });
     return true;
   }
@@ -1242,6 +1247,7 @@ export class Game {
     if (!l || l.stops.length <= 2 || !l.stops[i]) return false;
     const before = this.factory.lineLength(l);
     l.stops.splice(i, 1);
+    this.factory.routesDirty = true;
     for (const v of l.vehicles) { v.at = Math.min(v.at, l.stops.length - 1); v.pos = 0; v.moving = false; v.t = 0; }
     this.earn(this.trackPrice(l.kind, Math.max(0, before - this.factory.lineLength(l))));
     this.emit({ type: 'factory' });
@@ -1415,13 +1421,31 @@ export class Game {
     return refund;
   }
 
-  moveMachine(m: Machine, x: number, y: number): boolean {
-    const check = this.view.checkMachine(m.type, x, y, m, true);
-    if (check.ok && check.belts) this.earn(this.clearBeltsUnder(m.w, m.h, x, y));
-    const ok = this.view.moveMachine(m, x, y);
+  moveMachine(m: Machine, x: number, y: number, rot: Rot = m.rot ?? 0): boolean {
+    const check = this.view.checkMachine(m.type, x, y, m, true, rot);
+    const size = rotDims(machineDef(m.type).w, machineDef(m.type).h, isStationType(m.type) ? rot : 0);
+    if (check.ok && check.belts) this.earn(this.clearBeltsUnder(size.w, size.h, x, y));
+    const ok = this.view.moveMachine(m, x, y, rot);
     if (!ok) this.emit({ type: 'toast', text: 'Impossible ici', tone: 'warn' });
     else { if (!this.inAtelier) this.world.reveal(x + 1, y + 1, RULES.revealBuilding); this.emit({ type: 'factory' }); }
     return ok;
+  }
+
+  /** Tourne une gare ou un dépôt d'un quart de tour, sur place (ou juste à côté s'il faut de la place). */
+  rotateStation(m: Machine): boolean {
+    if (!isStationType(m.type)) return false;
+    const rot = (((m.rot ?? 0) + 1) % 4) as Rot;
+    const size = rotDims(machineDef(m.type).w, machineDef(m.type).h, rot);
+    const cx = m.x + m.w / 2, cy = m.y + m.h / 2;
+    const bx = Math.round(cx - size.w / 2), by = Math.round(cy - size.h / 2);
+    for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+      if (this.view.checkMachine(m.type, bx + dx, by + dy, m, false, rot).ok && this.view.moveMachine(m, bx + dx, by + dy, rot)) {
+        this.emit({ type: 'factory' });
+        return true;
+      }
+    }
+    this.emit({ type: 'toast', text: 'Pas la place de la tourner ici (le quai doit rester libre)', tone: 'warn' });
+    return false;
   }
 
   jobPos(j: Job): { x: number; y: number } | null {

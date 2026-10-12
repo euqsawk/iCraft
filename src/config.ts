@@ -109,7 +109,12 @@ export const RULES = {
   maxStops: 6,
   /** Écart entre deux véhicules dans la file d'attente d'un dépôt (en cases). */
   truckGap: 1.8,
-  trainGap: 4,
+  /** Longueur d'un camion et d'un train (en cases) : ils libèrent un croisement une fois tout entiers passés. */
+  truckLength: 1.2,
+  trainLength: 3.9,
+  /** Carrefour : chaque sens a le vert pendant ce temps (secondes), orange compris. */
+  lightCycle: 6,
+  trainGap: 5,
   genCoalSeconds: 10,
   /** Pont : un tapis passe par-dessus d'autres tapis, sur 4 cases au plus ; prix en plus des cases. */
   bridgeSpan: 4,

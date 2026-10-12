@@ -818,7 +818,7 @@ test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis rempli
   g.unlocks.add('train');
   const gare = g.placeMachine('gare', 4, 4)!;
   // Un tapis qui part de la gare vers la droite, un autre qui y arrive par la gauche.
-  g.placeBelts([...Array(5)].map((_, i) => ({ x: 6 + i, y: 4, dir: 0, inDir: 0 })) as TraceCell[]);
+  g.placeBelts([...Array(5)].map((_, i) => ({ x: 8 + i, y: 4, dir: 0, inDir: 0 })) as TraceCell[]);
   g.placeBelts([...Array(3)].map((_, i) => ({ x: 1 + i, y: 5, dir: 0, inDir: 0 })) as TraceCell[]);
   for (const b of g.factory.belts.values()) b.built = true;
   gare.built = true; g.pending = []; g.factory.markBuilt();
@@ -828,7 +828,7 @@ test('gare : deux coffres, les arrivées sortent sur les tapis, les tapis rempli
     if (i % 15 === 0) g.factory.beltAt(1, 5)!.items.push({ t: 'cuivre', p: 0 });
     g.tick(1 / 30);
   }
-  const out = [6, 7, 8, 9, 10].flatMap((x) => g.factory.beltAt(x, 4)!.items.map((i) => i.t));
+  const out = [8, 9, 10, 11, 12].flatMap((x) => g.factory.beltAt(x, 4)!.items.map((i) => i.t));
   assert(out.length > 0 && out.every((t) => t === 'carburant') && gare.inBuf.fer === 10, `seules les arrivées sortent : ${out.join(',')}`);
   assert((gare.inBuf.cuivre ?? 0) > 0 && !gare.outBuf.cuivre, `les tapis remplissent les départs : ${JSON.stringify(gare.inBuf)}`);
   // Le robot prend dans l'un ou l'autre.
@@ -893,7 +893,7 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
   const m0 = g.money;
   const l = g.linkStations(a, b)!;
   assert(l && l.vehicles.length === 1 && l.stops[0].load && !l.stops[1].load, 'ligne : charge au départ, décharge à l’arrivée');
-  assert(m0 - g.money === g.trackPrice('camion', 20) + RULES.truckCost, `prix ${m0 - g.money}`);
+  assert(m0 - g.money === g.trackPrice('camion', g.factory.lineLength(l)) + RULES.truckCost && g.factory.lineLength(l) > 40, `prix ${m0 - g.money}, boucle ${g.factory.lineLength(l)}`);
   // Le dépôt se remplit comme un coffre (tapis, drones) : 300 objets.
   assert(g.factory.putInStorage(a, 'fer', 1000) === 300, 'dépôt : 300 objets');
   run(g, 3);
@@ -912,7 +912,7 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
     for (const v of l.vehicles) for (const o of l.vehicles) {
       if (v !== o && v.moving && o.moving && v.at === o.at) assert(Math.abs(v.pos - o.pos) >= RULES.truckGap - 0.01, `camions trop proches : ${v.pos} ${o.pos}`);
     }
-    if (l.vehicles.some((v) => v.moving && v.pos > 0 && v.pos < g.factory.legLength(g.factory.machines.get(l.stops[v.at].id)!, g.factory.machines.get(l.stops[(v.at + 1) % 2].id)!) - 0.5 && g.factory.legLength(g.factory.machines.get(l.stops[v.at].id)!, g.factory.machines.get(l.stops[(v.at + 1) % 2].id)!) - v.pos <= RULES.truckGap + 0.01)) queued++;
+    if (l.vehicles.some((v) => v.moving && v.pos > 0 && v.pos < g.factory.legLen(l, v.at) - 0.5 && g.factory.legLen(l, v.at) - v.pos <= RULES.truckGap + 0.01)) queued++;
   }
   assert(queued > 0, 'personne n’a attendu devant un dépôt');
   assert(b.outBuf.fer - before >= 3 * RULES.truckLoad, `plus vite : ${b.outBuf.fer - before} en 30 s`);
@@ -928,6 +928,111 @@ test('dépôts : un camion fait les allers-retours, on ajoute des camions et un 
   assert(g.removeVehicle(l.id) && g.money - m1 === RULES.truckCost, 'camion retiré, remboursé');
   g.removeLine(l.id);
   assert(g.factory.lines.size === 0 && g.money - m1 === refund, 'ligne fermée, remboursée');
+});
+test('gares et dépôts : 4 × 2, quai réservé le long du grand côté, on les tourne', () => {
+  const g = new Game('TEST-Q1');
+  g.money = 100000; g.unlocks.add('camion');
+  const d = g.placeMachine('depot', 4, 4)!;
+  assert(d.w === 4 && d.h === 2 && (d.rot ?? 0) === 0, 'dépôt 4 × 2');
+  // Le quai est dessous (y 6 et 7) : ni tapis ni machine.
+  assert(!g.factory.isFree(5, 6) && !g.factory.isFree(7, 7) && g.factory.isFree(5, 8), 'quai réservé');
+  assert(!g.placeMachine('coffre', 5, 7), 'pas de coffre sur le quai');
+  assert(!g.factory.checkMachine('depot', 4, 6).ok, 'pas de dépôt sur le quai d’un autre');
+  // Tourné d'un quart : 2 × 4, quai à gauche.
+  assert(g.rotateStation(d) && d.w === 2 && d.h === 4 && d.rot === 1, `tourné ${d.w}×${d.h} ${d.rot}`);
+  const q = g.factory.stationOf(d).quay;
+  assert(q.every((c) => c.x < d.x) && q.length === 8, 'quai à gauche');
+  const v = g.placeMachine('depot', 20, 4, 3)!;
+  assert(v.w === 2 && v.h === 4 && g.factory.stationOf(v).quay.every((c) => c.x >= v.x + 2), 'posé tourné : quai à droite');
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  assert(g2.factory.machines.get(v.id)!.rot === 3 && !g2.factory.isFree(v.x + 2, v.y + 1), 'sens sauvegardé');
+});
+test('routes en boucle : voies à sens unique, 4 cases entre l’aller et le retour, tracé gardé', () => {
+  const g = new Game('TEST-R1');
+  g.money = 1e6; g.unlocks.add('camion');
+  const a = g.placeMachine('depot', 10, 40)!, b = g.placeMachine('depot', 40, 46)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  const l = g.linkStations(a, b)!;
+  const r = g.factory.routes.get(l.id)!;
+  assert(r.legs.length === 2 && r.gap === 6, `deux trajets, écart ${r.gap}`);
+  const pts = (i: number) => r.legs[i].steps.slice(5, -5);
+  let near = 99;
+  for (const p of pts(0)) for (const q of pts(1)) near = Math.min(near, Math.max(Math.abs(p.x - q.x), Math.abs(p.y - q.y)));
+  assert(near >= 6, `aller et retour trop proches : ${near}`);
+  // Chaque trajet part par la sortie du quai et arrive par l'entrée du suivant.
+  const ga = g.factory.stationOf(a), gb = g.factory.stationOf(b);
+  const l0 = r.legs[0].pts, l1 = r.legs[1].pts;
+  assert(l0[0].x === ga.dock.x && l0[l0.length - 1].x === gb.dock.x && l1[0].x === gb.dock.x && l1[l1.length - 1].x === ga.dock.x, 'de quai à quai');
+  // Le tracé est gardé tel quel au rechargement.
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s.seed, s);
+  g2.factory.ensureRoutes();
+  assert(JSON.stringify(g2.factory.routes.get(l.id)!.legs.map((x) => x.pts)) === JSON.stringify(r.legs.map((x) => x.pts)), 'tracé rechargé');
+});
+test('tunnels : la route passe sous un tapis posé dessus, en descendant 2 à 3 cases avant', () => {
+  const g = new Game('TEST-R2');
+  g.money = 1e6; g.unlocks.add('camion');
+  const a = g.placeMachine('depot', 10, 40)!, b = g.placeMachine('depot', 40, 40)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  const l = g.linkStations(a, b)!;
+  const leg = g.factory.routes.get(l.id)!.legs[0];
+  const before = JSON.stringify(leg.pts);
+  assert(leg.tunnels.length === 0, 'pas de tunnel au départ');
+  // Un tapis vertical en x = 25 qui coupe l'aller, au milieu du trajet.
+  const lane = leg.steps.find((st) => st.x === 25 && st.d % 2 === 0)!;
+  assert(!!lane, 'l’aller passe en x = 25');
+  assert(g.placeBelts([...Array(9)].map((_, i) => ({ x: 25, y: lane.y - 4 + i, dir: 1, inDir: 1 })) as TraceCell[]), 'tapis posé sur la route');
+  g.tick(0.1);
+  const r = g.factory.routes.get(l.id)!.legs[0];
+  assert(JSON.stringify(r.pts) === before, 'le tracé ne bouge pas');
+  assert(r.tunnels.length === 1, `un tunnel : ${JSON.stringify(r.tunnels)}`);
+  const [t0, t1] = r.tunnels[0];
+  assert(lane.s - t0 >= 2 && lane.s - t0 <= 3 && t1 - (lane.s + 1) >= 2 && t1 - (lane.s + 1) <= 3, `entrées du tunnel : ${t0} ${t1} (tapis à ${lane.s})`);
+  // Un camion passe dessous : il arrive quand même.
+  g.factory.putInStorage(a, 'fer', 50);
+  run(g, 30);
+  assert((b.outBuf.fer ?? 0) > 0, 'livré par le tunnel');
+});
+test('croisements : carrefour à feux, passage à niveau ; jamais deux voies dans le croisement en même temps', () => {
+  const g = new Game('TEST-R3');
+  g.money = 1e7; g.unlocks.add('camion'); g.unlocks.add('train');
+  const a = g.placeMachine('depot', 10, 40)!, b = g.placeMachine('depot', 50, 40)!;
+  const c = g.placeMachine('depot', 28, 16, 1)!, d = g.placeMachine('depot', 28, 62, 1)!;
+  const e = g.placeMachine('gare', 16, 28, 0)!, f2 = g.placeMachine('gare', 40, 52, 0)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  const l1 = g.linkStations(a, b)!, l2 = g.linkStations(c, d)!;
+  g.addVehicle(l1.id); g.addVehicle(l2.id);
+  const cr = g.factory.crossings;
+  assert(cr.some((x) => x.kind === 'carrefour'), `un carrefour : ${cr.map((x) => x.kind)}`);
+  const l3 = g.linkStations(e, f2)!;
+  assert(g.factory.crossings.some((x) => x.kind === 'niveau'), `un passage à niveau : ${g.factory.crossings.map((x) => x.kind)}`);
+  g.factory.putInStorage(a, 'fer', 300); g.factory.putInStorage(c, 'cuivre', 300); g.factory.putInStorage(e, 'sable', 300);
+  const hold = (g.factory as unknown as { crossHold: Map<unknown, Map<unknown, { line: number; leg: number }>> }).crossHold;
+  let waited = 0;
+  for (let i = 0; i < 30 * 120; i++) {
+    g.tick(1 / 30);
+    for (const h2 of hold.values()) {
+      const lanes = new Set([...h2.values()].map((m) => `${m.line}:${m.leg}`));
+      assert(lanes.size <= 1, 'deux voies dans le même croisement');
+    }
+    for (const x of g.factory.crossings) for (const m of x.members) if (g.factory.crossLight(x, m) === 'red') waited++;
+  }
+  assert(waited > 0, 'aucun feu rouge');
+  assert((b.outBuf.fer ?? 0) > 0 && (d.outBuf.cuivre ?? 0) > 0 && (f2.outBuf.sable ?? 0) > 0, `tout le monde passe : ${b.outBuf.fer} ${d.outBuf.cuivre} ${f2.outBuf.sable}`);
+  assert(l3.vehicles.length === 1, 'train');
+});
+test('une ancienne partie : ses dépôts de 2 × 2 deviennent des 4 × 2 avec quai, les lignes restent', () => {
+  const g = new Game('TEST-R4');
+  g.money = 1e6; g.unlocks.add('camion');
+  const a = g.placeMachine('depot', 10, 40)!, b = g.placeMachine('depot', 30, 40)!;
+  g.linkStations(a, b);
+  const s = JSON.parse(JSON.stringify(g.serialize()));
+  delete s.factory.stations2;
+  for (const l of s.factory.lines) delete l.track;
+  const g2 = new Game(s.seed, s);
+  const a2 = g2.factory.machines.get(a.id)!;
+  assert(a2 && a2.w * a2.h === 8 && g2.factory.lines.size === 1, 'reposé en 4 × 2, ligne gardée');
 });
 test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () => {
   const g = new Game('TEST-V2');

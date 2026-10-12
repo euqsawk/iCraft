@@ -25,6 +25,7 @@ import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS, UNLOCK_ICON } from './nodeIcons.ts';
 import { buildingSvgUrl } from '../render/buildingIcons.ts';
+import { isStationType, rotDims, type Rot } from '../sim/stations.ts';
 import { swipeToClose } from './swipe.ts';
 
 type Tool = 'none' | 'tapis' | 'machine' | 'gomme' | 'zone' | 'module' | 'move' | 'cable' | 'tuyau' | 'transport';
@@ -180,6 +181,10 @@ export class Hud implements GestureHandlers {
     this.build();
     this.tips = new Tips(this.root, game);
     game.on((e) => this.onEvent(e));
+    // Au clavier : R tourne la gare (ou le dépôt) qu'on pose ou qu'on déplace.
+    window.addEventListener('keydown', (e) => {
+      if ((e.key === 'r' || e.key === 'R') && !(e.target instanceof HTMLInputElement) && this.r.preview?.kind === 'place' && isStationType(this.r.preview.type)) this.rotatePlacement();
+    });
     this.refreshAll();
   }
 
@@ -504,6 +509,10 @@ export class Hud implements GestureHandlers {
   // ---------- Glisser une machine depuis la palette ----------
 
   private dragEnded = false;
+  /** Sens choisi pour poser (ou déplacer) une gare ou un dépôt : quarts de tour. */
+  private placeRot: Rot = 0;
+  /** Dernière position du doigt pendant une pose (pour redessiner après un quart de tour). */
+  private lastPlaceAt: { x: number; y: number } | null = null;
 
   /** Glisser une carte vers le haut : la machine suit le doigt, la lâcher sur la carte la pose. */
   private cardDown(e: PointerEvent, type: string, card: HTMLElement): void {
@@ -512,6 +521,7 @@ export class Hud implements GestureHandlers {
     // Pendant le glisser, la palette et la barre d'outils s'effacent : à leur place, une petite corbeille rouge
     // (y lâcher la machine annule).
     let trash: HTMLElement | null = null;
+    let rot: HTMLElement | null = null;
     const overTrash = (ev: PointerEvent) => {
       if (!trash) return false;
       const r = trash.getBoundingClientRect();
@@ -529,6 +539,12 @@ export class Hud implements GestureHandlers {
           this.root.classList.add('dragging-machine');
           trash = h('div', 'drop-trash', `${ICONS.trash}<span>Lâche ici pour annuler</span>`);
           this.root.append(trash);
+          // Gare ou dépôt : un bouton pour tourner (avec un autre doigt pendant qu'on glisse).
+          if (isStationType(type)) {
+            rot = h('button', 'drop-rotate', `${ICONS.rotate}<span>Tourner</span>`);
+            rot.addEventListener('pointerdown', (pe) => { pe.preventDefault(); pe.stopPropagation(); this.rotatePlacement(); }, true);
+            this.root.append(rot);
+          }
           this.closePopover();
         } else return;
       }
@@ -557,12 +573,13 @@ export class Hud implements GestureHandlers {
       this.root.classList.remove('dragging-machine');
       const cancel = overTrash(ev);
       trash?.remove();
+      rot?.remove();
       this.dragEnded = true;
       setTimeout(() => { this.dragEnded = false; }, 350);
       const pv = this.r.preview;
       if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && !cancel) {
         if (this.placingPlan) this.game.placePlan(this.placingPlan.save, this.placingPlan.size, pv.x, pv.y);
-        else this.game.placeMachine(type, pv.x, pv.y);
+        else this.game.placeMachine(type, pv.x, pv.y, (pv.rot ?? 0) as Rot);
       }
       this.placingPlan = null;
       this.r.preview = null;
@@ -641,8 +658,17 @@ export class Hud implements GestureHandlers {
     this.r.movingId = m.id;
     this.root.querySelector('.move-banner')?.remove();
     const def = machineDef(m.type);
+    this.placeRot = (m.rot ?? 0) as Rot;
+    this.lastPlaceAt = null;
     const banner = h('div', 'move-banner');
-    banner.innerHTML = `<span class="mb-ico">${ICONS.move}</span><div><b>Déplacer : ${esc(def.name)}</b><small>Pose le doigt sur la carte et glisse-la à sa nouvelle place</small></div>`;
+    const station = isStationType(m.type);
+    banner.innerHTML = `<span class="mb-ico">${ICONS.move}</span><div><b>Déplacer : ${esc(def.name)}</b><small>${station ? this.rotHint() : 'Pose le doigt sur la carte et glisse-la à sa nouvelle place'}</small></div>`;
+    if (station) {
+      const turn = h('button', 'btn', `${ICONS.rotate}`);
+      turn.setAttribute('aria-label', 'Tourner');
+      turn.onclick = () => this.rotatePlacement();
+      banner.append(turn);
+    }
     const cancel = h('button', 'btn', 'Annuler');
     cancel.onclick = () => this.setTool('none');
     banner.append(cancel);
@@ -725,18 +751,33 @@ export class Hud implements GestureHandlers {
   /** Position de pose d'une machine : un peu au-dessus du doigt, pour la voir. */
   private placeAt(sx: number, sy: number, type: string): { x: number; y: number } {
     const def = machineDef(type);
+    const size = rotDims(def.w, def.h, isStationType(type) ? this.placeRot : 0);
     const w = this.worldAt(sx, sy - 64);
-    return { x: Math.round(w.x - def.w / 2), y: Math.round(w.y - def.h / 2) };
+    return { x: Math.round(w.x - size.w / 2), y: Math.round(w.y - size.h / 2) };
+  }
+
+  /** Un quart de tour pour la gare (ou le dépôt) qu'on pose ou qu'on déplace. */
+  private rotatePlacement(): void {
+    this.placeRot = ((this.placeRot + 1) % 4) as Rot;
+    if (this.lastPlaceAt) this.updatePlacement(this.lastPlaceAt.x, this.lastPlaceAt.y);
+    this.root.querySelector('.move-banner small')?.replaceChildren(document.createTextNode(this.rotHint()));
+  }
+
+  private rotHint(): string {
+    return `Quai ${['en bas', 'à gauche', 'en haut', 'à droite'][this.placeRot]} · glisse-la à sa place, ou tourne-la`;
   }
 
   private updatePlacement(sx: number, sy: number): void {
     const type = this.tool === 'move' ? this.moving!.type : this.machineType!;
+    this.lastPlaceAt = { x: sx, y: sy };
     const p = this.placeAt(sx, sy, type);
     const def = machineDef(type);
-    const check = this.game.view.checkMachine(type, p.x, p.y, this.copying ? undefined : this.moving ?? undefined, true);
-    this.r.preview = { kind: 'place', type, x: p.x, y: p.y, ok: check.ok, ore: check.ore };
+    const rot = isStationType(type) ? this.placeRot : 0;
+    const size = rotDims(def.w, def.h, rot);
+    const check = this.game.view.checkMachine(type, p.x, p.y, this.copying ? undefined : this.moving ?? undefined, true, rot);
+    this.r.preview = { kind: 'place', type, x: p.x, y: p.y, ok: check.ok, ore: check.ore, rot };
     // Guides d'alignement avec les machines voisines.
-    const cx = (p.x + def.w / 2) * CELL, cy = (p.y + def.h / 2) * CELL;
+    const cx = (p.x + size.w / 2) * CELL, cy = (p.y + size.h / 2) * CELL;
     const guides: { x0: number; y0: number; x1: number; y1: number }[] = [];
     for (const m of this.game.view.machines.values()) {
       if (m === this.moving) continue;
@@ -1025,11 +1066,11 @@ export class Hud implements GestureHandlers {
         const t = this.tracer;
         this.game.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir, jump: t.splitJump } : undefined);
       } else if (this.tool === 'machine' && pv?.kind === 'place' && this.machineType) {
-        this.game.placeMachine(this.machineType, pv.x, pv.y);
+        this.game.placeMachine(this.machineType, pv.x, pv.y, (pv.rot ?? 0) as Rot);
       } else if (this.tool === 'move' && pv?.kind === 'place' && this.moving && this.copying) {
         if (this.game.copyAtelier(this.copying, pv.x, pv.y)) this.setTool('none');
       } else if (this.tool === 'move' && pv?.kind === 'place' && this.moving) {
-        this.game.moveMachine(this.moving, pv.x, pv.y);
+        this.game.moveMachine(this.moving, pv.x, pv.y, (pv.rot ?? 0) as Rot);
         this.setTool('none');
       }
     }
@@ -2365,7 +2406,10 @@ export class Hud implements GestureHandlers {
     };
     const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
     mv.onclick = () => { close(); this.startMove(st); };
-    acts.append(link, mv, this.deleteButton(st, 'Supprimer', 'Confirmer', close));
+    const turn = h('button', 'btn', `${ICONS.rotate}Tourner`);
+    turn.onclick = () => { if (g.rotateStation(st)) this.refreshSheet(); };
+    acts.classList.add('two');
+    acts.append(link, turn, mv, this.deleteButton(st, 'Supprimer', 'Confirmer', close));
     sheet.append(acts);
   }
 

@@ -1,5 +1,7 @@
 // L'usine : tapis et machines sur la grille, et leur simulation.
 import { RULES } from '../config.ts';
+import { isStationType, rotDims, stationGeo, type Rot } from './stations.ts';
+import { computeCrossings, computeLine, computeTunnels, laneCells, makeLeg, routeSig, type CrossMember, type Crossing, type LaneMap, type LineRoute, type RouteWorld } from './routes.ts';
 import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
 import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
@@ -104,6 +106,8 @@ export interface Machine {
   charge?: number;
   /** Eau reçue par les tuyaux (0 à 1 : la part de ce qu'elle demande). Non sauvegardé. */
   water?: number;
+  /** Gare ou dépôt : quarts de tour (le quai et le sens de la voie tournent avec). */
+  rot?: Rot;
   /** Monte-charge d'un atelier : minuteur des échanges avec les coffres collés. */
   liftT?: number;
   /** Recette prévue (fenêtre de la machine) : sert seulement à calculer les débits attendus ; la machine reste en auto. */
@@ -168,12 +172,14 @@ export interface Vehicle {
   loading?: boolean;
 }
 
-/** Une ligne : 2 à 6 arrêts parcourus en boucle, et ses véhicules. La route ou les rails sont posés en L entre deux arrêts. */
+/** Une ligne : 2 à 6 arrêts parcourus en boucle, et ses véhicules. La route ou les rails font une boucle (voir routes.ts). */
 export interface Line {
   id: number;
   kind: VehicleKind;
   stops: LineStop[];
   vehicles: Vehicle[];
+  /** Le tracé posé (gardé tel quel tant que les arrêts ne bougent pas) : coins de chaque trajet, à plat. */
+  track?: { sig: string; gap: number; legs: number[][] };
 }
 
 /** Un réseau électrique : les câbles reliés entre eux et les machines qui les touchent. */
@@ -234,6 +240,8 @@ export class Factory {
   /** Câbles électriques (une couche à part : ils passent sous les tapis et les machines). */
   readonly cables = new Set<number>();
   private cellMachine = new Map<number, Machine>();
+  /** Cases des quais des gares et dépôts : réservées aux véhicules (ni tapis ni machine). */
+  readonly quays = new Map<number, Machine>();
   private nets: PowerNet[] = [];
   private netOfMachine = new Map<Machine, PowerNet>();
   private netOfCable = new Map<number, PowerNet>();
@@ -350,7 +358,7 @@ export class Factory {
 
   isFree(x: number, y: number): boolean {
     const k = key(x, y);
-    return this.inBounds(x, y) && !this.belts.has(k) && !this.cellMachine.has(k);
+    return this.inBounds(x, y) && !this.belts.has(k) && !this.cellMachine.has(k) && !this.quays.has(k);
   }
 
   inside(m: Machine, x: number, y: number): boolean {
@@ -521,8 +529,10 @@ export class Factory {
 
   // ---------- Construction ----------
 
-  checkMachine(type: string, x: number, y: number, ignore?: Machine, overBelts = false): PlaceCheck {
+  checkMachine(type: string, x: number, y: number, ignore?: Machine, overBelts = false, rot: Rot = 0): PlaceCheck {
     const def = machineDef(type);
+    const station = isStationType(type);
+    const size = rotDims(def.w, def.h, station ? rot : 0);
     // Un compteur se pose sur un tapis, sans rien remplacer.
     if (def.kind === 'meter') {
       const b = this.beltAt(x, y);
@@ -532,13 +542,15 @@ export class Factory {
     }
     const oreCount = new Map<string, { n: number; rate: number }>();
     let belts = 0;
-    for (let j = 0; j < def.h; j++) {
-      for (let i = 0; i < def.w; i++) {
+    for (let j = 0; j < size.h; j++) {
+      for (let i = 0; i < size.w; i++) {
         const cx = x + i, cy = y + j;
         if (!this.inBounds(cx, cy)) return { ok: false, reason: 'Hors de l’atelier' };
         const k = key(cx, cy);
         const m = this.cellMachine.get(k);
         if (m && m !== ignore) return { ok: false, reason: 'Place occupée' };
+        const q = this.quays.get(k);
+        if (q && q !== ignore) return { ok: false, reason: 'Le quai d’une gare doit rester libre' };
         if (this.belts.has(k)) {
           if (!overBelts) return { ok: false, reason: 'Place occupée' };
           belts++;
@@ -558,6 +570,15 @@ export class Factory {
         }
       }
     }
+    // Gare ou dépôt : son quai (le long du grand côté) doit être libre.
+    if (station) {
+      for (const c of stationGeo(x, y, rot).quay) {
+        if (!this.inBounds(c.x, c.y)) return { ok: false, reason: 'Hors de l’atelier' };
+        const k = key(c.x, c.y);
+        const m = this.cellMachine.get(k), q = this.quays.get(k);
+        if ((m && m !== ignore) || (q && q !== ignore) || this.belts.has(k)) return { ok: false, reason: 'Le quai (la voie le long du bâtiment) doit être libre' };
+      }
+    }
     if (def.kind === 'pump') {
       if ((oreCount.get('eau')?.n ?? 0) < 2) return { ok: false, reason: 'À poser sur de l’eau' };
       return { ok: true, belts };
@@ -573,37 +594,55 @@ export class Factory {
     return { ok: true, belts };
   }
 
-  addMachine(type: string, x: number, y: number, built = false, id?: number): Machine {
+  addMachine(type: string, x: number, y: number, built = false, id?: number, rot: Rot = 0): Machine {
     const def = machineDef(type);
+    const station = isStationType(type);
+    const size = rotDims(def.w, def.h, station ? rot : 0);
     const check = def.kind === 'drill' ? this.checkMachine(type, x, y, undefined, true) : { ok: true } as PlaceCheck;
     if (id === undefined) id = this.nextId++;
     else this.nextId = Math.max(this.nextId, id + 1);
     const m: Machine = {
-      id, type, x, y, w: def.w, h: def.h, built,
+      id, type, x, y, w: size.w, h: size.h, built,
       inBuf: {}, outBuf: {}, fuel: 0, burn: 0, craft: null, drillT: 0,
       status: 'idle', rrOut: 0, rrRecipe: 0, made: 0,
       ore: check.ore, rate: check.rate,
     };
+    if (station) m.rot = rot;
     this.machines.set(m.id, m);
     this.indexMachine(m);
     this.dirty = true;
+    this.routesDirty = true;
     return m;
   }
 
   private indexMachine(m: Machine): void {
     for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) this.cellMachine.set(key(m.x + i, m.y + j), m);
+    if (isStationType(m.type)) for (const c of stationGeo(m.x, m.y, m.rot ?? 0).quay) this.quays.set(key(c.x, c.y), m);
   }
 
   private unindexMachine(m: Machine): void {
     for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) this.cellMachine.delete(key(m.x + i, m.y + j));
+    if (isStationType(m.type)) for (const c of stationGeo(m.x, m.y, m.rot ?? 0).quay) if (this.quays.get(key(c.x, c.y)) === m) this.quays.delete(key(c.x, c.y));
   }
 
-  moveMachine(m: Machine, x: number, y: number): boolean {
-    const check = this.checkMachine(m.type, x, y, m, true);
+  /** Le quai d'une gare ou d'un dépôt posé. */
+  stationOf(m: Machine) {
+    return stationGeo(m.x, m.y, m.rot ?? 0);
+  }
+
+  moveMachine(m: Machine, x: number, y: number, rot: Rot = m.rot ?? 0): boolean {
+    const check = this.checkMachine(m.type, x, y, m, true, rot);
     if (check.ok && check.belts) return false;
     if (!check.ok) return false;
     this.unindexMachine(m);
     m.x = x; m.y = y;
+    if (isStationType(m.type)) {
+      const def = machineDef(m.type), size = rotDims(def.w, def.h, rot);
+      m.rot = rot; m.w = size.w; m.h = size.h;
+      // Les tapis branchés sur un côté qui a tourné ne sont plus les mêmes : on oublie les liaisons.
+      delete m.links;
+      this.routesDirty = true;
+    }
     if (check.ore) { m.ore = check.ore; m.rate = check.rate; }
     this.indexMachine(m);
     this.dirty = true;
@@ -612,8 +651,9 @@ export class Factory {
 
   removeMachine(m: Machine): void {
     this.unindexMachine(m);
+    if (isStationType(m.type)) this.routesDirty = true;
     this.machines.delete(m.id);
-    for (const l of [...this.lines.values()]) if (l.stops.some((st) => st.id === m.id)) this.lines.delete(l.id);
+    for (const l of [...this.lines.values()]) if (l.stops.some((st) => st.id === m.id)) { this.lines.delete(l.id); this.routesDirty = true; }
     this.dirty = true;
   }
 
@@ -666,33 +706,165 @@ export class Factory {
 
   // ---------- Camions et trains ----------
 
-  /** Le trajet entre deux arrêts : en L (d'abord à l'horizontale), d'un centre à l'autre, en cases. */
-  legPath(a: Machine, b: Machine): { x: number; y: number }[] {
-    // Le même L dans les deux sens (on part toujours de l'arrêt au plus petit numéro) : à l'aller comme au retour,
-    // le véhicule reste sur la route dessinée.
-    if (a.id > b.id) return this.legPath(b, a).reverse();
-    const ax = a.x + a.w / 2, ay = a.y + a.h / 2, bx = b.x + b.w / 2, by = b.y + b.h / 2;
-    return [{ x: ax, y: ay }, { x: bx, y: ay }, { x: bx, y: by }];
+  /** Les trajets sont à recalculer (une gare posée, déplacée, tournée, ou une ligne changée). */
+  routesDirty = true;
+  /** Les tunnels et croisements sont à recalculer (on a construit ou retiré quelque chose). */
+  private tunnelsDirty = true;
+  /** Le tracé de chaque ligne (par numéro), et les croisements entre voies. */
+  readonly routes = new Map<number, LineRoute>();
+  crossings: Crossing[] = [];
+  /** Change à chaque nouveau tracé (pour le rendu). */
+  routeVersion = 0;
+  private crossByLeg = new Map<string, { c: Crossing; m: CrossMember }[]>();
+  /** Qui est dans chaque croisement (et par quelle voie). */
+  private crossHold = new Map<Crossing, Map<Vehicle, CrossMember>>();
+
+  private routeWorld(): RouteWorld {
+    return {
+      blocked: (x, y) => {
+        if (!this.inBounds(x, y)) return true;
+        const k = key(x, y), m = this.cellMachine.get(k);
+        return (!!m && isStationType(m.type)) || this.quays.has(k);
+      },
+      occupied: (x, y) => {
+        const k = key(x, y);
+        if (this.belts.has(k)) return true;
+        const m = this.cellMachine.get(k);
+        return !!m && !isStationType(m.type);
+      },
+    };
   }
 
-  legLength(a: Machine, b: Machine): number {
-    return Math.abs(b.x + b.w / 2 - (a.x + a.w / 2)) + Math.abs(b.y + b.h / 2 - (a.y + a.h / 2));
-  }
-
-  /** Longueur totale d'une ligne (tous ses trajets, en cases). */
-  lineLength(l: Line): number {
-    let n = 0;
-    for (let i = 0; i < l.stops.length; i++) {
-      const a = this.machines.get(l.stops[i].id), b = this.machines.get(l.stops[(i + 1) % l.stops.length].id);
-      if (a && b && (l.stops.length > 2 || i === 0)) n += this.legLength(a, b);
+  private stopGeos(ids: number[]): { x: number; y: number; rot: Rot }[] | null {
+    const out: { x: number; y: number; rot: Rot }[] = [];
+    for (const id of ids) {
+      const m = this.machines.get(id);
+      if (!m) return null;
+      out.push({ x: m.x, y: m.y, rot: (m.rot ?? 0) as Rot });
     }
-    return n;
+    return out;
+  }
+
+  /** Les voies des lignes déjà tracées (sauf une). */
+  private laneMap(except?: number): LaneMap {
+    const map: LaneMap = new Map();
+    for (const [id, r] of this.routes) if (id !== except) for (const leg of r.legs) laneCells(leg, map);
+    return map;
+  }
+
+  /** Recalcule ce qui doit l'être : les trajets (gares changées), puis les tunnels et les croisements. */
+  ensureRoutes(): void {
+    if (this.routesDirty) {
+      this.routesDirty = false;
+      this.routes.clear();
+      const world = this.routeWorld();
+      const others: LaneMap = new Map();
+      for (const l of [...this.lines.values()].sort((a, b) => a.id - b.id)) {
+        const geo = this.stopGeos(l.stops.map((st) => st.id));
+        if (!geo || geo.length < 2) continue;
+        const sig = routeSig(geo);
+        const saved = l.track;
+        const r: LineRoute = saved && saved.sig === sig && saved.legs.length === geo.length
+          ? { sig, gap: saved.gap, legs: saved.legs.map((f) => makeLeg(Array.from({ length: f.length / 2 }, (_, i) => ({ x: f[i * 2], y: f[i * 2 + 1] })))) }
+          : computeLine(geo, world, others);
+        l.track = { sig, gap: r.gap, legs: r.legs.map((leg) => leg.pts.flatMap((p) => [p.x, p.y])) };
+        for (const leg of r.legs) laneCells(leg, others);
+        this.routes.set(l.id, r);
+        // Les véhicules restent sur leur trajet (raccourci ou allongé).
+        for (const v of l.vehicles) {
+          v.at = Math.min(v.at, l.stops.length - 1);
+          v.pos = Math.min(v.pos, r.legs[v.at]?.len ?? 0);
+        }
+      }
+      this.tunnelsDirty = true;
+    }
+    if (this.tunnelsDirty) {
+      this.tunnelsDirty = false;
+      const world = this.routeWorld();
+      for (const r of this.routes.values()) for (const leg of r.legs) leg.tunnels = computeTunnels(leg, world);
+      this.crossings = computeCrossings([...this.lines.values()].filter((l) => this.routes.has(l.id)).map((l) => ({ id: l.id, kind: l.kind, route: this.routes.get(l.id)! })));
+      this.crossByLeg.clear();
+      for (const c of this.crossings) for (const m of c.members) {
+        const k = `${m.line}:${m.leg}`;
+        const arr = this.crossByLeg.get(k) ?? [];
+        arr.push({ c, m });
+        this.crossByLeg.set(k, arr);
+      }
+      // Qui se trouve déjà dans un croisement le garde (sinon deux véhicules pourraient s'y retrouver).
+      this.crossHold.clear();
+      for (const l of this.lines.values()) for (const v of l.vehicles) {
+        if (!v.moving) continue;
+        const vl = l.kind === 'train' ? RULES.trainLength : RULES.truckLength;
+        for (const { c, m } of this.crossByLeg.get(`${l.id}:${v.at}`) ?? []) {
+          if (v.pos >= m.sIn - 0.4 && v.pos - vl <= m.sOut) this.holdOf(c).set(v, m);
+        }
+      }
+      this.routeVersion++;
+    }
+  }
+
+  private holdOf(c: Crossing): Map<Vehicle, CrossMember> {
+    let h = this.crossHold.get(c);
+    if (!h) { h = new Map(); this.crossHold.set(c, h); }
+    return h;
+  }
+
+  /** Longueur du trajet i d'une ligne (en cases). */
+  legLen(l: Line, i: number): number {
+    this.ensureRoutes();
+    return this.routes.get(l.id)?.legs[i % Math.max(1, l.stops.length)]?.len ?? 0;
+  }
+
+  /** Longueur totale d'une ligne (toute sa boucle, en cases). */
+  lineLength(l: Line): number {
+    this.ensureRoutes();
+    const r = this.routes.get(l.id);
+    return r ? r.legs.reduce((a, leg) => a + leg.len, 0) : 0;
+  }
+
+  /** Longueur de la boucle qu'aurait une ligne par ces arrêts (pour le prix, avant de la poser). */
+  loopLength(stopIds: number[], exceptLine?: number): number {
+    this.ensureRoutes();
+    const geo = this.stopGeos(stopIds);
+    if (!geo || geo.length < 2) return 0;
+    return computeLine(geo, this.routeWorld(), this.laneMap(exceptLine)).legs.reduce((a, leg) => a + leg.len, 0);
+  }
+
+  /**
+   * Feu d'une voie à un croisement. Carrefour : les deux sens passent chacun leur tour (vert, orange, rouge).
+   * Passage à niveau : rouge pour la route quand un train approche ou passe. Croisement de rails : un train à la fois.
+   */
+  crossLight(c: Crossing, m: CrossMember): 'green' | 'amber' | 'red' {
+    const hold = this.crossHold.get(c);
+    const othersIn = !!hold && [...hold.values()].some((x) => x !== m);
+    if (c.kind === 'carrefour') {
+      const T = RULES.lightCycle, t = ((this.clock + c.id * 1.7) % (T * 2) + T * 2) % (T * 2);
+      const greenAxis = t < T ? 'h' : 'v', u = t % T;
+      if (m.axis !== greenAxis) return 'red';
+      return u > T - 1.2 ? 'amber' : 'green';
+    }
+    if (c.kind === 'niveau' && m.kind === 'camion') return othersIn || this.trainNear(c) ? 'red' : 'green';
+    return othersIn ? 'red' : 'green';
+  }
+
+  /** Un train passe le passage à niveau, ou arrive (moins de 6 cases). */
+  private trainNear(c: Crossing): boolean {
+    const hold = this.crossHold.get(c);
+    if (hold && [...hold.values()].some((m) => m.kind === 'train')) return true;
+    for (const m of c.members) {
+      if (m.kind !== 'train') continue;
+      const l = this.lines.get(m.line);
+      if (!l) continue;
+      for (const v of l.vehicles) if (v.moving && v.at === m.leg && m.sIn - v.pos <= 6 && m.sIn - v.pos >= -0.5) return true;
+    }
+    return false;
   }
 
   addLine(kind: VehicleKind, from: Machine, to: Machine, id?: number): Line {
     const l: Line = { id: id ?? this.nextLine++, kind, stops: [{ id: from.id, load: true }, { id: to.id, load: false }], vehicles: [] };
     this.nextLine = Math.max(this.nextLine, l.id + 1);
     this.lines.set(l.id, l);
+    this.routesDirty = true;
     return l;
   }
 
@@ -702,7 +874,7 @@ export class Factory {
 
   removeLine(id: number): Line | null {
     const l = this.lines.get(id);
-    if (l) this.lines.delete(id);
+    if (l) { this.lines.delete(id); this.routesDirty = true; }
     return l ?? null;
   }
 
@@ -722,6 +894,7 @@ export class Factory {
    * à un arrêt de déchargement, ils y vident leur cargaison ; puis ils roulent jusqu'à l'arrêt suivant (en boucle).
    */
   private tickLines(dt: number): void {
+    this.ensureRoutes();
     // Un seul véhicule à quai par dépôt (ou gare) : les autres attendent leur tour sur la route, devant l'entrée.
     const docked = new Set<number>();
     for (const l of this.lines.values()) {
@@ -733,9 +906,7 @@ export class Factory {
         if (!docked.has(id)) { docked.add(id); continue; }
         // Déjà quelqu'un à quai : il recule dans la file, sur la route qui arrive.
         const prevAt = (v.at - 1 + n) % n;
-        const prev = this.machines.get(l.stops[prevAt].id), here = this.machines.get(id);
-        if (!prev || !here) continue;
-        let pos = this.legLength(prev, here) - gap;
+        let pos = this.legLen(l, prevAt) - gap;
         for (const o of l.vehicles) if (o !== v && o.moving && o.at === prevAt) pos = Math.min(pos, o.pos - gap);
         v.at = prevAt; v.moving = true; v.t = 0;
         v.pos = Math.max(0, pos);
@@ -752,12 +923,27 @@ export class Factory {
         const next = this.machines.get(l.stops[(v.at + 1) % n].id);
         if (!here || !next) continue;
         if (v.moving) {
-          const len = this.legLength(here, next);
+          const legI = v.at % n;
+          const len = this.legLen(l, legI);
           // Il s'arrête derrière le véhicule qui le précède, et devant l'entrée si le quai est pris.
           let limit = docked.has(next.id) ? len - gap : len;
           for (const o of l.vehicles) {
             if (o === v || !o.moving || o.at !== v.at) continue;
             if (o.pos > v.pos || (o.pos === v.pos && l.vehicles.indexOf(o) < l.vehicles.indexOf(v))) limit = Math.min(limit, o.pos - gap);
+          }
+          // Croisements : il attend au feu (ou que la voie soit libre), puis le tient jusqu'à l'avoir passé.
+          const vl = l.kind === 'train' ? RULES.trainLength : RULES.truckLength;
+          for (const { c, m } of this.crossByLeg.get(`${l.id}:${legI}`) ?? []) {
+            const hold = this.holdOf(c);
+            if (hold.has(v)) { if (v.pos - vl > m.sOut) hold.delete(v); continue; }
+            const stopAt = m.sIn - 0.4;
+            if (v.pos > stopAt + 0.05 || stopAt - v.pos > 2.5) continue;
+            // Pas de place après le croisement (le véhicule devant attend) : on ne bloque pas le passage.
+            const room = !l.vehicles.some((o) => o !== v && o.moving && o.at === v.at && o.pos > v.pos && o.pos - gap < m.sOut + 0.3)
+              && !(docked.has(next.id) && len - gap < m.sOut + 0.3);
+            if (room && this.crossLight(c, m) === 'green') {
+              if (v.pos + speed * dt >= stopAt) hold.set(v, m);
+            } else limit = Math.min(limit, stopAt);
           }
           v.pos = Math.max(v.pos, Math.min(v.pos + speed * dt, limit));
           if (v.pos >= len - 1e-6 && !docked.has(next.id)) {
@@ -1129,6 +1315,7 @@ export class Factory {
   private refresh(): void {
     if (!this.dirty) return;
     this.dirty = false;
+    this.tunnelsDirty = true;
     this.nextOf.clear();
     this.outputs.clear();
     for (const m of this.machines.values()) this.outputs.set(m, []);
@@ -1912,14 +2099,16 @@ export class Factory {
       drills1: 1,
       drills2: 1,
       levels: 1,
+      stations2: 1,
       cables: [...this.cables],
       pipes: [...this.pipes],
-      lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) })),
+      lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })), ...(l.track ? { track: { sig: l.track.sig, gap: l.track.gap, legs: l.track.legs.map((f) => [...f]) } } : {}) })),
       belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), b.split ?? -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, b.splitJump ?? 0, b.meter ? 1 : 0, b.split2 ?? -1, b.filter ?? '', 0, b.lvl ?? 1, b.filter2 ?? '']),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
         ...(m.lvl && m.lvl > 1 ? { lvl: m.lvl } : {}),
+        ...(m.rot ? { rot: m.rot } : {}),
         ...(m.plan !== undefined ? { plan: m.plan } : {}), ...(m.ports?.length ? { ports: m.ports.map((p) => ({ ...p })) } : {}),
         ...(m.seenIn ? { seenIn: { ...m.seenIn } } : {}), ...(m.seenOut ? { seenOut: { ...m.seenOut } } : {}),
         ...(m.charge ? { charge: Math.round(m.charge) } : {}),
@@ -1930,7 +2119,8 @@ export class Factory {
 
   load(s: FactorySave): void {
     this.legacyRefund = 0;
-    this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.cables.clear();
+    this.belts.clear(); this.machines.clear(); this.cellMachine.clear(); this.quays.clear(); this.cables.clear();
+    this.routesDirty = true;
     for (const k of s.cables ?? []) this.cables.add(k);
     this.pipes.clear();
     for (const k of s.pipes ?? []) this.pipes.add(k);
@@ -1958,6 +2148,7 @@ export class Factory {
     this.nextId = 1;
     const oldDrills: FactorySave['machines'] = [];
     const bigDrills: FactorySave['machines'] = [];
+    const oldStations: FactorySave['machines'] = [];
     for (const sm of s.machines) {
       // Chaque machine garde son numéro. (Avant, un numéro provisoire pouvait effacer
       // une machine déjà rechargée : elle disparaissait en laissant ses cases occupées.)
@@ -1968,8 +2159,11 @@ export class Factory {
       if (!MACHINES[sm.type] || this.machines.has(sm.id)) continue;
       // Foreuse 1 × 1 (parties d'entre-deux) : regroupée en foreuses 2 × 2 plus bas, une fois les autres numéros connus.
       if (s.drills1 && !s.drills2 && sm.type === 'foreuse') { oldDrills.push(sm); continue; }
+      // Ancienne gare (ou ancien dépôt) de 2 × 2 : reposé plus bas en 4 × 2 avec son quai, là où il y a la place.
+      if (!s.stations2 && isStationType(sm.type)) { oldStations.push(sm); continue; }
 
-      const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id);
+      const rot = (isStationType(sm.type) ? (sm.rot ?? 0) & 3 : 0) as Rot;
+      const m = this.addMachine(sm.type, sm.x, sm.y, sm.built, sm.id, rot);
       Object.assign(m, { inBuf: sm.inBuf, outBuf: sm.outBuf, fuel: Math.min(sm.fuel ?? 0, RULES.fuelStack), burn: sm.burn ?? 0, craft: sm.craft, drillT: sm.drillT, choice: sm.choice, made: sm.made ?? 0 });
       if (sm.carb) m.carb = Math.min(sm.carb, m.fuel);
       if (sm.links?.length) m.links = [...sm.links];
@@ -1984,12 +2178,28 @@ export class Factory {
       if (sm.seenOut) m.seenOut = { ...sm.seenOut };
       if (sm.inner) this.makeInner(m, sm.size ?? 20).load(sm.inner);
     }
+    // Les anciennes gares et anciens dépôts (2 × 2) deviennent des 4 × 2 avec quai : à leur place si elle est libre,
+    // sinon tout près (la position et le sens les plus proches). Faute de place, leur prix est rendu.
+    for (const sm of oldStations) {
+      let spot: { x: number; y: number; rot: Rot } | null = null;
+      search: for (let r = 0; r <= 8; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          for (const rot of [0, 2, 1, 3] as Rot[]) {
+            if (this.checkMachine(sm.type, sm.x + dx, sm.y + dy, undefined, false, rot).ok) { spot = { x: sm.x + dx, y: sm.y + dy, rot }; break search; }
+          }
+        }
+      }
+      if (!spot) { this.legacyRefund += MACHINES[sm.type]?.cost ?? 0; continue; }
+      const m = this.addMachine(sm.type, spot.x, spot.y, sm.built, sm.id, spot.rot);
+      Object.assign(m, { inBuf: sm.inBuf ?? {}, outBuf: sm.outBuf ?? {}, made: sm.made ?? 0 });
+    }
     this.nextId = Math.max(this.nextId, s.nextId);
     this.lines.clear();
     this.nextLine = 1;
     for (const sl of s.lines ?? []) {
       if (!sl.stops.every((st) => this.machines.has(st.id))) continue;
-      this.lines.set(sl.id, { id: sl.id, kind: sl.kind, stops: sl.stops.map((st) => ({ ...st })), vehicles: sl.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })) });
+      this.lines.set(sl.id, { id: sl.id, kind: sl.kind, stops: sl.stops.map((st) => ({ ...st })), vehicles: sl.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })), ...(sl.track && Array.isArray(sl.track.legs) ? { track: { sig: String(sl.track.sig), gap: Number(sl.track.gap) || 0, legs: sl.track.legs.map((f) => f.map(Number)) } } : {}) });
       this.nextLine = Math.max(this.nextLine, sl.id + 1);
     }
     // Les tapis souterrains n'existent plus : une ancienne partie récupère leur prix (4 pièces par case de trajet).
@@ -2077,8 +2287,11 @@ export interface FactorySave {
     inBuf: Record<string, number>; outBuf: Record<string, number>; fuel: number; carb?: number; burn?: number;
     craft: { ri: number; t: number } | null; drillT: number; choice?: string; made?: number; links?: number[];
     inner?: FactorySave; size?: number; ore?: string; rate?: number; charge?: number; lvl?: number;
-    plan?: number; ports?: MachinePort[]; seenIn?: Record<number, string>; seenOut?: Record<number, string>;
+    plan?: number; ports?: MachinePort[]; seenIn?: Record<number, string>; seenOut?: Record<number, string>; rot?: number;
   }[];
+  /** Gares et dépôts de 4 × 2 avec quai (sans ce drapeau : une ancienne partie, ils faisaient 2 × 2). */
+  stations2?: 1;
 }
 
 export { opposite };
+export type { Rot };

@@ -6,7 +6,7 @@ const asCanvas = (c: HTMLCanvasElement) => c as unknown as ICanvas;
 import { BIOME_COLORS, CELL, CHUNK, LEVEL_COLORS, PALETTE, RULES } from '../config.ts';
 import { item, ITEM_LIST } from '../data/items.ts';
 import { machineDef } from '../data/machines.ts';
-import { span, type Belt, type Line, type Machine } from '../sim/factory.ts';
+import { span, type Belt, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
 import { clock } from '../sim/freight.ts';
 import { DX, DY, unkey } from '../sim/geom.ts';
@@ -19,6 +19,8 @@ import { buildingTexture, itemSvgUrl, itemTexture } from './buildingIcons.ts';
 import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
 import { ITEM_SPRITE_SCALE, orbitItemTexture, SKIN_ANCHOR, SKIN_SCALE, SKIN_SPRITE_SCALE, skinTexture } from './skinTextures.ts';
 import { orbitPoint, skinBody, skinOf } from '../data/skins.ts';
+import { inTunnel, pointAt, type LegRoute } from '../sim/routes.ts';
+import { isStationType, rotDims, stationGeo, type Rot } from '../sim/stations.ts';
 import { SKIN_ART } from '../data/skinArt.ts';
 
 /** Contour d'un rectangle arrondi qui part du milieu du bord haut, dans le sens des aiguilles d'une montre. */
@@ -56,7 +58,7 @@ export type Preview =
   | { kind: 'trace'; tracer: BeltTracer }
   | { kind: 'cable'; tracer: CableTracer }
   | { kind: 'pipe'; tracer: CableTracer }
-  | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string }
+  | { kind: 'place'; type: string; x: number; y: number; ok: boolean; ore?: string; rot?: number }
   | { kind: 'erase'; x: number; y: number }
   | { kind: 'eraseRect'; x0: number; y0: number; x1: number; y1: number; module?: boolean }
   /** On glisse une entrée ou une sortie vers un côté de la machine : ses emplacements, et celui visé. */
@@ -73,6 +75,8 @@ interface ChunkView {
 }
 
 interface MachineView {
+  /** Gare ou dépôt : son sens au dernier dessin. */
+  rot?: number;
   /** Revente : remplissage dessiné. */
   fill?: number;
   /** Grand coffre : ce qu'il garde, en petit (et la signature du dernier dessin). */
@@ -130,6 +134,8 @@ export class GameRenderer {
   private meterT = 0;
   /** Routes et rails (au sol, sous les tapis), et les véhicules qui y roulent. */
   private routeG = new Graphics();
+  /** Feux et barrières des croisements (redessinés à chaque image). */
+  private lightG = new Graphics();
   private routeSig = '';
   private vehicleViews = new Map<string, { root: Container; parts: Container[]; cargo: Sprite; kind: string }>();
   /** Mode électricité (outil Câble) : la surface pâlit, on voit les câbles sous les blocs et les machines alimentées. */
@@ -233,7 +239,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -733,58 +739,158 @@ export class GameRenderer {
     }
   }
 
-  /** Un point (et l'angle) à la fraction k d'un trajet. */
-  private alongPath(pts: { x: number; y: number }[], k: number): { x: number; y: number; a: number } {
-    const seg: number[] = [];
-    let total = 0;
-    for (let i = 1; i < pts.length; i++) { const d = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y); seg.push(d); total += d; }
-    let dist = Math.max(0, Math.min(1, k)) * total, i = 0;
-    while (i < seg.length - 1 && dist > seg[i]) { dist -= seg[i]; i++; }
-    const u = seg[i] ? Math.min(1, dist / seg[i]) : 0;
-    const p0 = pts[i], p1 = pts[i + 1] ?? pts[i];
-    return { x: p0.x + (p1.x - p0.x) * u, y: p0.y + (p1.y - p0.y) * u, a: Math.atan2(p1.y - p0.y, p1.x - p0.x) };
+  /** Les points (en pixels) d'un morceau de trajet, entre les distances s0 et s1. */
+  private legSlice(leg: LegRoute, s0: number, s1: number): { x: number; y: number }[] {
+    const a = Math.max(0, s0), b = Math.min(leg.len, s1);
+    if (b - a < 0.01) return [];
+    const pts: { x: number; y: number }[] = [];
+    const push = (s: number) => { const p = pointAt(leg, s); pts.push({ x: p.x * CELL, y: p.y * CELL }); };
+    push(a);
+    // Les coins du trajet entre les deux.
+    for (let i = 1; i < leg.steps.length; i++) if (leg.steps[i].d !== leg.steps[i - 1].d && i > a && i < b) push(i);
+    push(Math.min(b, leg.len - 1e-6));
+    if (b >= leg.len - 1e-6) { const last = leg.pts[leg.pts.length - 1]; pts[pts.length - 1] = { x: last.x * CELL, y: last.y * CELL }; }
+    return pts;
+  }
+
+  /** Les morceaux à la surface d'un trajet (entre les tunnels). */
+  private surfaceParts(leg: LegRoute): [number, number][] {
+    const out: [number, number][] = [];
+    let s = 0;
+    for (const [a, b] of leg.tunnels) { if (a > s) out.push([s, a]); s = b; }
+    if (s < leg.len) out.push([s, leg.len]);
+    return out;
   }
 
   private drawRoutes(): void {
     const g = this.routeG, f = this.game.view;
     g.clear();
-    const legs: { kind: string; pts: { x: number; y: number }[] }[] = [];
-    for (const l of f.lines.values()) {
-      for (let i = 0; i < l.stops.length; i++) {
-        if (l.stops.length === 2 && i === 1) break;
-        const pts = this.legPx(l, i);
-        if (pts) legs.push({ kind: l.kind, pts });
-      }
-    }
-    for (const { kind, pts } of legs) {
-      if (kind === 'camion') {
-        // Route à deux voies : bas-côtés, chaussée, lignes de rive et ligne du milieu en pointillés.
-        const line = (o: number) => { const q = offsetPath(pts, o); g.moveTo(q[0].x, q[0].y); for (const p of q.slice(1)) g.lineTo(p.x, p.y); };
-        line(0); g.stroke({ width: 32, color: 0x8f9aa6, cap: 'round', join: 'miter' });
-        line(0); g.stroke({ width: 28, color: 0xa9b3bd, cap: 'round', join: 'miter' });
-        for (const o of [-11.5, 11.5]) { line(o); g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.75, join: 'miter' }); }
-        dashedPolyline(g, pts, 6, 6);
-        g.stroke({ width: 2, color: 0xffffff, alpha: 0.95 });
-      } else {
-        // Double voie : traverses, puis deux rails par voie.
-        for (const o of [-8, 8]) {
-          const q = offsetPath(pts, o);
-          for (let i = 1; i < q.length; i++) {
-            const a2 = q[i - 1], b2 = q[i], d = Math.hypot(b2.x - a2.x, b2.y - a2.y);
-            const ux = (b2.x - a2.x) / (d || 1), uy = (b2.y - a2.y) / (d || 1), px = -uy, py = ux;
-            for (let s2 = 0; s2 < d; s2 += 8) {
-              const x = a2.x + ux * s2, y = a2.y + uy * s2;
-              g.moveTo(x + px * 6.5, y + py * 6.5).lineTo(x - px * 6.5, y - py * 6.5);
+    const legs: { kind: string; leg: LegRoute }[] = [];
+    for (const l of f.lines.values()) for (const leg of f.routes.get(l.id)?.legs ?? []) legs.push({ kind: l.kind, leg });
+    const line = (pts: { x: number; y: number }[], o = 0) => { const q = o ? offsetPath(pts, o) : pts; g.moveTo(q[0].x, q[0].y); for (const p of q.slice(1)) g.lineTo(p.x, p.y); };
+    const W = CELL * 2;
+    // Les rails d'abord, les routes par-dessus (aux passages à niveau, les rails sont redessinés sur la route).
+    for (const { kind, leg } of [...legs].sort((x, y) => (x.kind === 'train' ? 0 : 1) - (y.kind === 'train' ? 0 : 1))) {
+      for (const [a, b] of this.surfaceParts(leg)) {
+        const pts = this.legSlice(leg, a, b);
+        if (pts.length < 2) continue;
+        if (kind === 'camion') {
+          // Voie à sens unique de 2 cases : bas-côtés, chaussée, lignes de rive, flèches dans le sens de la marche.
+          line(pts); g.stroke({ width: W, color: 0x8f9aa6, join: 'miter', cap: 'butt' });
+          line(pts); g.stroke({ width: W - 5, color: 0xa9b3bd, join: 'miter', cap: 'butt' });
+          for (const o of [-W / 2 + 5, W / 2 - 5]) { line(pts, o); g.stroke({ width: 1.6, color: 0xffffff, alpha: 0.8, join: 'miter' }); }
+        } else {
+          // Ballast de 2 cases, traverses, une voie au milieu.
+          line(pts); g.stroke({ width: W - 4, color: 0xc9b79c, join: 'miter', cap: 'butt' });
+          for (let i = 1; i < pts.length; i++) {
+            const p0 = pts[i - 1], p1 = pts[i], d = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+            const ux = (p1.x - p0.x) / (d || 1), uy = (p1.y - p0.y) / (d || 1), px = -uy, py = ux;
+            for (let s2 = 4; s2 < d; s2 += 8) {
+              const x = p0.x + ux * s2, y = p0.y + uy * s2;
+              g.moveTo(x + px * 10, y + py * 10).lineTo(x - px * 10, y - py * 10);
             }
           }
-          g.stroke({ width: 3, color: 0x9b7653, cap: 'round' });
-          for (const r of [-3.5, 3.5]) {
-            const rq = offsetPath(pts, o + r);
-            g.moveTo(rq[0].x, rq[0].y);
-            for (const p of rq.slice(1)) g.lineTo(p.x, p.y);
-            g.stroke({ width: 1.8, color: 0x56606b, join: 'miter' });
+          g.stroke({ width: 3.2, color: 0x9b7653, cap: 'round' });
+          for (const r of [-5, 5]) { line(pts, r); g.stroke({ width: 2, color: 0x56606b, join: 'miter' }); }
+        }
+      }
+      // Flèches (routes) : le sens de la marche, toutes les 4 cases à la surface.
+      if (kind === 'camion') {
+        for (let s = 3; s < leg.len - 2; s += 4) {
+          if (inTunnel(leg, s)) continue;
+          const p = pointAt(leg, s), q = pointAt(leg, s + 0.05);
+          if (Math.abs(p.a - q.a) > 0.01) continue;
+          const cx = p.x * CELL, cy = p.y * CELL, ca = Math.cos(p.a), sa = Math.sin(p.a);
+          const P = (u: number, v: number) => ({ x: cx + ca * u - sa * v, y: cy + sa * u + ca * v });
+          const A = P(-4, -7), B = P(4, 0), C = P(-4, 7);
+          g.moveTo(A.x, A.y).lineTo(B.x, B.y).lineTo(C.x, C.y).stroke({ width: 3, color: 0xffffff, alpha: 0.85, cap: 'round', join: 'round' });
+        }
+      }
+      // Tunnels : le trajet en pointillés sous la terre, et une entrée à chaque bout.
+      for (const [a, b] of leg.tunnels) {
+        const pts = this.legSlice(leg, a, b);
+        if (pts.length >= 2) for (const o of [-W / 2 + 2, W / 2 - 2]) {
+          dashedPolyline(g, offsetPath(pts, o), 6, 6);
+          g.stroke({ width: 2, color: PALETTE.ink, alpha: 0.28 });
+        }
+        for (const [s, inward] of [[a, 1], [b, -1]] as const) this.drawPortal(g, leg, s, inward, kind);
+      }
+    }
+    // Croisements : carrefour (asphalte uni), passage à niveau (rails sur la route), croisement de rails.
+    for (const c of f.crossings) {
+      const xs = c.cells.map((k) => unkey(k));
+      const x0 = Math.min(...xs.map((p) => p[0])), y0 = Math.min(...xs.map((p) => p[1]));
+      const x1 = Math.max(...xs.map((p) => p[0])) + 1, y1 = Math.max(...xs.map((p) => p[1])) + 1;
+      if (c.kind === 'carrefour') {
+        g.rect(x0 * CELL, y0 * CELL, (x1 - x0) * CELL, (y1 - y0) * CELL).fill(0xa9b3bd);
+        // Lignes d'arrêt avant le carrefour.
+        for (const m of c.members) {
+          const leg = f.routes.get(m.line)?.legs[m.leg];
+          if (!leg) continue;
+          const p = pointAt(leg, m.sIn - 0.15), ca = Math.cos(p.a), sa = Math.sin(p.a);
+          g.moveTo(p.x * CELL + sa * (CELL - 4), p.y * CELL - ca * (CELL - 4)).lineTo(p.x * CELL - sa * (CELL - 4), p.y * CELL + ca * (CELL - 4)).stroke({ width: 3, color: 0xffffff, alpha: 0.9 });
+        }
+      } else {
+        for (const m of c.members) {
+          if (m.kind !== 'train') continue;
+          const leg = f.routes.get(m.line)?.legs[m.leg];
+          if (!leg) continue;
+          const pts = this.legSlice(leg, m.sIn - 0.2, m.sOut + 0.2);
+          if (pts.length < 2) continue;
+          for (const r of [-5, 5]) { line(pts, r); g.stroke({ width: 2.4, color: 0x56606b }); }
+        }
+      }
+    }
+  }
+
+  /** Entrée d'un tunnel : la voie descend sous un cadre de béton, la bouche sombre vers l'extérieur. */
+  private drawPortal(g: Graphics, leg: LegRoute, s: number, inward: number, kind: string): void {
+    const p = pointAt(leg, Math.min(leg.len - 0.01, Math.max(0.01, s)));
+    const ca = Math.cos(p.a) * inward, sa = Math.sin(p.a) * inward;
+    const cx = p.x * CELL, cy = p.y * CELL;
+    // u : vers l'intérieur du tunnel ; v : en travers.
+    const P = (u: number, v: number) => ({ x: cx + ca * u - sa * v, y: cy + sa * u + ca * v });
+    const quad = (u0: number, u1: number, v0: number, v1: number) => { const a = P(u0, v0), b = P(u1, v0), c = P(u1, v1), d = P(u0, v1); g.poly([a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y]); };
+    // La rampe qui descend (de plus en plus sombre).
+    for (let i = 0; i < 4; i++) { quad(-CELL * 1.6 + i * CELL * 0.4, -CELL * 1.6 + (i + 1) * CELL * 0.4, -CELL + 3, CELL - 3); g.fill({ color: 0x2e3a4b, alpha: 0.06 + i * 0.07 }); }
+    // La bouche et le cadre.
+    quad(-2, 8, -CELL + 2, CELL - 2); g.fill(0x26303f);
+    quad(-6, 0, -CELL - 3, CELL + 3); g.fill(kind === 'train' ? 0x8a99ad : 0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
+    quad(0, 10, -CELL - 3, -CELL + 2); g.fill(0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
+    quad(0, 10, CELL - 2, CELL + 3); g.fill(0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
+  }
+
+  /** Les feux des croisements, à droite de chaque voie avant le croisement (rouge, orange ou vert). */
+  private drawLights(): void {
+    const g = this.lightG, f = this.game.view;
+    g.clear();
+    for (const c of f.crossings) {
+      if (!this.inView(c.x * CELL, c.y * CELL, CELL * 6)) continue;
+      for (const m of c.members) {
+        const leg = f.routes.get(m.line)?.legs[m.leg];
+        if (!leg) continue;
+        const st = f.crossLight(c, m);
+        const p = pointAt(leg, Math.max(0, m.sIn - 0.5));
+        const rx = -Math.sin(p.a), ry = Math.cos(p.a);
+        const x = p.x * CELL + rx * (CELL + 7), y = p.y * CELL + ry * (CELL + 7);
+        // Barrière du passage à niveau : baissée quand un train approche.
+        if (c.kind === 'niveau' && m.kind === 'camion') {
+          const down = st === 'red';
+          const bx = p.x * CELL + rx * (CELL - 1), by = p.y * CELL + ry * (CELL - 1);
+          const len = down ? CELL * 2 - 4 : 8;
+          const ex = bx - rx * len, ey = by - ry * len;
+          g.moveTo(bx, by).lineTo(ex, ey).stroke({ width: 4.5, color: PALETTE.ink, cap: 'round' });
+          g.moveTo(bx, by).lineTo(ex, ey).stroke({ width: 2.6, color: 0xffffff, cap: 'round' });
+          for (let k = 0.2; k < 1; k += 0.4) {
+            const sx = bx + (ex - bx) * k, sy = by + (ey - by) * k, tx = bx + (ex - bx) * Math.min(1, k + 0.2), ty = by + (ey - by) * Math.min(1, k + 0.2);
+            g.moveTo(sx, sy).lineTo(tx, ty).stroke({ width: 2.6, color: PALETTE.coral });
           }
         }
+        const blink = c.kind === 'niveau' && m.kind === 'camion' && st === 'red' ? Math.sin(this.time * 9) > 0 : true;
+        g.roundRect(x - 5, y - 9, 10, 18, 4).fill(PALETTE.ink);
+        const top = st === 'green' ? 0x5a2a2a : st === 'amber' ? 0xffb347 : blink ? 0xff5a4a : 0x5a2a2a;
+        const bot = st === 'green' ? 0x5fe08a : 0x24432f;
+        g.circle(x, y - 4, 3).fill(top).circle(x, y + 4, 3).fill(bot);
       }
     }
   }
@@ -818,59 +924,52 @@ export class GameRenderer {
         parts.push(c);
       }
     }
-    for (const p of parts) root.addChild(p);
+    // Les voies font 2 cases : camions et trains sont dessinés plus grands.
+    for (const p of parts) { p.scale.set(VEHICLE_SCALE); root.addChild(p); }
     const cargo = new Sprite();
     cargo.anchor.set(0.5);
-    cargo.scale.set(0.75);
+    cargo.scale.set(0.75 * VEHICLE_SCALE);
     root.addChild(cargo);
     this.actorLayer.addChildAt(root, 0);
     return { root, parts, cargo, kind };
   }
 
-  /** Le trajet (en pixels) du trajet i d'une ligne : de l'arrêt i à l'arrêt suivant, en L. */
-  private legPx(l: Line, i: number): { x: number; y: number }[] | null {
-    const f = this.game.view;
-    const a = f.machines.get(l.stops[i % l.stops.length].id), b = f.machines.get(l.stops[(i + 1) % l.stops.length].id);
-    if (!a || !b) return null;
-    // Deux arrêts alignés : le coin du L se confond avec un bout, on l'enlève.
-    return f.legPath(a, b).map((p) => ({ x: p.x * CELL, y: p.y * CELL }))
-      .filter((p, i, arr) => i === 0 || Math.hypot(p.x - arr[i - 1].x, p.y - arr[i - 1].y) > 0.5);
-  }
-
   private updateRoutes(): void {
     const f = this.game.view;
-    let sig = '';
-    for (const l of f.lines.values()) {
-      sig += `|${l.id}:${l.stops.map((st) => { const m = f.machines.get(st.id); return `${m?.x},${m?.y}`; }).join(';')}`;
-    }
+    f.ensureRoutes();
+    const sig = `${f.routeVersion}:${f.lines.size}`;
     if (sig !== this.routeSig) { this.routeSig = sig; this.drawRoutes(); }
+    this.drawLights();
     const seen = new Set<string>();
+    const PART = (19 * VEHICLE_SCALE) / CELL;
     for (const l of f.lines.values()) {
+      const route = f.routes.get(l.id);
+      if (!route) continue;
+      const n = l.stops.length;
       l.vehicles.forEach((v, vi) => {
         const id = `${l.id}:${vi}`;
         seen.add(id);
-        const pts = this.legPx(l, v.at);
-        if (!pts) return;
         let view = this.vehicleViews.get(id);
         if (!view || view.kind !== l.kind) { view?.root.destroy({ children: true }); view = this.makeVehicle(l.kind); this.vehicleViews.set(id, view); }
-        const a = f.machines.get(l.stops[v.at % l.stops.length].id)!, b = f.machines.get(l.stops[(v.at + 1) % l.stops.length].id)!;
-        const L = Math.max(0.01, f.legLength(a, b));
-        // À l'arrêt, les véhicules se rangent côte à côte ; en route, chaque wagon suit le précédent.
-        const k = v.moving ? v.pos / L : 0;
-        const gap = 19 / (L * CELL);
+        // À quai, il est au bout du trajet qui arrive ; en route, chaque wagon suit le précédent (sur le trajet d'avant s'il le faut).
+        const legI = v.moving ? v.at % n : (v.at - 1 + n) % n;
+        const head = v.moving ? v.pos : route.legs[legI]?.len ?? 0;
         view.parts.forEach((part, i) => {
-          const p = this.alongPath(pts, k - i * gap);
-          // Chacun sa voie : on roule à droite (8 px du milieu), on se croise sans se toucher.
-          const lane = l.kind === 'train' ? 8 : 6.5;
-          const ox = -Math.sin(p.a) * lane, oy = Math.cos(p.a) * lane;
-          part.position.set(p.x + ox, p.y + oy + (v.moving ? 0 : (vi - (l.vehicles.length - 1) / 2) * 15));
+          let li = legI, s = head - i * PART;
+          if (s < 0) { li = (li - 1 + n) % n; s += route.legs[li]?.len ?? 0; }
+          const leg = route.legs[li];
+          if (!leg) return;
+          const p = pointAt(leg, s);
+          part.position.set(p.x * CELL, p.y * CELL);
           part.rotation = p.a;
+          // Dans un tunnel, on ne le voit plus.
+          part.visible = !inTunnel(leg, s);
         });
-        const n = f.cargoCount(v);
+        const nC = f.cargoCount(v);
         const main = Object.entries(v.cargo).sort((x, y) => y[1] - x[1])[0]?.[0];
-        view.cargo.visible = n > 0 && !!main;
-        if (main) view.cargo.texture = this.itemTextures.get(main)!;
         const carrier = view.parts[view.parts.length > 1 ? 1 : 0];
+        view.cargo.visible = nC > 0 && !!main && carrier.visible;
+        if (main) view.cargo.texture = this.itemTextures.get(main)!;
         view.cargo.position.set(carrier.x, carrier.y);
         view.root.visible = this.inView(view.parts[0].x, view.parts[0].y, CELL * 3);
       });
@@ -1274,10 +1373,10 @@ export class GameRenderer {
     const iconG = new Graphics();
     icon.addChild(iconG);
     const badge = new Graphics();
-    const W = def.w * CELL, H = def.h * CELL;
+    const W = m.w * CELL, H = m.h * CELL;
     const isDrill = def.kind === 'drill';
     const small = m.type === 'foreuse' && def.w === 1;
-    const bw = small ? W - 2 : isDrill ? W - 8 : W - 2, bh = small ? H - 2 : isDrill ? H - 8 : H - 2, br = small ? 7 : isDrill ? 12 : def.w === 1 ? 7 : 15;
+    const bw = small ? W - 2 : isDrill ? W - 8 : W - 2, bh = small ? H - 2 : isDrill ? H - 8 : H - 2, br = small ? 7 : isDrill ? 12 : m.w === 1 ? 7 : 15;
     // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
     const bare = def.kind === 'lamp' || def.kind === 'tree' || def.kind === 'freight';
     if (def.kind === 'freight') {
@@ -1321,8 +1420,15 @@ export class GameRenderer {
       body.stroke({ width: 2, color: PALETTE.ink, alpha: 0.45 });
       icon.alpha = 0.4;
     }
-    const tex = def.kind === 'freight' ? null : buildingTexture(m.type, iconVariant(m));
-    if (def.kind === 'freight') { /* dessiné à part */ } else if (tex) {
+    const station = isStationType(m.type);
+    const tex = def.kind === 'freight' || station ? null : buildingTexture(m.type, iconVariant(m));
+    if (def.kind === 'freight') { /* dessiné à part */ } else if (station) {
+      // Gare ou dépôt : le dessin et le quai tournent avec le bâtiment.
+      const art = new Graphics();
+      drawStationArt(art, m.type, m.built);
+      art.rotation = ((m.rot ?? 0) * Math.PI) / 2;
+      icon.addChild(art);
+    } else if (tex) {
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
       const size = Math.round(Math.min(bw, bh) * (bare ? 0.7 : 0.68));
@@ -1341,10 +1447,10 @@ export class GameRenderer {
       label.position.set(0, -bh / 2 - 4);
       root.addChild(label);
     }
-    root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
+    root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
-    return { root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '', lvl: m.lvl ?? 1, ...(small ? { link: this.drillLink(m) } : {}) };
+    return { rot: m.rot ?? 0, root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '', lvl: m.lvl ?? 1, ...(small ? { link: this.drillLink(m) } : {}) };
   }
 
   private buildNoyau(m: Machine): void {
@@ -1385,17 +1491,17 @@ export class GameRenderer {
         continue;
       }
       let v = this.machineViews.get(m.id);
-      if (v && (v.built !== m.built || v.ore !== m.ore || v.lvl !== (m.lvl ?? 1) || (v.link !== undefined && v.link !== this.drillLink(m)))) {
+      if (v && (v.built !== m.built || v.ore !== m.ore || v.lvl !== (m.lvl ?? 1) || v.rot !== (m.rot ?? 0) || (v.link !== undefined && v.link !== this.drillLink(m)))) {
         v.root.destroy({ children: true });
         this.machineViews.delete(m.id);
         v = undefined;
       }
       if (!v) { v = this.buildMachineView(m); this.machineViews.set(m.id, v); }
       const def = machineDef(m.type);
-      v.root.position.set((m.x + def.w / 2) * CELL, (m.y + def.h / 2) * CELL);
+      v.root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
       if (v.root.zIndex !== zOf(m)) v.root.zIndex = zOf(m);
       // Hors de l'écran : on ne la dessine pas, et on saute ses petites animations.
-      v.root.visible = this.inView(v.root.x, v.root.y, Math.max(def.w, def.h) * CELL);
+      v.root.visible = this.inView(v.root.x, v.root.y, (Math.max(m.w, m.h) + 2) * CELL);
       if (!v.root.visible) { v.made = m.made; continue; }
       // Pendant qu'on la déplace, la machine pâlit sous son fantôme.
       v.root.alpha = m.id === this.movingId && this.preview?.kind === 'place' ? 0.4 : 1;
@@ -1424,17 +1530,17 @@ export class GameRenderer {
           // Une foreuse du groupe qui n'est pas la première : rien dans son coin.
         } else if (m.built && m.status === 'blocked') {
           // Pastille « en pause » dans le coin, sans déborder sur une machine voisine.
-          const r = def.w === 1 ? 5.5 : 7, x = def.w * CELL / 2 - 4 - r, y = -def.h * CELL / 2 + 4 + r;
+          const r = m.w === 1 ? 5.5 : 7, x = m.w * CELL / 2 - 4 - r, y = -m.h * CELL / 2 + 4 + r;
           v.badge.circle(x, y, r).fill(0xffffff).stroke({ width: 2, color: PALETTE.coral });
           v.badge.rect(x - r * 0.38, y - r * 0.45, r * 0.25, r * 0.9).rect(x + r * 0.13, y - r * 0.45, r * 0.25, r * 0.9).fill(PALETTE.coral);
         } else if (m.built && m.status === 'nopower') {
           // Pas de courant : un éclair dans le même coin.
-          const r = 7.5, x = def.w * CELL / 2 - 4 - r, y = -def.h * CELL / 2 + 4 + r;
+          const r = 7.5, x = m.w * CELL / 2 - 4 - r, y = -m.h * CELL / 2 + 4 + r;
           v.badge.circle(x, y, r).fill(0xffffff).stroke({ width: 2, color: PALETTE.ink });
           drawBolt(v.badge, x, y, 0.62);
         } else if (powered) {
-          const x = def.w * CELL / 2 - 10, y = -def.h * CELL / 2 + 11;
-          drawBolt(v.badge, x, y, def.w === 1 ? 0.55 : 0.7);
+          const x = m.w * CELL / 2 - 10, y = -m.h * CELL / 2 + 11;
+          drawBolt(v.badge, x, y, m.w === 1 ? 0.55 : 0.7);
         }
       }
     }
@@ -1681,8 +1787,25 @@ export class GameRenderer {
       }
     } else if (pv?.kind === 'place') {
       const def = machineDef(pv.type);
-      const W = def.w * CELL, H = def.h * CELL;
+      const station = isStationType(pv.type);
+      const size = rotDims(def.w, def.h, station ? pv.rot ?? 0 : 0);
+      const W = size.w * CELL, H = size.h * CELL;
       const x = pv.x * CELL, y = pv.y * CELL;
+      if (station) {
+        // Le quai : la voie (2 cases) le long du bâtiment, avec le sens de la marche.
+        const geo = stationGeo(pv.x, pv.y, (pv.rot ?? 0) as Rot);
+        const qx = Math.min(...geo.quay.map((c) => c.x)), qy = Math.min(...geo.quay.map((c) => c.y));
+        const qw = Math.max(...geo.quay.map((c) => c.x)) + 1 - qx, qh = Math.max(...geo.quay.map((c) => c.y)) + 1 - qy;
+        g.rect(qx * CELL, qy * CELL, qw * CELL, qh * CELL).fill({ color: pv.type === 'gare' ? 0xc9b79c : 0xa9b3bd, alpha: 0.7 });
+        dashedPolyline(g, roundRectPoints(qx * CELL + 1, qy * CELL + 1, qw * CELL - 2, qh * CELL - 2, 2), 6, 5, true);
+        g.stroke({ width: 2, color: pv.ok ? PALETTE.ink : PALETTE.coral, alpha: 0.5 });
+        const ax = geo.dock.x * CELL, ay = geo.dock.y * CELL, dx = DX[geo.dir], dy = DY[geo.dir];
+        for (const o of [-26, 0, 26]) {
+          const cx = ax + dx * o, cy = ay + dy * o;
+          g.moveTo(cx - dx * 6 - dy * 8, cy - dy * 6 + dx * 8).lineTo(cx + dx * 6, cy + dy * 6).lineTo(cx - dx * 6 + dy * 8, cy - dy * 6 - dx * 8)
+            .stroke({ width: 3.5, color: 0xffffff, cap: 'round', join: 'round' });
+        }
+      }
       for (const gd of this.guides) {
         dashedPolyline(g, [{ x: gd.x0, y: gd.y0 }, { x: gd.x1, y: gd.y1 }], 5, 5);
       }
@@ -2022,7 +2145,7 @@ export class GameRenderer {
     this.routeSig = '';
     this.selection = null;
     this.preview = null;
-    for (const l of [this.groundLayer, this.filonLayer, this.fogLayer, this.actorLayer, this.groundShadows, this.routeG]) l.visible = !inside;
+    for (const l of [this.groundLayer, this.filonLayer, this.fogLayer, this.actorLayer, this.groundShadows, this.routeG, this.lightG]) l.visible = !inside;
     this.roomG.visible = !!inside;
     this.roomSize = 0;
     if (inside) {
@@ -2369,6 +2492,56 @@ export class GameRenderer {
     this.renderLoupe();
   }
 }
+
+/**
+ * Gare ou dépôt, sans tourner (bâtiment 4 × 2 centré, quai dessous, on roule vers la droite).
+ * Dépôt : un entrepôt jaune à trois portes de quai, et une aire goudronnée. Gare : un hall corail avec son horloge,
+ * un quai couvert, et la voie ferrée.
+ */
+function drawStationArt(g: Graphics, type: string, built: boolean): void {
+  const ink = PALETTE.ink, C = CELL;
+  const a = built ? 1 : 0.45;
+  // Le quai (2 cases sous le bâtiment).
+  if (type === 'gare') {
+    g.rect(-2 * C, C, 4 * C, 2 * C).fill({ color: 0xc9b79c, alpha: a });
+    for (let x = -2 * C + 4; x < 2 * C; x += 8) g.moveTo(x, 2 * C - 10).lineTo(x, 2 * C + 10);
+    g.stroke({ width: 3.2, color: 0x9b7653, alpha: a, cap: 'round' });
+    for (const r of [-5, 5]) g.moveTo(-2 * C, 2 * C + r).lineTo(2 * C, 2 * C + r);
+    g.stroke({ width: 2, color: 0x56606b, alpha: a });
+  } else {
+    g.rect(-2 * C, C, 4 * C, 2 * C).fill({ color: 0xa9b3bd, alpha: a });
+    g.rect(-2 * C, C, 4 * C, 2 * C).stroke({ width: 2, color: 0x8f9aa6, alpha: a });
+    for (const x of [-C, 0, C]) g.moveTo(x, C + 2).lineTo(x, C + 15);
+    g.stroke({ width: 2, color: 0xffffff, alpha: 0.85 * a });
+    for (const x of [-C, 0, C]) {
+      g.moveTo(x - 4, 2 * C - 7).lineTo(x + 4, 2 * C).lineTo(x - 4, 2 * C + 7).stroke({ width: 3, color: 0xffffff, alpha: 0.85 * a, cap: 'round', join: 'round' });
+    }
+  }
+  if (!built) return;
+  if (type === 'gare') {
+    // Hall corail, bandeau clair, horloge ; quai couvert (auvent rayé) le long des rails.
+    g.roundRect(-2 * C + 6, -C + 5, 4 * C - 12, 2 * C - 20, 6).fill(PALETTE.coral).stroke({ width: 2.5, color: ink });
+    g.roundRect(-2 * C + 9, -C + 8, 4 * C - 18, 6, 3).fill(0xf9a896);
+    g.circle(0, -4, 8).fill(0xffffff).stroke({ width: 2.2, color: ink });
+    g.moveTo(0, -4).lineTo(0, -9).moveTo(0, -4).lineTo(4, -2).stroke({ width: 1.8, color: ink, cap: 'round' });
+    for (const x of [-30, 30]) g.roundRect(x - 7, -C + 12, 14, 10, 2).fill(0xbfe3f2).stroke({ width: 1.6, color: ink });
+    g.rect(-2 * C + 3, C - 14, 4 * C - 6, 11).fill(0xe8eef2).stroke({ width: 2, color: ink });
+    for (let x = -2 * C + 9; x < 2 * C - 6; x += 12) g.rect(x, C - 13, 6, 9).fill(0xf9a896);
+    g.moveTo(-2 * C + 3, C - 2).lineTo(2 * C - 3, C - 2).stroke({ width: 2.5, color: PALETTE.yellow });
+  } else {
+    // Entrepôt : toit jaune à nervures, trois portes de quai rayées du côté de la route.
+    g.roundRect(-2 * C + 6, -C + 5, 4 * C - 12, 2 * C - 18, 6).fill(PALETTE.yellow).stroke({ width: 2.5, color: ink });
+    for (let x = -2 * C + 18; x < 2 * C - 10; x += 12) g.moveTo(x, -C + 7).lineTo(x, C - 15);
+    g.stroke({ width: 1.6, color: 0xe0a82e });
+    for (const x of [-30, -6, 18]) {
+      g.roundRect(x - 1, C - 15, 14, 13, 2).fill(0x59636f).stroke({ width: 1.8, color: ink });
+      g.moveTo(x + 1, C - 11).lineTo(x + 11, C - 11).moveTo(x + 1, C - 7).lineTo(x + 11, C - 7).stroke({ width: 1.2, color: 0xa9b6c3 });
+    }
+  }
+}
+
+/** Taille des camions et des trains (les voies font 2 cases de large). */
+const VEHICLE_SCALE = 1.6;
 
 /** Ordre d'affichage d'une machine : de haut en bas, puis de gauche à droite. */
 function zOf(m: { x: number; y: number; h: number }): number {
