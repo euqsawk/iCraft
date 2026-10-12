@@ -14,7 +14,7 @@ import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
 import { hashString, rng } from '../world/rng.ts';
 import { Camera } from './camera.ts';
-import { buildingTexture } from './buildingIcons.ts';
+import { buildingTexture, itemSvgUrl, itemTexture } from './buildingIcons.ts';
 import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
 import { ITEM_SPRITE_SCALE, orbitItemTexture, SKIN_ANCHOR, SKIN_SCALE, SKIN_SPRITE_SCALE, skinTexture } from './skinTextures.ts';
 import { orbitPoint, skinBody, skinOf } from '../data/skins.ts';
@@ -237,6 +237,8 @@ export class GameRenderer {
     app.stage.addChildAt(this.lightSprite, app.stage.getChildIndex(this.worldLayer) + 1);
     app.stage.addChildAt(this.weatherG, app.stage.getChildIndex(this.lightSprite) + 1);
     for (const d of ITEM_LIST) {
+      const tex = itemTexture(d.id);
+      if (tex) { this.itemTextures.set(d.id, tex); continue; }
       const g = new Graphics();
       drawItem(g, d.id);
       this.itemTextures.set(d.id, app.renderer.generateTexture({ target: g, resolution: 4, antialias: true }));
@@ -1292,12 +1294,23 @@ export class GameRenderer {
     const ring = new Graphics();
     const body = new Graphics();
     const S = m.w * CELL;
-    body.roundRect(-S / 2 + 12, -S / 2 + 16, S - 24, S - 24, 16).fill(0xd8644d);
-    body.roundRect(-S / 2 + 12, -S / 2 + 12, S - 24, S - 24, 16).fill(PALETTE.coral);
-    const t = new Text({ text: 'Noyau', style: { fontFamily: FONT, fontSize: 13, fontWeight: '900', fill: 0xffffff }, resolution: 3 });
-    t.anchor.set(0.5);
     const badge = new Graphics();
-    root.addChild(ring, body, t, badge);
+    const tex = buildingTexture('noyau');
+    if (tex) {
+      // Le dessin choisi : le cœur corail et ses quatre bras, sur tout le carré ; le nom au-dessus, comme les autres bâtiments.
+      const sp = new Sprite(tex);
+      sp.anchor.set(0.5);
+      sp.width = sp.height = S - 4;
+      const label = this.makeLabel('Noyau');
+      label.position.set(0, -S / 2 + 4);
+      root.addChild(ring, sp, label, badge);
+    } else {
+      body.roundRect(-S / 2 + 12, -S / 2 + 16, S - 24, S - 24, 16).fill(0xd8644d);
+      body.roundRect(-S / 2 + 12, -S / 2 + 12, S - 24, S - 24, 16).fill(PALETTE.coral);
+      const t = new Text({ text: 'Noyau', style: { fontFamily: FONT, fontSize: 13, fontWeight: '900', fill: 0xffffff }, resolution: 3 });
+      t.anchor.set(0.5);
+      root.addChild(ring, body, t, badge);
+    }
     root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
@@ -1701,6 +1714,8 @@ export class GameRenderer {
   }
 
   itemIconDataUrl(id: string): string {
+    const url = itemSvgUrl(id, 96);
+    if (url) return url;
     const g = new Graphics();
     drawItem(g, id);
     const canvas = this.app.renderer.extract.canvas({ target: g, resolution: 4 }) as HTMLCanvasElement;

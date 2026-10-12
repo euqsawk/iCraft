@@ -1,5 +1,7 @@
 // Icônes SVG de l'interface (tracés repris de la maquette).
 
+import { TOOL_SVG } from '../render/iconArt.ts';
+
 export const ICONS = {
   coin: '<svg class="coin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="#FFC857" stroke="#E0A82E" stroke-width="1.5"/><circle cx="8" cy="8" r="3.5" fill="none" stroke="#E0A82E" stroke-width="1.5"/></svg>',
   coinSm: '<svg class="coin sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="#FFC857" stroke="#E0A82E" stroke-width="1.5"/></svg>',
@@ -24,3 +26,10 @@ export const ICONS = {
   move: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1 V15 M1 8 H15 M8 1 L6 3 M8 1 L10 3 M8 15 L6 13 M8 15 L10 13 M1 8 L3 6 M1 8 L3 10 M15 8 L13 6 M15 8 L13 10"/></svg>',
   trash: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 4 H14 M6 4 V2 H10 V4 M4 4 L5 14 H11 L12 4"/></svg>',
 };
+
+// Les outils de la barre : leurs dessins choisis (au trait, la barre les colore). Gomme, Module et Transport gardent les leurs.
+const TOOL_KEY: Record<string, keyof typeof ICONS> = { tapis: 'tapis', cable: 'cable', tuyau: 'pipe', machine: 'machine', zone: 'zone', module: 'module', transport: 'transport', gomme: 'gomme' };
+for (const [id, body] of Object.entries(TOOL_SVG)) {
+  const key = TOOL_KEY[id];
+  if (key) (ICONS as Record<string, string>)[key] = `<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}

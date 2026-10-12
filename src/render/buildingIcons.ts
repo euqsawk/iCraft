@@ -1,10 +1,12 @@
 // Les dessins des bâtiments (choisis sur la page de design), en SVG 64 × 64.
 // Ils sont rendus une fois en images au démarrage, puis posés sur le socle blanc de chaque bâtiment.
 import { CanvasSource, Texture, type ICanvas } from 'pixi.js';
-import { item, RAW_IDS } from '../data/items.ts';
+import { item, ITEM_LIST, RAW_IDS } from '../data/items.ts';
+import { ITEM_SVG, NOYAU_SVG } from './iconArt.ts';
 
 /** Le contenu de chaque dessin (sans la balise svg). Un tableau : plusieurs variantes (les arbres). */
 export const BUILDING_SVG: Record<string, string | string[]> = {
+  noyau: NOYAU_SVG,
   four: "<path d=\"M12 54 V32 a20 20 0 0 1 40 0 V54 Z\" fill=\"#E3ECE7\"/><path d=\"M22 54 V40 a10 10 0 0 1 20 0 V54\" fill=\"#2E3A4B\"/><path d=\"M32 52 c-6 -3 -6 -9 0 -14 c6 5 6 11 0 14 z\" fill=\"#F47C64\" stroke=\"none\"/><path d=\"M8 54 H56\"/>",
   presse: "<path d=\"M12 9 H52\"/><path d=\"M17 9 V54 M47 9 V54\"/><rect x=\"24\" y=\"13\" width=\"16\" height=\"10\" rx=\"2\" fill=\"#8A99AD\"/><path d=\"M32 23 V29\"/><rect x=\"22\" y=\"29\" width=\"20\" height=\"6\" rx=\"2\" fill=\"#2E3A4B\"/><rect x=\"20\" y=\"44\" width=\"24\" height=\"5\" rx=\"1.5\" fill=\"#FFC857\"/><path d=\"M10 54 H54\"/>",
   tour: "<path d=\"M27 18 V50 L32 57 L37 50 V18\" fill=\"#E3ECE7\"/><path d=\"M27 24 L37 28 M27 31 L37 35 M27 38 L37 42 M27 45 L37 49\" stroke-width=\"2.5\"/><rect x=\"19\" y=\"8\" width=\"26\" height=\"10\" rx=\"3\" fill=\"#8A99AD\"/><path d=\"M32 10 V16\" stroke-width=\"2.5\"/>",
@@ -66,14 +68,15 @@ export function buildingSvgUrl(type: string, variant = 0, px = 128): string | nu
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgDoc(body, px))}`;
 }
 
-async function raster(body: string, px: number): Promise<Texture> {
+async function raster(body: string, px: number, size = 0): Promise<Texture> {
   const img = new Image();
   img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgDoc(body, px))}`;
   await img.decode();
   const c = document.createElement('canvas');
   c.width = c.height = px;
   c.getContext('2d')!.drawImage(img, 0, 0, px, px);
-  return new Texture({ source: new CanvasSource({ resource: c as unknown as ICanvas, autoGenerateMipmaps: true, scaleMode: 'linear' }) });
+  // `size` : la taille voulue dans le monde (un objet sur un tapis fait 14 unités) ; sinon une unité par pixel.
+  return new Texture({ source: new CanvasSource({ resource: c as unknown as ICanvas, autoGenerateMipmaps: true, scaleMode: 'linear', resolution: size ? px / size : 1 }) });
 }
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
@@ -90,7 +93,27 @@ export async function loadBuildingTextures(): Promise<void> {
     const body = BUILDING_SVG[type] as string;
     for (const ore of RAW_IDS) add(`${type}:${ore}`, body.split(DRILL_GREY).join(hex(item(ore).color)), 192);
   }
+  // Les objets : petits (14 unités, la taille d'un objet sur un tapis), rendus nets.
+  for (const d of ITEM_LIST) {
+    const body = ITEM_SVG[d.id];
+    if (body) jobs.push(raster(body, 96, ITEM_SIZE).then((t) => { itemTextures.set(d.id, t); }).catch(() => undefined));
+  }
   await Promise.all(jobs);
+}
+
+/** Taille d'un objet dans le monde (unités), comme les anciens dessins. */
+export const ITEM_SIZE = 14;
+const itemTextures = new Map<string, Texture>();
+
+/** La texture d'un objet, si son dessin existe. */
+export function itemTexture(id: string): Texture | null {
+  return itemTextures.get(id) ?? null;
+}
+
+/** L'image d'un objet, en adresse de données (pour les fiches et les listes). */
+export function itemSvgUrl(id: string, px = 64): string | null {
+  const body = ITEM_SVG[id];
+  return body ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgDoc(body, px))}` : null;
 }
 
 /** La texture d'un bâtiment (variante ou minerai), si son dessin existe. */

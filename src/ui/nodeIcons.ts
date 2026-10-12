@@ -1,5 +1,6 @@
 // Icônes des nœuds de l'arbre de déblocages (reprises de la maquette Claude Design).
 import { BUILDING_SVG } from '../render/buildingIcons.ts';
+import { NODE_SVG } from '../render/iconArt.ts';
 
 export const NODE_ICONS: Record<string, string> = {
   foreuse: "<svg width=\"100%\" height=\"100%\" focusable=\"false\" viewBox=\"0 0 32 32\" aria-hidden=\"true\"><path d=\"M7 9 H25 L16 25 Z\" fill=\"#8A99AD\"></path></svg>",
@@ -62,6 +63,14 @@ for (const [key, id] of [...Object.keys(BUILDING_SVG).map((k) => [k, k]), ['reac
   const b = body(id);
   if (!b) continue;
   NODE_ICONS[key] = `<svg width="100%" height="100%" viewBox="0 0 64 64" ${DRAW} aria-hidden="true" focusable="false">${b}</svg>`;
+}
+
+// Les nœuds qui ne sont pas des bâtiments : leurs dessins choisis (les niveaux de tapis gardent leurs anciens noms).
+for (const [key, b] of Object.entries(NODE_SVG)) {
+  const svg = `<svg width="100%" height="100%" viewBox="0 0 64 64" ${DRAW} aria-hidden="true" focusable="false">${b}</svg>`;
+  NODE_ICONS[key] = svg;
+  if (key === 'tapis_niveau') NODE_ICONS.rapide = svg;
+  if (key === 'tapis_express') NODE_ICONS.express = svg;
 }
 
 // Versions électriques : l'icône de la machine, un peu plus petite, avec un éclair jaune.
