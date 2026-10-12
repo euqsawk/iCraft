@@ -254,7 +254,7 @@ export class Hud implements GestureHandlers {
     for (const [id, label, icon, locked] of tools) {
       const b = h('button', `tool${locked ? ' locked' : ''}`, `${icon}${label}${locked ? `<span class="tool-lock">${ICONS.lock}</span>` : ''}`);
       // Le câble s'ouvre avec le Générateur.
-      b.onclick = () => this.pickTool(id, id === 'cable' ? !this.game.isUnlocked('generateur') : id === 'transport' ? !this.game.isUnlocked('camion') : id === 'module' ? !this.game.isUnlocked('module') : locked);
+      b.onclick = () => this.pickTool(id, id === 'cable' ? !this.game.isUnlocked('generateur') && !this.game.isUnlocked('pompe') : id === 'transport' ? !this.game.isUnlocked('camion') : id === 'module' ? !this.game.isUnlocked('module') : locked);
       this.toolButtons.set(id, b);
       toolbar.append(b);
     }
@@ -364,7 +364,8 @@ export class Hud implements GestureHandlers {
     for (const [id, node] of [['cable', 'generateur'], ['transport', 'camion'], ['module', 'module']]) {
       const b = this.toolButtons.get(id);
       if (!b) continue;
-      const locked = !this.game.isUnlocked(node) || (inside && (id !== 'module' || !this.game.nesting));
+      const open = id === 'cable' ? this.game.isUnlocked('generateur') || this.game.isUnlocked('pompe') : this.game.isUnlocked(node);
+      const locked = !open || (inside && (id !== 'module' || !this.game.nesting));
       b.classList.toggle('locked', locked);
       b.querySelector('.tool-lock')?.toggleAttribute('hidden', !locked);
     }
@@ -567,7 +568,7 @@ export class Hud implements GestureHandlers {
     this.closePopover();
     if (locked) {
       const msg: Record<string, string> = {
-        cable: 'Câbles : débloque le Générateur dans l’arbre (Énergie)',
+        cable: 'Câbles et tuyaux : débloque la Pompe à eau ou le Générateur dans l’arbre (Énergie)',
         transport: 'Camions : débloque le Dépôt dans l’arbre (Logistique, palier 4)',
         module: 'Modules : débloque-les dans l’arbre (branche Modules, palier 5)',
       };
@@ -587,7 +588,8 @@ export class Hud implements GestureHandlers {
     if (id === 'transport') { this.setTool('none'); this.openLines(); return; }
     const t = id as Tool;
     const same = this.tool === t || (t === 'gomme' && this.tool === 'zone') || (t === 'cable' && this.tool === 'tuyau');
-    this.setTool(same ? 'none' : t);
+    // Seulement la pompe débloquée : le bouton Câble ouvre directement les tuyaux.
+    this.setTool(same ? 'none' : t === 'cable' && !this.game.isUnlocked('generateur') ? 'tuyau' : t);
   }
 
   /** Les options d'un outil, au-dessus de la barre : Câble / Tuyau, Gomme / Zone. */
@@ -596,10 +598,10 @@ export class Hud implements GestureHandlers {
     box.innerHTML = '';
     const g = this.game;
     let opts: { label: string; icon: string; on: boolean; locked: boolean; pick: () => void; why: string }[] = [];
-    if ((this.tool === 'cable' || this.tool === 'tuyau') && g.isUnlocked('pompe')) {
+    if (this.tool === 'cable' || this.tool === 'tuyau') {
       opts = [
-        { label: 'Câble', icon: ICONS.cable, on: this.tool === 'cable', locked: false, pick: () => this.setTool('cable'), why: '' },
-        { label: 'Tuyau', icon: ICONS.pipe, on: this.tool === 'tuyau', locked: false, pick: () => this.setTool('tuyau'), why: '' },
+        { label: 'Câble', icon: ICONS.cable, on: this.tool === 'cable', locked: !g.isUnlocked('generateur'), pick: () => this.setTool('cable'), why: 'Câbles : débloque le Générateur (Énergie, palier 4)' },
+        { label: 'Tuyau', icon: ICONS.pipe, on: this.tool === 'tuyau', locked: !g.isUnlocked('pompe'), pick: () => this.setTool('tuyau'), why: 'Tuyaux : débloque la Pompe à eau (Énergie, palier 3)' },
       ];
     }
     if (this.tool === 'gomme' || this.tool === 'zone') {
@@ -1531,7 +1533,8 @@ export class Hud implements GestureHandlers {
       if (def.kind === 'generator') {
         sheet.append(this.sheetHead('Générateur', esc(status), close));
         const card = h('div', 'card');
-        card.innerHTML = `${this.gauge('Carburant', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb)}${this.powerCard(mm)}`;
+        const wn = g.view.waterNetOf(mm), wet = Math.round((mm.water ?? 0) * 100);
+        card.innerHTML = `${this.gauge('Carburant', mm.fuel, g.view.fuelCap(mm), g.view.lowFuel(mm), mm.carb)}<div class="gauge power"><span class="g-label">${ICONS.pipe}Eau</span><span class="g-bar"><span style="width:${wet}%"></span></span><b>${wet} %</b></div>${wn ? '' : '<p class="muted small">Il doit être refroidi : relie-le par un tuyau à une pompe posée sur un lac.</p>'}${this.powerCard(mm)}`;
         sheet.append(card);
         const acts = h('div', 'row');
         const mv = h('button', 'btn', `${ICONS.move}Déplacer`);

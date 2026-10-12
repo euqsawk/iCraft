@@ -909,6 +909,7 @@ test('gares : un train, 80 objets à la fois ; la ligne part avec la gare', () =
 
 test('raffinerie à carburant : elle se sert d’abord dans ce qu’elle produit', () => {
   const g = new Game('TEST-F3');
+  g.factory.waterFactor = () => 1; // de l'eau partout (la raffinerie en a besoin)
   g.money = 100000; g.world.reveal(8, 8, 20);
   g.unlocks.add('raffinerie');
   const r = g.placeMachine('raffinerie', 9, 4)!;
@@ -1375,6 +1376,20 @@ test('générateur, câbles et machines qui passent au courant', () => {
   const g = new Game('TEST-E1');
   const apply = () => (g as unknown as { applyUnlocks(): void }).applyUnlocks();
   g.money = 100000; g.world.reveal(8, 8, 20);
+  // Sans eau, un générateur au charbon ne tourne pas ; une raffinerie, un mélangeur non plus.
+  {
+    const dry = new Game('TEST-E0');
+    dry.money = 1e6; dry.world.reveal(8, 8, 20);
+    for (const id of ['generateur', 'melangeur', 'broyeur']) dry.unlocks.add(id);
+    (dry as unknown as { applyUnlocks(): void }).applyUnlocks();
+    const gen0 = dry.placeMachine('generateur', 4, 4)!, mix = dry.placeMachine('melangeur', 9, 4)!;
+    for (const m of dry.factory.machines.values()) m.built = true;
+    dry.pending = []; dry.factory.markBuilt();
+    gen0.fuel = 10; mix.inBuf = { ciment: 10, sable: 10 }; mix.fuel = 10;
+    run(dry, 5);
+    assert(gen0.status === 'nowater' && mix.status === 'nowater' && mix.made === 0, `sans eau : ${gen0.status} / ${mix.status}`);
+  }
+  g.factory.waterFactor = () => 1;
   assert(!g.placeMachine('generateur', 4, 4) && !g.placeCables([{ x: 6, y: 4 }]), 'à débloquer');
   assert(!MACHINES.four_elec && !BUILDABLE.some((m) => m.id.endsWith('_elec')), 'plus de machine électrique à part');
   g.unlocks.add('generateur'); apply();

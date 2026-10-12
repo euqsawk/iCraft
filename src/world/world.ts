@@ -42,6 +42,8 @@ export function patchCells(p: Patch): { x: number; y: number }[] {
 
 /** Rayon du filon dans la direction θ : un contour irrégulier mais stable. */
 export function patchRadius(p: Patch, theta: number): number {
+  // Un lac a des rives plus découpées (anses et presqu'îles).
+  if (p.type === 'eau') return p.r * (1 + 0.14 * Math.sin(2 * theta + p.p1) + 0.1 * Math.sin(3 * theta + p.p2) + 0.06 * Math.sin(5 * theta + p.p1 * 1.7) + 0.035 * Math.sin(9 * theta + p.p2 * 2.3));
   return p.r * (1 + 0.16 * Math.sin(3 * theta + p.p1) + 0.09 * Math.sin(5 * theta + p.p2));
 }
 
@@ -53,10 +55,10 @@ export function patchContains(p: Patch, x: number, y: number): boolean {
 }
 
 const BIOME_ORES: Record<BiomeId, { type: string; w: number; rich?: boolean }[]> = {
-  plaine: [{ type: 'fer', w: 4 }, { type: 'cuivre', w: 3 }, { type: 'charbon', w: 3 }, { type: 'calcaire', w: 2 }, { type: 'eau', w: 2 }],
+  plaine: [{ type: 'fer', w: 4 }, { type: 'cuivre', w: 3 }, { type: 'charbon', w: 3 }, { type: 'calcaire', w: 2 }],
   desert: [{ type: 'sable', w: 4 }, { type: 'quartz', w: 2 }, { type: 'petrole', w: 2 }],
   terres: [{ type: 'bauxite', w: 3 }, { type: 'cuivre', w: 2, rich: true }],
-  marais: [{ type: 'petrole', w: 3 }, { type: 'charbon', w: 2, rich: true }, { type: 'eau', w: 4 }],
+  marais: [{ type: 'petrole', w: 3 }, { type: 'charbon', w: 2, rich: true }],
   montagnes: [{ type: 'fer', w: 3, rich: true }, { type: 'or', w: 2 }],
   crateres: [{ type: 'uranium', w: 3 }, { type: 'quartz', w: 2, rich: true }],
   toundra: [{ type: 'titane', w: 3 }, { type: 'cristal_pur', w: 2 }],
@@ -69,9 +71,11 @@ const START_PATCHES: Omit<Patch, 'id' | 'p1' | 'p2'>[] = [
   { type: 'cuivre', cx: 16, cy: 12, r: 3.2, richness: 'normal' },
   { type: 'calcaire', cx: 16, cy: -10, r: 2.8, richness: 'pauvre' },
   { type: 'fer', cx: -26, cy: 24, r: 3.6, richness: 'riche' },
-  // Un lac près du départ (pour les pompes).
-  { type: 'eau', cx: 8, cy: -24, r: 3.4, richness: 'normal' },
+  // Un grand lac près du départ (pour les pompes).
+  { type: 'eau', cx: 6, cy: -31, r: 8, richness: 'normal' },
 ];
+/** Les lacs : rares mais grands (rayon 8 à 14 cases), surtout dans les marais et les plaines. */
+const LAKE_CHANCE: Record<BiomeId, number> = { plaine: 0.16, marais: 0.55, toundra: 0.2, terres: 0.06, montagnes: 0.08, desert: 0, crateres: 0 };
 const START_RADIUS = 30;
 
 export class World {
@@ -115,9 +119,35 @@ export class World {
     return c;
   }
 
+  /** Le lac d'un chunk, s'il en a un (ne dépend que de la graine : les voisins peuvent le connaître). */
+  private lake(cx: number, cy: number): Patch | null {
+    const rand = rng(hash(this.seedNum, cx, cy, 51));
+    const px = cx * CHUNK + 10 + rand() * (CHUNK - 20), py = cy * CHUNK + 10 + rand() * (CHUNK - 20);
+    const roll = rand(), r = 8 + rand() * 6, p1 = rand() * 6.28, p2 = rand() * 6.28;
+    if (Math.hypot(px, py) < START_RADIUS + 30 + r) return null;
+    if (roll >= LAKE_CHANCE[this.biomeAt(Math.floor(px), Math.floor(py))]) return null;
+    // Pas deux lacs collés : celui du chunk voisin (à gauche ou au-dessus) a la priorité.
+    return { id: `lac${cx}:${cy}`, type: 'eau', cx: px, cy: py, r, richness: 'normal', p1, p2 };
+  }
+
+  /** Les lacs qui peuvent toucher ce chunk (le sien, ceux des voisins, celui du départ). */
+  private lakesNear(cx: number, cy: number): Patch[] {
+    const out: Patch[] = [];
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
+      const l = this.lake(cx + i, cy + j);
+      if (l) out.push(l);
+    }
+    START_PATCHES.forEach((p, i) => { if (p.type === 'eau') out.push({ ...p, id: `s${i}`, p1: 0, p2: 0 }); });
+    return out;
+  }
+
   private generate(cx: number, cy: number): ChunkData {
     const patches: Patch[] = [];
     const rand = rng(hash(this.seedNum, cx, cy, 17));
+    const lakes = this.lakesNear(cx, cy);
+    const own = this.lake(cx, cy);
+    // Le lac du chunk, sauf s'il chevauche celui d'un voisin déjà prioritaire.
+    if (own && !lakes.some((l) => l.id !== own.id && Math.hypot(l.cx - own.cx, l.cy - own.cy) < (l.r + own.r) * 1.3 && (l.id.startsWith('s') || l.id < own.id))) patches.push(own);
     // Filons de départ : rangés dans le chunk de leur centre.
     START_PATCHES.forEach((p, i) => {
       if (cellToChunk(Math.floor(p.cx)) === cx && cellToChunk(Math.floor(p.cy)) === cy) {
@@ -139,7 +169,8 @@ export class World {
       for (const o of options) { pick -= o.w; if (pick <= 0) { choice = o; break; } }
       const roll = rand() + Math.min(d / 600, 0.25) + (choice.rich ? 0.35 : 0);
       const richness: Richness = roll > 0.95 ? 'riche' : roll > 0.5 ? 'normal' : 'pauvre';
-      const overlaps = patches.some((p) => Math.hypot(p.cx - px, p.cy - py) < p.r + 6);
+      const overlaps = patches.some((p) => Math.hypot(p.cx - px, p.cy - py) < p.r * (p.type === 'eau' ? 1.3 : 1) + 6)
+        || lakes.some((l) => Math.hypot(l.cx - px, l.cy - py) < l.r * 1.3 + 7);
       if (overlaps) continue;
       patches.push({
         id: `${cx}:${cy}:${i}`, type: choice.type, cx: px, cy: py,

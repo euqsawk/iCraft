@@ -835,8 +835,16 @@ export class Factory {
   waterUse(m: Machine): number {
     const k = machineDef(m.type).kind;
     if (k === 'reactor') return RULES.reactorWater;
+    if (k === 'generator') return RULES.genWater;
     if (m.type === 'melangeur') return RULES.mixerWater;
+    if (m.type === 'raffinerie') return RULES.refineryWater;
     return 0;
+  }
+
+  /** Part d'eau reçue par une machine qui en a besoin (1 pour les autres, et dans un atelier). */
+  waterFactor(m: Machine): number {
+    if (!this.waterUse(m) || this.freeEnergy) return 1;
+    return m.water ?? 0;
   }
 
   /** Le réseau d'eau d'une machine (null sans tuyau qui la touche). */
@@ -1014,7 +1022,7 @@ export class Factory {
         const d = machineDef(g.type);
         if (d.kind === 'solar') solar += d.supply! * this.daylight * this.solarMult;
         else if (d.kind === 'reactor') { if ((g.inBuf.uranium_enrichi ?? 0) > 0 || g.burn > 0) coal += d.supply! * (g.water ?? 0); }
-        else if (g.fuel > 0 || g.burn > 0) coal += d.supply!;
+        else if (g.fuel > 0 || g.burn > 0) coal += d.supply! * this.waterFactor(g);
       }
       for (const b of n.batteries) {
         if (!b.built) continue;
@@ -1058,7 +1066,7 @@ export class Factory {
     }
     // Un générateur sans câble ne sert à rien.
     for (const m of this.machines.values()) {
-      if (machineDef(m.type).kind === 'generator' && m.built && !this.netOfMachine.has(m)) m.status = m.fuel > 0 ? 'idle' : 'nofuel';
+      if (machineDef(m.type).kind === 'generator' && m.built && !this.netOfMachine.has(m)) m.status = this.waterFactor(m) <= 0 ? 'nowater' : m.fuel > 0 ? 'idle' : 'nofuel';
     }
   }
 
@@ -1080,6 +1088,8 @@ export class Factory {
 
   private tickGenerator(g: Machine, load: number, dt: number): void {
     if (!g.built) return;
+    // Un générateur au charbon doit être refroidi : sans eau, il ne tourne pas.
+    if (this.waterFactor(g) <= 0) { g.status = 'nowater'; return; }
     if (load <= 0) { g.status = g.fuel > 0 || g.burn > 0 ? 'idle' : 'nofuel'; return; }
     if (g.burn <= 0) {
       const k = burnOne(g, RULES.genCoalSeconds);
@@ -1667,8 +1677,10 @@ export class Factory {
         // Une raffinerie à carburant démarre même à vide : elle brûlera ce qu'elle produit.
         if (k <= 0 && this.selfFed(m)) k = 1;
         if (k <= 0) { m.status = this.noEnergy(m); return; }
-        // Un mélangeur arrosé (tuyau d'eau) travaille moitié plus vite.
-        m.craft.t += dt * k * Factory.levelSpeed(m) * (m.type === 'melangeur' && (m.water ?? 0) > 0 ? 1 + 0.5 * m.water! : 1);
+        // Mélangeur et raffinerie ont besoin d'eau (un tuyau depuis une pompe) : sans eau, ils s'arrêtent.
+        const wf = this.waterFactor(m);
+        if (wf <= 0) { m.status = 'nowater'; return; }
+        m.craft.t += dt * k * Factory.levelSpeed(m) * wf;
         if (m.craft.t < rec.time) { m.status = 'working'; return; }
       }
       // Le carburant qu'elle produit remplit d'abord sa propre case carburant.

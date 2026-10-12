@@ -74,6 +74,9 @@ export const RULES = {
   pumpWater: 40,
   reactorWater: 20,
   mixerWater: 5,
+  /** L'eau qu'il faut à un générateur au charbon (refroidissement) et à une raffinerie, en L/s. */
+  genWater: 10,
+  refineryWater: 10,
   pipeCost: 3,
   /** Réacteur : un barreau d'uranium enrichi dure 2 minutes à pleine charge. */
   reactorRodSeconds: 120,

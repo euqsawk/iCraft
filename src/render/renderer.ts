@@ -440,7 +440,51 @@ export class GameRenderer {
     v.fogVersion = ver;
   }
 
+  /** Un lac : une rive de sable, l'eau de plus en plus profonde vers le milieu, des reflets et quelques nénuphars. */
+  private drawLake(g: Graphics, p: Patch): void {
+    const ring = (k: number, add: number) => {
+      const pts: number[] = [];
+      for (let i = 0; i < 96; i++) {
+        const a = (i / 96) * Math.PI * 2;
+        const r = (patchRadius(p, a) * k + add) * CELL;
+        pts.push(p.cx * CELL + Math.cos(a) * r, p.cy * CELL + Math.sin(a) * r);
+      }
+      return pts;
+    };
+    g.poly(ring(1, 1.1)).fill(0xE9DFB4); // la plage
+    g.poly(ring(1, 0.75)).fill(0xD6CF9C); // le sable mouillé
+    g.poly(ring(1, 0.35)).fill(0x9AD4EC); // le bord, peu profond
+    g.poly(ring(0.82, 0)).fill(0x7CC2E6);
+    g.poly(ring(0.55, 0)).fill(0x63B0DD); // le fond
+    const rand = rng(hashString(p.id));
+    // Reflets : de petites vagues claires.
+    const waves = Math.round(p.r * 2.2);
+    for (let i = 0; i < waves; i++) {
+      const a = rand() * Math.PI * 2, rr = Math.sqrt(rand()) * p.r * 0.78 * CELL;
+      const x = p.cx * CELL + Math.cos(a) * rr, y = p.cy * CELL + Math.sin(a) * rr, w = (5 + rand() * 7);
+      g.moveTo(x - w, y).quadraticCurveTo(x - w / 2, y - 3, x, y).quadraticCurveTo(x + w / 2, y - 3, x + w, y);
+      g.stroke({ width: 1.8, color: 0xffffff, alpha: 0.55, cap: 'round' });
+    }
+    // Nénuphars près du bord.
+    const pads = 3 + Math.round(rand() * 4);
+    for (let i = 0; i < pads; i++) {
+      const a = rand() * Math.PI * 2, rr = (patchRadius(p, a) * (0.8 + rand() * 0.1)) * CELL;
+      const x = p.cx * CELL + Math.cos(a) * rr, y = p.cy * CELL + Math.sin(a) * rr, r = 3.5 + rand() * 2.5, cut = rand() * Math.PI * 2;
+      g.moveTo(x, y).arc(x, y, r, cut + 0.5, cut + Math.PI * 2 - 0.1).closePath().fill(0x5FA65A);
+      if (rand() < 0.4) g.circle(x + Math.cos(cut + 2) * r * 0.3, y + Math.sin(cut + 2) * r * 0.3, 1.6).fill(0xF6A5C0);
+    }
+    // Quelques roseaux sur la rive.
+    const reeds = 2 + Math.round(rand() * 3);
+    for (let i = 0; i < reeds; i++) {
+      const a = rand() * Math.PI * 2, rr = (patchRadius(p, a) + 0.55) * CELL;
+      const x = p.cx * CELL + Math.cos(a) * rr, y = p.cy * CELL + Math.sin(a) * rr;
+      for (let k = -1; k <= 1; k++) g.moveTo(x + k * 2.5, y + 4).lineTo(x + k * 3.5, y - 5 - (k === 0 ? 3 : 0));
+      g.stroke({ width: 1.6, color: 0x6E8F4A, cap: 'round' });
+    }
+  }
+
   private drawPatch(g: Graphics, p: Patch): void {
+    if (p.type === 'eau') { this.drawLake(g, p); return; }
     const d = item(p.type);
     const pts: number[] = [];
     for (let i = 0; i < 48; i++) {

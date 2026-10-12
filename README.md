@@ -124,3 +124,4 @@ Chaque poussée sur `main` lance les tests puis publie `dist/` sur GitHub Pages 
 | `tests` | Tests de la simulation |
 
 La simulation n'importe jamais PixiJS : elle se teste seule et pourra calculer la production hors ligne.
+- **Lacs et eau obligatoire** : les lacs sont rares mais grands (8 à 14 cases de rayon), avec une plage, une eau de plus en plus profonde, des reflets, des nénuphars et des roseaux ; un grand lac attend au nord du départ. La **Pompe à eau** (palier 3, sans prérequis, branche Énergie) se pose sur un lac et envoie 40 L/s dans les tuyaux (outil Câble → Tuyau, ouvert dès la pompe). L'eau est **obligatoire** pour le mélangeur (5 L/s), la raffinerie (10 L/s), le générateur au charbon (10 L/s, refroidissement) et le réacteur (20 L/s) : sans eau, ils s'arrêtent (« Pas d'eau »). Dans un atelier, l'eau est fournie.

@@ -116,12 +116,12 @@ export const MACHINES: Record<string, MachineDef> = {
   },
   melangeur: {
     id: 'melangeur', name: 'Mélangeur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 110, unlock: 7, buildable: true,
-    hint: 'Ciment + sable → béton',
+    hint: 'Ciment + sable → béton · il lui faut de l’eau (tuyau)',
     recipes: [r({ ciment: 1, sable: 1 }, { beton: 1 }, 1.8)],
   },
   raffinerie: {
     id: 'raffinerie', name: 'Raffinerie', kind: 'crafter', coal: true, w: 2, h: 2, cost: 160, unlock: 8, buildable: true,
-    hint: 'Bauxite → aluminium, pétrole → plastique ou carburant',
+    hint: 'Bauxite → aluminium, pétrole → plastique ou carburant · il lui faut de l’eau (tuyau)',
     recipes: [
       r({ bauxite: 1 }, { aluminium: 1 }, 2),
       r({ petrole: 1 }, { plastique: 1 }, 2),
@@ -170,7 +170,7 @@ export const MACHINES: Record<string, MachineDef> = {
   },
   generateur: {
     id: 'generateur', name: 'Générateur', kind: 'generator', coal: true, w: 2, h: 2, cost: 120, unlock: 1, recipes: [], buildable: true, supply: 600,
-    hint: 'Brûle du charbon et alimente les machines reliées par câble',
+    hint: 'Brûle du charbon, refroidi à l’eau (tuyau) : alimente les machines reliées par câble',
   },
   laboratoire: {
     id: 'laboratoire', name: 'Laboratoire', kind: 'lab', coal: false, unique: true, gift: true, w: 2, h: 2, cost: 80, unlock: 1, recipes: [], buildable: true,
