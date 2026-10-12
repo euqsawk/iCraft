@@ -279,6 +279,11 @@ export class Hud implements GestureHandlers {
 
   /** Ouvre l'arbre de déblocages. */
   openTree(tab?: string, select?: string): void {
+    // L'arbre ne s'ouvre qu'une fois le Laboratoire posé (c'est lui qui reçoit les objets des déblocages).
+    if (!this.game.hasLab()) {
+      this.toast('Pose d’abord le Laboratoire : l’arbre des déblocages s’ouvre avec lui', 'info');
+      return;
+    }
     this.closePopover();
     this.closeSheet();
     this.setTool('none');

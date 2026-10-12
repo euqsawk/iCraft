@@ -57,7 +57,7 @@ export const BIOME_NAMES: Record<BiomeId, string> = {
 };
 
 export const RULES = {
-  startMoney: 300,
+  startMoney: 600,
   beltCost: 1,
   /** Électricité : prix d'une case de câble ; un charbon fait tourner un générateur à pleine charge pendant 10 s. */
   cableCost: 2,

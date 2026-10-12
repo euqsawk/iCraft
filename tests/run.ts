@@ -592,7 +592,7 @@ test('train de fret : commande annoncée, coffre du quai, prime si plein, amende
   g.startFreight();
   const fr = g.freight!, q = g.quai();
   assert(fr.phase === 'away' && fr.t === 600 && Object.keys(fr.req).length === 2, `commande : ${JSON.stringify(fr.req)}`);
-  assert(q.w === 6 && !g.removeMachine(q), 'le quai reste en place');
+  assert(q.w === 6 && q.x === -1 && q.y === 24 && !g.removeMachine(q), `le quai, sous le Noyau à 20 cases, reste en place : ${q.x},${q.y}`);
   const [k, n] = Object.entries(fr.req)[0];
   assert(g.accepts(q, k) === n && g.accepts(q, 'uranium') === 0, 'il ne prend que sa commande');
   assert(g.receive(q, k, n + 5) === n, 'pas plus que demandé');

@@ -548,25 +548,32 @@ export class Game {
 
   // ---------- Train de fret ----------
 
-  /** Le Quai du train (posé s'il manque, au plus près du départ). */
-  quai(): Machine {
-    const f = this.factory;
+  /** Où va le Quai : toujours en bas, centré sous le Noyau, à 20 cases de lui. */
+  static readonly QUAI_AT = { x: -1, y: 24 };
+
+  /** Le Quai du train (posé s'il manque, à sa place sous le Noyau ; ramené là si la place est libre). */
+  quai(relocate = false): Machine {
+    const f = this.factory, { x, y } = Game.QUAI_AT;
     const have = [...f.machines.values()].find((m) => m.type === 'quai');
-    if (have) return have;
-    for (let r = 0; r <= 14; r++) {
-      for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++) {
-        if (Math.max(Math.abs(i), Math.abs(j)) !== r) continue;
-        const x = -3 + i, y = 7 + j;
-        if (f.checkMachine('quai', x, y).ok) return f.addMachine('quai', x, y, true);
+    if (have) {
+      if (relocate && (have.x !== x || have.y !== y) && f.checkMachine('quai', x, y, have, false).ok) {
+        f.removeMachine(have);
+        const m = f.addMachine('quai', x, y, true, have.id);
+        m.inBuf = have.inBuf;
+        return m;
       }
+      return have;
     }
-    return f.addMachine('quai', -3, 7, true);
+    // Rien ne doit l'empêcher : ce qui est sous lui (filon, lac) reste dessous.
+    const m = f.addMachine('quai', x, y, true);
+    this.world.reveal(x + 3, y + 1, 6);
+    return m;
   }
 
   /** Lance le mode train de fret (au début d'une partie) : le Quai est posé, la première commande annoncée. */
   startFreight(): void {
     if (this.freight) return;
-    this.quai();
+    this.quai(true);
     this.freight = newFreight(this.world.seed, this.palier);
     this.emit({ type: 'freight' });
   }
@@ -1719,7 +1726,7 @@ export class Game {
     for (const id of [...this.achievements]) if (!ACHIEVEMENTS.some((a) => a.id === id)) this.achievements.delete(id);
     this.achQuiet = true;
     this.rockets = s.rockets ?? 0;
-    if (s.freight) { this.freight = { ...s.freight, req: { ...s.freight.req } }; this.quai(); }
+    if (s.freight) { this.freight = { ...s.freight, req: { ...s.freight.req } }; this.quai(true); }
     // Les chantiers d'une ancienne partie se terminent tout de suite (plus de drones pour les construire).
     for (const j of s.pending ?? []) {
       if (j.kind === 'belt') { const b = this.factory.belts.get(j.k); if (b) b.built = true; }
