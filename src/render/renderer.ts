@@ -9,7 +9,7 @@ import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
 import { clock } from '../sim/freight.ts';
-import { DX, DY, unkey } from '../sim/geom.ts';
+import { DX, DY, key, unkey } from '../sim/geom.ts';
 import type { CableTracer } from '../sim/cables.ts';
 import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
@@ -19,7 +19,7 @@ import { buildingTexture, itemSvgUrl, itemTexture } from './buildingIcons.ts';
 import { dashedPolyline, drawBolt, drawItem, drawMachineBody, drawMachineIcon, roundRectPoints } from './draw.ts';
 import { ITEM_SPRITE_SCALE, orbitItemTexture, SKIN_ANCHOR, SKIN_SCALE, SKIN_SPRITE_SCALE, skinTexture } from './skinTextures.ts';
 import { orbitPoint, skinBody, skinOf } from '../data/skins.ts';
-import { inTunnel, pointAt, type LegRoute } from '../sim/routes.ts';
+import { inTunnel, pointAt, stepCells, type LegRoute } from '../sim/routes.ts';
 import { isStationType, rotDims, stationGeo, type Rot } from '../sim/stations.ts';
 import { SKIN_ART } from '../data/skinArt.ts';
 
@@ -181,6 +181,7 @@ export class GameRenderer {
   private chunks = new Map<string, ChunkView>();
   private machineViews = new Map<number, MachineView>();
   private noyauView: { root: Container; ring: Graphics; badge: Graphics; progress: number; pulse: number } | null = null;
+  private noyauLabel: Text | null = null;
   private itemTextures = new Map<string, Texture>();
   private itemPool: Sprite[] = [];
   private robotView!: { root: Container; shadow: Graphics; body: Container; beam: Graphics; flip: Container; sprite: Sprite; back: Container; front: Container; items: { back: Sprite; front: Sprite }[]; dur: number; wobble: boolean; look: string };
@@ -1338,13 +1339,35 @@ export class GameRenderer {
     return (names.replace(/^./, (c) => c.toUpperCase()) || 'Foreuse') + (lv > 1 ? ` · niv. ${lv}` : '');
   }
 
-  private machineAbove(m: Machine): boolean {
+  /**
+   * Le nom d'un bâtiment s'écrit sur la rangée de cases juste au-dessus : il se cache dès qu'il y a quelque chose
+   * derrière (une machine, un tapis, un quai, une route ou des rails), sur toute la largeur du texte.
+   */
+  private labelBlocked(m: Machine, textWidth: number): boolean {
     const f = this.game.view;
-    for (let x = m.x; x < m.x + m.w; x++) {
-      const o = f.machineAt(x, m.y - 1);
-      if (o && o !== m) return true;
+    const cx = m.x + m.w / 2, half = Math.max(m.w * CELL, textWidth + 4) / 2 / CELL;
+    const y = m.y - 1;
+    const lanes = this.laneCells();
+    for (let x = Math.floor(cx - half); x < Math.ceil(cx + half); x++) {
+      const o = f.machineAt(x, y);
+      if ((o && o !== m) || f.beltAt(x, y) || f.quays.has(key(x, y)) || lanes.has(key(x, y))) return true;
     }
     return false;
+  }
+
+  /** Les cases couvertes par les routes et les rails (recalculées quand les tracés changent). */
+  private laneCache: { v: number; cells: Set<number> } = { v: -1, cells: new Set() };
+  private laneCells(): Set<number> {
+    const f = this.game.view;
+    if (this.laneCache.v !== f.routeVersion) {
+      const cells = new Set<number>();
+      for (const r of f.routes.values()) for (const leg of r.legs) for (const st of leg.steps) {
+        const [ax, ay, bx, by] = stepCells(st.x, st.y, st.d);
+        cells.add(key(ax, ay)); cells.add(key(bx, by));
+      }
+      this.laneCache = { v: f.routeVersion, cells };
+    }
+    return this.laneCache.cells;
   }
 
   /** Rectangle visible (en pixels du monde, avec marge), mis à jour à chaque image. */
@@ -1357,6 +1380,12 @@ export class GameRenderer {
   }
 
   // ---------- Machines ----------
+
+  private makeLabel(text: string): Text {
+    const t = new Text({ text, style: { fontFamily: FONT, fontSize: 11, fontWeight: '800', fill: PALETTE.ink2 }, resolution: 3 });
+    t.anchor.set(0.5, 1);
+    return t;
+  }
 
 
 
@@ -1435,8 +1464,13 @@ export class GameRenderer {
     lamp.circle(-bw / 2 + 7, -bh / 2 + 7, 4.5).fill(0xffffff).circle(-bw / 2 + 7, -bh / 2 + 7, 3).fill(PALETTE.coral);
     lamp.visible = false;
     root.addChild(body, icon, badge, lamp);
-    // Plus de nom au-dessus des bâtiments : leur dessin suffit (le nom est dans leur fenêtre).
-    const label: Text | null = null;
+    let label: Text | null = null;
+    if (!bare) {
+      const name = isDrill && m.ore ? item(m.ore).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase()) : def.name;
+      label = this.makeLabel(name);
+      label.position.set(0, -bh / 2 - 4);
+      root.addChild(label);
+    }
     root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
@@ -1453,11 +1487,15 @@ export class GameRenderer {
     const tex = buildingTexture('noyau');
     if (tex) {
       // Le dessin choisi (le cœur corail et ses quatre bras) posé sur un socle, comme les autres bâtiments.
+      // Socle d'abord, puis l'anneau de progression (le trait autour), puis le dessin ; le nom au-dessus.
       drawMachineBody(body, S - 2, S - 2, 22, PALETTE.white);
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
-      sp.width = sp.height = S - 18;
-      root.addChild(ring, body, sp, badge);
+      sp.width = sp.height = S - 22;
+      const label = this.makeLabel('Noyau');
+      label.position.set(0, -S / 2 - 2);
+      root.addChild(body, ring, sp, label, badge);
+      this.noyauLabel = label;
     } else {
       body.roundRect(-S / 2 + 12, -S / 2 + 16, S - 24, S - 24, 16).fill(0xd8644d);
       body.roundRect(-S / 2 + 12, -S / 2 + 12, S - 24, S - 24, 16).fill(PALETTE.coral);
@@ -1504,7 +1542,7 @@ export class GameRenderer {
         const txt = lead ? this.drillGroupName(m) : '';
         if (txt !== v.labelText) { v.labelText = txt; v.label.text = txt; }
       }
-      if (v.label) v.label.visible = lead && this.camera.zoom > 0.6 && !this.machineAbove(m);
+      if (v.label) v.label.visible = lead && this.camera.zoom > 0.6 && !this.labelBlocked(m, v.label.width);
       const low = lead && this.game.view.lowFuel(m);
       v.lamp.visible = low && Math.sin(this.time * (m.fuel <= 0 && m.burn <= 0 ? 12 : 6)) > -0.2;
       // Branchée sur un réseau qui a du courant : un petit éclair dans le coin (elle se passe de charbon).
@@ -1553,6 +1591,8 @@ export class GameRenderer {
         }
       }
       nv.root.visible = this.inView(nv.root.x, nv.root.y, 4 * CELL);
+      const nm = [...this.game.view.machines.values()].find((x) => x.type === 'noyau');
+      if (this.noyauLabel && nm) this.noyauLabel.visible = this.camera.zoom > 0.6 && !this.labelBlocked(nm, this.noyauLabel.width);
       nv.pulse = Math.max(0, nv.pulse - dt * 3);
       nv.root.scale.set(1 + nv.pulse * 0.04);
     }
