@@ -183,6 +183,13 @@ export class GameRenderer {
   private upperItemLayer = new Container();
   private upperPool: Sprite[] = [];
   private liftG = new Graphics();
+  /** Monte-charge : la plateforme (qui monte et descend avec l'objet) et les poteaux, redessinés à chaque image. */
+  private liftPlatG = new Graphics();
+  /** Les objets dans les cabines (par-dessus la plateforme). */
+  private liftItemLayer = new Container();
+  private liftPool: Sprite[] = [];
+  /** Les cabines : case, sens (monte ou descend), et le tapis du haut qui traverse la cabine. */
+  private cabins: { x: number; y: number; up: boolean; belt: Belt; alpha: number }[] = [];
   private actorLayer = new Container();
   private fx = new Graphics();
   private fogLayer = new Container();
@@ -257,7 +264,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -751,30 +758,54 @@ export class GameRenderer {
    * avec un chevron dans le sens du flux (vers la machine pour une entrée, vers le tapis pour une sortie).
    */
   /**
-   * Ascenseurs : là où un tapis change d'étage, une petite cabine carrée sur la case du haut,
-   * avec une flèche qui monte ou qui descend.
+   * Monte-charge (planche « A · Monte-charge ») : là où un tapis change d'étage, une cabine carrée à quatre poteaux
+   * sur la case du haut. L'objet s'y arrête, la plateforme le monte (il grossit, son ombre s'éloigne), il repart.
    */
   private drawLifts(): void {
     const g = this.liftG;
     g.clear();
     const f = this.game.view;
+    this.cabins = [];
     for (const b of f.belts.values()) {
       const { to } = f.liftOf(b);
       if (!to) continue;
       const up = !b.z; // du sol vers le haut
       const top = up ? to : b;
-      this.liftIcon(g, top.x, top.y, up, b.built && to.built ? 1 : 0.5);
+      const alpha = b.built && to.built ? 1 : 0.5;
+      this.cabins.push({ x: top.x, y: top.y, up, belt: top, alpha });
+      this.cabinBase(g, top.x, top.y, alpha);
     }
   }
 
+  /** La cabine (son ombre et son plancher) ; la plateforme et les poteaux sont dessinés à part. */
+  private cabinBase(g: Graphics, x: number, y: number, alpha: number): void {
+    const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
+    g.roundRect(cx - 12, cy - 9, 24, 24, 5).fill({ color: PALETTE.ink, alpha: 0.18 * alpha });
+    g.roundRect(cx - 12, cy - 12, 24, 24, 5).fill({ color: 0xe9f0ec, alpha }).stroke({ width: 2, color: PALETTE.ink, alpha });
+  }
+
+  /** La plateforme (h = 0 en bas, 1 en haut : elle grossit en montant) et les quatre poteaux de la cabine. */
+  private cabinTop(g: Graphics, x: number, y: number, h: number, alpha: number): void {
+    const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL, s = 8 * (1 + 0.14 * h);
+    g.roundRect(cx - s, cy - s, s * 2, s * 2, 3).fill({ color: 0xffffff, alpha }).stroke({ width: 2, color: 0x9fb0ba, alpha });
+    for (const [dx, dy] of [[-13.5, -13.5], [-13.5, 8.5], [8.5, -13.5], [8.5, 8.5]]) g.roundRect(cx + dx, cy + dy, 5, 5, 1.4).fill({ color: PALETTE.ink, alpha });
+  }
+
+  /** Une cabine entière (pendant un tracé : là où l'ascenseur sera posé). */
   private liftIcon(g: Graphics, x: number, y: number, up: boolean, alpha: number): void {
-    const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL, hs = 8;
-    g.roundRect(cx - hs, cy - hs + 3, hs * 2, hs * 2, 5).fill({ color: PALETTE.ink, alpha: 0.2 * alpha });
-    g.roundRect(cx - hs, cy - hs, hs * 2, hs * 2, 5).fill({ color: PALETTE.white, alpha }).stroke({ width: 2, color: PALETTE.ink, alpha });
-    const s = up ? -1 : 1;
-    g.moveTo(cx - 4, cy - s * 1.5).lineTo(cx, cy + s * 2.5).lineTo(cx + 4, cy - s * 1.5);
-    g.moveTo(cx, cy - s * 4).lineTo(cx, cy + s * 2.5);
-    g.stroke({ width: 2, color: up ? PALETTE.green : PALETTE.coral, alpha, cap: 'round', join: 'round' });
+    this.cabinBase(g, x, y, alpha);
+    this.cabinTop(g, x, y, up ? 0 : 1, alpha);
+  }
+
+  /**
+   * Un objet qui traverse une cabine : il arrive au milieu, s'arrête pendant que la plateforme monte (ou descend),
+   * puis repart. Renvoie sa position dans la case (0 à 1) et sa hauteur (0 au sol, 1 en haut).
+   */
+  private static cabinMotion(p: number, up: boolean): { q: number; h: number } {
+    const from = up ? 0 : 1, to = up ? 1 : 0;
+    if (p < 0.3) return { q: (p / 0.3) * 0.5, h: from };
+    if (p < 0.75) { const u = (p - 0.3) / 0.45, e = u * u * (3 - 2 * u); return { q: 0.5, h: from + (to - from) * e }; }
+    return { q: 0.5 + ((p - 0.75) / 0.25) * 0.5, h: to };
   }
 
   /** Le portique d'un compteur : deux poteaux de part et d'autre du tapis, une barre, un voyant jaune. */
@@ -1085,7 +1116,7 @@ export class GameRenderer {
     if (elec !== this.electricOn) {
       this.electricOn = elec;
       const a = elec ? 0.3 : 1;
-      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
+      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
       this.actorLayer.alpha = elec ? 0.45 : 1;
       this.modeTint.visible = elec;
       this.powerG.visible = elec;
@@ -1367,9 +1398,55 @@ export class GameRenderer {
       if (!s) { s = new Sprite(); s.anchor.set(0.5); layer.addChild(s); pool.push(s); }
       return s;
     };
+    // Monte-charge : chaque objet traverse la cabine (il s'arrête et monte s'il a de la place, sinon il glisse en montant),
+    // la plateforme suit celui qui est au milieu, puis revient attendre le suivant.
+    const pg = this.liftPlatG;
+    pg.clear();
+    let usedL = 0;
+    const f0 = this.game.view;
+    const cabinSet = new Set<Belt>();
+    for (const c of this.cabins) {
+      cabinSet.add(c.belt);
+      const belt = c.belt, cx = (c.x + 0.5) * CELL, cy = (c.y + 0.5) * CELL;
+      if (cx < b.x0 - CELL || cx > b.x1 + CELL || cy < b.y0 - CELL || cy > b.y1 + CELL) continue;
+      const from = c.up ? 0 : 1, to = c.up ? 1 : 0;
+      // Les objets voisins (sur la case d'avant et celle d'après), pour savoir s'il y a la place de s'arrêter.
+      const items = belt.built ? [...belt.items].sort((x, y) => x.p - y.p) : [];
+      const nx = f0.next(belt), feed = f0.feederOf(belt);
+      const aheadP = nx?.kind === 'belt' && nx.belt.items.length ? 1 + Math.min(...nx.belt.items.map((i) => i.p)) : Infinity;
+      const behindP = feed && feed.items.length ? Math.max(...feed.items.map((i) => i.p)) - 1 : -Infinity;
+      const moves = items.map((it, i) => {
+        const p = Math.min(it.p, 1);
+        const ahead = i + 1 < items.length ? items[i + 1].p : aheadP, behind = i > 0 ? items[i - 1].p : behindP;
+        const room = Math.min(ahead - p, p - behind);
+        const k = Math.max(0, Math.min(1, (room - 0.5) / 0.5));
+        const stop = GameRenderer.cabinMotion(p, c.up);
+        const glide = { q: p, h: mix(from, to, (p - 0.3) / 0.4) };
+        return { it, p, q: glide.q + (stop.q - glide.q) * k, h: glide.h + (stop.h - glide.h) * k };
+      });
+      // La plateforme : à la hauteur de l'objet qui monte, puis elle revient (en bas pour monter, en haut pour descendre).
+      let h = from;
+      for (const m of moves) {
+        if (m.p >= 0.3 && m.p <= 0.7) { h = m.h; break; }
+        if (m.p > 0.7) h = mix(to, from, (m.p - 0.7) / 0.3);
+      }
+      this.cabinTop(pg, c.x, c.y, h, c.alpha);
+      for (const m of moves) {
+        const d = m.q < 0.5 ? belt.inDir : belt.dir, t2 = m.q < 0.5 ? m.q * 2 - 1 : (m.q - 0.5) * 2;
+        const x = cx + DX[d] * t2 * CELL / 2, y = cy + DY[d] * t2 * CELL / 2;
+        // Son ombre s'éloigne quand il monte.
+        pg.ellipse(x, y + 2.5 + m.h * 6, 6 + m.h, 4.5).fill({ color: PALETTE.ink, alpha: 0.18 });
+        const s = sprite(this.liftPool, this.liftItemLayer, usedL++);
+        s.texture = this.itemTextures.get(m.it.t)!;
+        s.position.set(x, y);
+        s.scale.set(1 + 0.14 * m.h);
+        s.visible = true;
+      }
+    }
     for (const belt of this.game.view.belts.values()) {
       if (!belt.built || belt.items.length === 0) continue;
       const bx = (belt.x + 0.5) * CELL, by = (belt.y + 0.5) * CELL;
+      if (cabinSet.has(belt)) continue;
       const m = belt.jump || belt.splitJump ? far : 0;
       if (bx < b.x0 - m || bx > b.x1 + m || by < b.y0 - m || by > b.y1 + m) continue;
       if (belt.jump) {
@@ -1407,6 +1484,8 @@ export class GameRenderer {
         }
         const s = belt.z ? sprite(this.upperPool, this.upperItemLayer, usedU++) : sprite(this.itemPool, this.itemLayer, used++);
         s.texture = this.itemTextures.get(it.t)!;
+        // En hauteur, les objets sont plus près : un peu plus gros.
+        if (belt.z) s.scale.set(1.14);
         s.position.set(x + (it.sx ?? 0) * CELL, y + (it.sy ?? 0) * CELL);
         s.visible = true;
       }
@@ -1414,6 +1493,7 @@ export class GameRenderer {
     for (let i = used; i < this.itemPool.length; i++) this.itemPool[i].visible = false;
     for (let i = usedB; i < this.bridgePool.length; i++) this.bridgePool[i].visible = false;
     for (let i = usedU; i < this.upperPool.length; i++) this.upperPool[i].visible = false;
+    for (let i = usedL; i < this.liftPool.length; i++) this.liftPool[i].visible = false;
   }
 
   /** Une autre machine touche-t-elle le haut de celle-ci ? */
@@ -2773,6 +2853,12 @@ function drawStationArt(g: Graphics, type: string, built: boolean): void {
 
 /** Taille des camions et des trains (les voies font 2 cases de large). */
 const VEHICLE_SCALE = 1.6;
+
+/** Fondu doux de a vers b (u de 0 à 1). */
+function mix(a: number, b: number, u: number): number {
+  const v = Math.max(0, Math.min(1, u)), e = v * v * (3 - 2 * v);
+  return a + (b - a) * e;
+}
 
 /** Ordre d'affichage d'une machine : de haut en bas, puis de gauche à droite. */
 function zOf(m: { x: number; y: number; h: number }): number {
