@@ -13,13 +13,19 @@ export interface TraceCell {
   existing?: boolean;
   /** Pont : nombre de cases enjambées après celle-ci. */
   jump?: number;
+  /** En hauteur (étage 2). */
+  z?: 1;
 }
+
+type Cell = { x: number; y: number; z: 0 | 1; jump?: number };
 
 /** Marge (en cases) avant qu'un léger écart du doigt ne crée un virage. */
 const HYSTERESIS = 0.85;
 
 export class BeltTracer {
-  cells: { x: number; y: number; jump?: number }[] = [];
+  cells: Cell[] = [];
+  /** Étage des cases qu'on pose (0 : au sol, 1 : en hauteur). Se change pendant le tracé : là où il change, un ascenseur. */
+  level: 0 | 1 = 0;
   /** Ponts débloqués : en continuant tout droit par-delà un tapis, on passe par-dessus. */
   bridges = false;
   /** Dérivation qui part en pont (par-dessus un tapis collé) : nombre de cases enjambées. */
@@ -41,41 +47,71 @@ export class BeltTracer {
   readonly splitFrom: Belt | null = null;
   private startDir: Dir | null = null;
   private factory: Factory;
+  private lastF: { x: number; y: number } | null = null;
 
-  constructor(factory: Factory, fx: number, fy: number) {
+  constructor(factory: Factory, fx: number, fy: number, level: 0 | 1 = 0) {
     this.factory = factory;
+    this.level = level;
     const sx = Math.floor(fx), sy = Math.floor(fy);
     const m = factory.machineAt(sx, sy);
-    const b = factory.beltAt(sx, sy);
+    // Le tapis de l'étage choisi d'abord ; celui de l'autre étage seulement pour prolonger son bout (par un ascenseur).
+    const b = factory.beltAt(sx, sy, level);
+    const o = factory.beltAt(sx, sy, level ? 0 : 1);
     if (m) {
       this.startMachine = m;
     } else if (b) {
-      const n = factory.next(b);
-      // Un bout de tapis libre se prolonge ; s'il donne déjà dans une machine, on part en dérivation
-      // (pour nourrir aussi une machine de l'autre côté, par exemple).
-      if (!n || (n.kind !== 'belt' && !(n.kind === 'machine' && b.built && !b.jump))) {
+      if (this.freeEnd(b)) {
         this.extend = b;
-        this.cells = [{ x: sx, y: sy }];
-      } else if (b.built && !b.jump && (b.split === undefined || (b.split2 === undefined && !b.splitJump && (factory.thirdOutput || factory.machineAt(b.x + DX[b.split], b.y + DY[b.split]))))) {
-        // Un séparateur qui nourrit déjà une machine peut encore nourrir celle d'en face.
+        this.cells = [{ x: sx, y: sy, z: b.z ?? 0 }];
+      } else if (b.built && !b.jump && (b.split === undefined || (b.split2 === undefined && !b.splitJump && factory.thirdOutput))) {
         this.splitFrom = b;
       } else {
         this.blocked = true;
       }
-    } else if (this.usable(sx, sy)) {
-      this.cells = [{ x: sx, y: sy }];
+    } else if (o && this.freeEnd(o)) {
+      this.extend = o;
+      this.cells = [{ x: sx, y: sy, z: o.z ?? 0 }];
+    } else if (this.usable(sx, sy, level)) {
+      this.cells = [{ x: sx, y: sy, z: level }];
     } else {
       this.blocked = true;
     }
   }
 
-  private usable(x: number, y: number): boolean {
-    // On construit aussi dans le brouillard.
-    return this.factory.isFree(x, y);
+  /** Un bout de tapis libre (qui ne donne dans rien) se prolonge ; s'il donne dans une machine, on part en dérivation. */
+  private freeEnd(b: Belt): boolean {
+    const n = this.factory.next(b);
+    return !n || (n.kind !== 'belt' && !(n.kind === 'machine' && b.built && !b.jump));
   }
 
-  private occupied(x: number, y: number): boolean {
-    return !!this.factory.machineAt(x, y) || !!this.factory.beltAt(x, y);
+  private usable(x: number, y: number, z: 0 | 1): boolean {
+    // On construit aussi dans le brouillard. En hauteur, on passe au-dessus des tapis du sol (pas des machines).
+    return this.factory.isFree(x, y, z);
+  }
+
+  private occupied(x: number, y: number, z: 0 | 1): boolean {
+    return !!this.factory.machineAt(x, y) || !!this.factory.beltAt(x, y, z);
+  }
+
+  /**
+   * Passer de la case c (étage c.z) à (x, y) à l'étage z : un ascenseur si l'étage change.
+   * Il lui faut la place : rien à l'ancien étage dans la nouvelle case, ni au nouvel étage dans l'ancienne.
+   */
+  private liftOk(c: { x: number; y: number; z: 0 | 1 }, x: number, y: number, z: 0 | 1): boolean {
+    return c.z === z || (!this.factory.beltAt(x, y, c.z) && !this.factory.beltAt(c.x, c.y, z));
+  }
+
+  /** Change l'étage pendant le tracé : les cases suivantes seront à ce niveau. */
+  setLevel(level: 0 | 1): void {
+    if (level === this.level) return;
+    this.level = level;
+    // Une seule case posée pour l'instant : elle change d'étage avec.
+    if (this.cells.length === 1 && !this.extend && !this.splitJump) {
+      const c = this.cells[0];
+      const from = this.splitFrom ? { x: this.splitFrom.x, y: this.splitFrom.y, z: (this.splitFrom.z ?? 0) as 0 | 1 } : null;
+      if (this.usable(c.x, c.y, level) && (!from || this.liftOk(from, c.x, c.y, level))) { c.z = level; delete c.jump; }
+    }
+    if (this.lastF) this.move(this.lastF.x, this.lastF.y);
   }
 
   /** Nombre de cases nouvelles (à construire). */
@@ -92,7 +128,7 @@ export class BeltTracer {
   private landing(x: number, y: number, d: Dir): number {
     for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
       const cx = x + DX[d] * k, cy = y + DY[d] * k;
-      if (this.usable(cx, cy)) return k >= 2 ? k : 0;
+      if (this.usable(cx, cy, 0)) return k >= 2 ? k : 0;
       // On n'enjambe que des tapis (pas une machine, ni le tracé lui-même, ni le brouillard).
       if (!this.factory.beltAt(cx, cy) || this.cells.some((p) => p.x === cx && p.y === cy)) return 0;
     }
@@ -103,8 +139,9 @@ export class BeltTracer {
    * Peut-on passer par-dessus ce qui bloque, depuis la case c, dans le sens step, vers le doigt (tx, ty) ?
    * Renvoie le nombre de cases enjambées (0 : non).
    */
-  private bridgeOver(c: { x: number; y: number }, step: Dir, tx: number, ty: number): number {
-    if (!this.bridges) return 0;
+  private bridgeOver(c: Cell, step: Dir, tx: number, ty: number): number {
+    // Les ponts sont au sol ; en hauteur, on passe déjà par-dessus.
+    if (!this.bridges || this.level || c.z) return 0;
     // On ne repart pas en arrière, et le bout d'un pont existant ne se rallonge pas.
     const cur = this.currentDir();
     if (cur !== null && step === opposite(cur)) return 0;
@@ -112,6 +149,17 @@ export class BeltTracer {
     const ahead = (tx - c.x) * DX[step] + (ty - c.y) * DY[step];
     const k = this.landing(c.x, c.y, step);
     return k && ahead >= k ? k - 1 : 0;
+  }
+
+  /** Nombre d'ascenseurs (changements d'étage) dans le tracé. */
+  get liftCount(): number {
+    const c = this.cells;
+    let n = 0;
+    for (let i = 1; i < c.length; i++) if (c[i].z !== c[i - 1].z) n++;
+    if (this.splitFrom && c.length && c[0].z !== (this.splitFrom.z ?? 0)) n++;
+    const last = c[c.length - 1], t = this.endTarget;
+    if (last && t && !this.factory.machineAt(t.x, t.y) && !this.factory.beltAt(t.x, t.y, last.z)) n++;
+    return n;
   }
 
   /** Le bout d'un tapis se tourne simplement vers une machine (ou un tapis) collée, sans case nouvelle. */
@@ -131,7 +179,9 @@ export class BeltTracer {
   }
 
   move(fx: number, fy: number): void {
+    this.lastF = { x: fx, y: fy };
     if (this.blocked && this.cells.length === 0 && !this.splitFrom) return;
+    const L = this.level;
     const sb = this.splitFrom;
     // Dérivation en pont : le doigt revient en deçà de la case d'arrivée, on repart de zéro.
     if (sb && this.splitJump && this.startDir !== null) {
@@ -148,20 +198,22 @@ export class BeltTracer {
       if (d === sb.dir || d === opposite(sb.inDir) || d === sb.split) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
       if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
-      // Seconde dérivation : vers une machine collée, ou vers un tapis avec le séparateur à 3 sorties (pas en pont).
-      if (sb.split !== undefined && (!this.factory.thirdOutput || sb.split2 !== undefined || sb.splitJump || !this.usable(x, y))) { this.blocked = true; return; }
-      if (!this.usable(x, y)) {
-        // Un tapis collé sur ce côté : avec les ponts, la dérivation passe par-dessus quand le doigt va au-delà.
-        const k = this.bridges && this.factory.beltAt(x, y) ? this.landing(sb.x, sb.y, d) : 0;
+      const sz = (sb.z ?? 0) as 0 | 1;
+      const free = this.usable(x, y, L) && this.liftOk({ x: sb.x, y: sb.y, z: sz }, x, y, L);
+      // Seconde dérivation (séparateur à 3 sorties) : pas en pont.
+      if (sb.split !== undefined && (!this.factory.thirdOutput || sb.split2 !== undefined || sb.splitJump || !free)) { this.blocked = true; return; }
+      if (!free) {
+        // Un tapis collé sur ce côté : avec les ponts (au sol), la dérivation passe par-dessus quand le doigt va au-delà.
+        const k = this.bridges && !L && !sz && this.factory.beltAt(x, y) ? this.landing(sb.x, sb.y, d) : 0;
         const ahead = (fx - (sb.x + 0.5)) * DX[d] + (fy - (sb.y + 0.5)) * DY[d];
         if (!k || ahead < k - 0.4) { this.blocked = true; return; }
         this.startDir = d;
         this.splitJump = k - 1;
-        this.cells.push({ x: sb.x + DX[d] * k, y: sb.y + DY[d] * k });
+        this.cells.push({ x: sb.x + DX[d] * k, y: sb.y + DY[d] * k, z: 0 });
         return;
       }
       this.startDir = d;
-      this.cells.push({ x, y });
+      this.cells.push({ x, y, z: L });
     }
     const m = this.startMachine;
     if (m && this.cells.length === 0) {
@@ -170,13 +222,6 @@ export class BeltTracer {
       this.linkDir = null;
       this.linkMachine = null;
       if (this.factory.inside(m, cx, cy)) return;
-      // Un groupe de foreuses est une seule machine : le doigt qui passe sur une voisine du groupe part d'elle.
-      const here = this.factory.machineAt(cx, cy);
-      if (here && here !== m && m.type === 'foreuse' && here.type === 'foreuse' && this.factory.drillGroup(m).includes(here)) {
-        this.startMachine = here;
-        this.move(fx, fy);
-        return;
-      }
       // Première case : collée au bord de la machine, du côté du doigt.
       let x = Math.min(Math.max(cx, m.x), m.x + m.w - 1);
       let y = Math.min(Math.max(cy, m.y), m.y + m.h - 1);
@@ -190,19 +235,9 @@ export class BeltTracer {
       const lm = this.factory.machineAt(x, y);
       if (lm && lm !== m) { this.linkMachine = lm; this.blocked = true; return; }
       // Un tapis longe la machine à cet endroit : on propose de les relier par le côté.
-      const lb = this.factory.beltAt(x, y);
+      const lb = this.factory.beltAt(x, y, L);
       if (lb && lb.jump) { this.blocked = true; return; }
       if (lb) {
-        // Le doigt passe par-dessus le tapis jusqu'à une autre machine : un pont direct entre les deux.
-        if (cx !== x || cy !== y) {
-          const d = this.startDir as Dir;
-          for (let k = 1; k <= RULES.bridgeSpan; k++) {
-            const tx = x + DX[d] * k, ty = y + DY[d] * k;
-            const tm = this.factory.machineAt(tx, ty);
-            if (tm && tm !== m) { if (this.factory.bridgeBetween(m, tm)) { this.linkMachine = tm; this.blocked = true; return; } break; }
-            if (!this.factory.beltAt(tx, ty)) break;
-          }
-        }
         const toMachine = opposite(this.startDir as Dir);
         const intoMachine = lb.dir === toMachine;
         const fromMachine = opposite(lb.inDir) === toMachine;
@@ -210,8 +245,8 @@ export class BeltTracer {
         this.blocked = true;
         return;
       }
-      if (!this.usable(x, y)) { this.blocked = true; return; }
-      this.cells.push({ x, y });
+      if (!this.usable(x, y, L)) { this.blocked = true; return; }
+      this.cells.push({ x, y, z: L });
     }
     if (this.cells.length === 0) return;
 
@@ -256,19 +291,26 @@ export class BeltTracer {
         continue;
       }
       if (this.cells.some((p) => p.x === nx && p.y === ny)) { this.blocked = true; break; }
-      if (!this.usable(nx, ny)) {
+      // Le doigt s'arrête sur un tapis de l'autre étage (et rien à celui-ci) : un ascenseur le rejoint.
+      // S'il va au-delà, on passe au-dessus (ou en dessous).
+      if (nx === tx && ny === ty && this.factory.beltAt(nx, ny, L ? 0 : 1) && !this.factory.beltAt(nx, ny, L)) {
+        this.endTarget = { x: nx, y: ny };
+        break;
+      }
+      if (!this.usable(nx, ny, L)) {
         // Un tapis en travers, et le doigt continue au-delà : un pont passe par-dessus.
         const j = this.bridgeOver(c, step, tx, ty);
         if (j > 0) {
           c.jump = j;
-          this.cells.push({ x: c.x + DX[step] * (j + 1), y: c.y + DY[step] * (j + 1) });
+          this.cells.push({ x: c.x + DX[step] * (j + 1), y: c.y + DY[step] * (j + 1), z: 0 });
           continue;
         }
-        if (this.occupied(nx, ny)) this.endTarget = { x: nx, y: ny };
+        if (this.occupied(nx, ny, L)) this.endTarget = { x: nx, y: ny };
         else this.blocked = true;
         break;
       }
-      this.cells.push({ x: nx, y: ny });
+      if (!this.liftOk(c, nx, ny, L)) { this.blocked = true; break; }
+      this.cells.push({ x: nx, y: ny, z: L });
     }
     // Un tapis ne se branche pas sur lui-même ni sur la machine d'où il part s'il n'a qu'une case.
     if (this.endTarget && this.startMachine && this.cells.length === 1 && this.factory.machineAt(this.endTarget.x, this.endTarget.y) === this.startMachine) {
@@ -302,7 +344,7 @@ export class BeltTracer {
       else if (this.extend) inDir = this.extend.inDir;
       else if (this.startDir !== null) inDir = this.startDir;
       else inDir = dir;
-      out.push({ x: c.x, y: c.y, dir, inDir, existing: i === 0 && !!this.extend, ...(c.jump ? { jump: c.jump } : {}) });
+      out.push({ x: c.x, y: c.y, dir, inDir, existing: i === 0 && !!this.extend, ...(c.jump ? { jump: c.jump } : {}), ...(c.z ? { z: 1 as const } : {}) });
     }
     return out;
   }

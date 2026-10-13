@@ -39,6 +39,19 @@ function trace(g: Game, pts: [number, number][]): BeltTracer {
   return t;
 }
 
+/** Comme trace, avec un niveau de départ ; « 0 » ou « 1 » dans la liste change de niveau en cours de route. */
+function traceL(g: Game, level: 0 | 1, pts: ([number, number] | '0' | '1')[]): BeltTracer {
+  const first = pts[0] as [number, number];
+  const t = new BeltTracer(g.view, first[0], first[1], level);
+  let prev = first;
+  for (const p of pts.slice(1)) {
+    if (typeof p === 'string') { t.setLevel(p === '1' ? 1 : 0); continue; }
+    for (let s = 1; s <= 8; s++) t.move(prev[0] + (p[0] - prev[0]) * s / 8, prev[1] + (p[1] - prev[1]) * s / 8);
+    prev = p;
+  }
+  return t;
+}
+
 function run(g: Game, seconds: number): void {
   for (let i = 0; i < seconds * 30; i++) g.tick(1 / 30);
 }
@@ -631,8 +644,10 @@ test('pont direct entre deux machines par-dessus un tapis (MACHINE > TAPIS > MAC
   assert(g.placeBelts(trace(g, [[7.5, 5.5], [7.5, 11.5]]).result()), 'un tapis passe entre les deux');
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
-  const t = new BeltTracer(g.factory, 6.5, 8.5); t.move(8.5, 8.5);
-  assert(t.linkMachine === b, 'le doigt qui passe par-dessus le tapis propose le pont');
+  // L'option vient du tapis sélectionné : un pont dans chaque sens.
+  const opts = g.machineBridges(g.factory.beltAt(7, 8)!);
+  assert(opts.length === 2 && opts.some((o) => o.from === a && o.to === b), 'le tapis propose le pont entre les deux machines');
+  assert(!new BeltTracer(g.factory, 6.5, 8.5).linkMachine, 'plus de pont au doigt');
   assert(g.linkMachines(a, b), 'pont posé');
   g.factory.putInStorage(a, 'vis', 4);
   run(g, 10);
@@ -1162,7 +1177,7 @@ test('gomme en zone : tout ce qui est dans le rectangle part, remboursé ; le No
 test('un tapis nourrit deux machines de part et d’autre et continue tout droit', () => {
   const g = new Game('TEST-S3');
   g.money = 100000; g.world.reveal(6, 5, 20);
-  g.unlocks.add('separateur'); g.unlocks.add('separateur2');
+  g.unlocks.add('separateur'); g.unlocks.add('separateur2'); g.factory.thirdOutput = true;
   const src = g.placeMachine('coffre', 1, 5)!;
   const end = g.placeMachine('coffre', 11, 5)!;
   const up = g.placeMachine('coffre', 5, 4)!;
@@ -1918,6 +1933,56 @@ await testAsync('code de partie : export puis import, et codes invalides refusé
     try { await decodeSave(bad); } catch { failed = true; }
     assert(failed, `code accepté : ${bad.slice(0, 20)}`);
   }
+});
+
+test('tapis sur 2 niveaux : un tapis en hauteur passe au-dessus d’un tapis du sol', () => {
+  const g = new Game('TEST-Z1');
+  g.money = 100000; g.world.reveal(6, 6, 20);
+  const a = g.placeMachine('coffre', 1, 6)!, b = g.placeMachine('coffre', 11, 6)!;
+  const c = g.placeMachine('coffre', 6, 1)!, d = g.placeMachine('coffre', 6, 11)!;
+  assert(g.placeBelts(trace(g, [[1.5, 6.5], [11.5, 6.5]]).result()), 'tapis du sol');
+  const t = traceL(g, 1, [[6.5, 1.5], [6.5, 11.5]]);
+  assert(t.valid && !t.blocked && t.cells.length === 9 && t.cells.every((x) => x.z === 1) && t.liftCount === 0, `tout en hauteur : ${JSON.stringify(t.cells)}`);
+  assert(g.placeBelts(t.result()), 'posé');
+  assert(g.factory.beltAt(6, 6) && g.factory.beltAt(6, 6, 1)?.z === 1, 'deux tapis sur la même case');
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  g.factory.putInStorage(a, 'fer', 5); g.factory.putInStorage(c, 'cuivre', 5);
+  run(g, 40);
+  assert(b.inBuf.fer === 5 && !b.inBuf.cuivre && d.inBuf.cuivre === 5 && !d.inBuf.fer, `chacun son chemin : ${JSON.stringify(b.inBuf)} ${JSON.stringify(d.inBuf)}`);
+  const g2 = new Game('TEST-Z1', JSON.parse(JSON.stringify(g.serialize())));
+  assert(g2.factory.beltAt(6, 6, 1)?.z === 1 && g2.factory.beltAt(6, 6)!.z === undefined, 'sauvegardé');
+  assert(!g.view.checkMachine('coffre', 6, 3).ok, 'pas de machine sous un tapis en hauteur');
+  assert(g.removeAt(6, 6) && !g.factory.beltAt(6, 6, 1) && g.factory.beltAt(6, 6), 'la gomme retire d’abord celui du haut');
+});
+
+test('ascenseurs : changer de niveau en traçant, ou s’arrêter sur un tapis de l’autre niveau', () => {
+  const g = new Game('TEST-Z2');
+  g.money = 100000; g.world.reveal(6, 10, 24);
+  // Un tapis du sol en travers (vertical), que le tapis horizontal enjambe en hauteur.
+  const v0 = g.placeMachine('coffre', 7, 1)!, v1 = g.placeMachine('coffre', 7, 11)!;
+  assert(g.placeBelts(trace(g, [[7.5, 1.5], [7.5, 11.5]]).result()), 'tapis en travers');
+  const a = g.placeMachine('coffre', 1, 6)!, b = g.placeMachine('coffre', 12, 6)!;
+  const t = traceL(g, 0, [[1.5, 6.5], [5.5, 6.5], '1', [9.5, 6.5], '0', [12.5, 6.5]]);
+  assert(t.valid && !t.blocked && t.liftCount === 2, `deux ascenseurs : ${JSON.stringify(t.cells)}`);
+  assert(t.cells.find((c) => c.x === 7)!.z === 1 && t.cells.find((c) => c.x === 11)!.z === 0, 'en hauteur au-dessus du tapis en travers, au sol au bout');
+  assert(g.placeBelts(t.result()), 'posé');
+  // Un tapis du sol en bas ; un tapis en hauteur qui s'arrête dessus le rejoint par un ascenseur (par le côté).
+  const e = g.placeMachine('coffre', 1, 15)!, f = g.placeMachine('coffre', 12, 15)!;
+  assert(g.placeBelts(trace(g, [[1.5, 15.5], [12.5, 15.5]]).result()), 'tapis du bas');
+  const h = g.placeMachine('coffre', 4, 19)!;
+  const t2 = traceL(g, 1, [[4.5, 19.5], [4.5, 15.5]]);
+  assert(t2.valid && !t2.blocked && t2.endTarget?.x === 4 && t2.endTarget.y === 15 && t2.liftCount === 1, `il s’arrête sur le tapis du sol : ${JSON.stringify(t2.cells)} ${JSON.stringify(t2.endTarget)}`);
+  assert(g.placeBelts(t2.result()), 'posé');
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  g.factory.putInStorage(a, 'fer', 5); g.factory.putInStorage(v0, 'cuivre', 5); g.factory.putInStorage(h, 'charbon', 4);
+  run(g, 60);
+  assert(b.inBuf.fer === 5 && v1.inBuf.cuivre === 5 && !b.inBuf.cuivre && !v1.inBuf.fer, `ascenseurs : ${JSON.stringify(b.inBuf)} ${JSON.stringify(v1.inBuf)}`);
+  assert(f.inBuf.charbon === 4 && e !== f, `descendu sur le tapis du bas : ${JSON.stringify(f.inBuf)}`);
+  // Le niveau qui change sur la toute première case : elle change avec.
+  const t3 = traceL(g, 0, [[3.5, 22.5], '1', [6.5, 22.5]]);
+  assert(t3.cells.every((c) => c.z === 1), 'première case montée avec le niveau');
 });
 
 console.log(`\n${passed} réussis, ${failed} en échec`);

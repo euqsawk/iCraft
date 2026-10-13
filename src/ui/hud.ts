@@ -157,6 +157,9 @@ export class Hud implements GestureHandlers {
   private toolButtons = new Map<string, HTMLButtonElement>();
   /** Options de l'outil en cours (Câble / Tuyau, Gomme / Zone). */
   private toolOpts!: HTMLElement;
+  /** Étage des tapis qu'on pose (0 : au sol, 1 : en hauteur), et son interrupteur en bas à gauche. */
+  private beltLevel: 0 | 1 = 0;
+  private levelSwitch!: HTMLElement;
   private bubble!: HTMLElement;
   private popover!: HTMLElement;
   private toasts!: HTMLElement;
@@ -271,10 +274,17 @@ export class Hud implements GestureHandlers {
     }
 
     this.toolOpts = h('div', 'tool-opts hidden');
+    // Niveau 1 / 2 des tapis : se change aussi pendant le tracé (avec un autre doigt), là où il change, un ascenseur.
+    this.levelSwitch = h('div', 'level-switch hidden',
+      `<span class="ls-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3 21 8l-9 5-9-5z"/><path d="m3 12.5 9 5 9-5" opacity=".55"/><path d="m3 17 9 5 9-5" opacity=".3"/></svg></span><button data-l="0" aria-label="Tapis au sol">1</button><button data-l="1" aria-label="Tapis en hauteur">2</button>`);
+    this.levelSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.setBeltLevel(b.dataset.l === '1' ? 1 : 0); });
+    });
     this.bubble = h('div', 'bubble hidden');
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
-    this.root.append(top, row, this.freightPill, this.palette, this.toolOpts, toolbar, this.bubble, this.popover, this.toasts);
+    this.root.append(top, row, this.freightPill, this.palette, this.toolOpts, this.levelSwitch, toolbar, this.bubble, this.popover, this.toasts);
+    this.setBeltLevel(0);
     this.tree = new TreeScreen(this.root, this.game, this.itemIcons, () => { this.renderPalette(); this.refreshLevel(); });
     // On ne reconstruit pas une feuille pendant qu'un doigt appuie dessus (le bouton serait perdu).
     const press = (on: boolean) => () => { this.pressing = on; };
@@ -622,8 +632,20 @@ export class Hud implements GestureHandlers {
     this.setTool(same ? 'none' : t === 'cable' && !this.game.isUnlocked('generateur') ? 'tuyau' : t);
   }
 
+  /** Niveau des tapis qu'on pose : pendant un tracé, les cases suivantes passent à ce niveau. */
+  private setBeltLevel(l: 0 | 1): void {
+    this.beltLevel = l;
+    this.levelSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.classList.toggle('on', b.dataset.l === String(l)));
+    this.levelSwitch.classList.toggle('up', l === 1);
+    if (this.tracer) {
+      this.tracer.setLevel(l);
+      if (this.dragAt) this.toolMove(this.dragAt.x, this.dragAt.y);
+    }
+  }
+
   /** Les options d'un outil, au-dessus de la barre : Câble / Tuyau, Gomme / Zone. */
   private renderToolOpts(): void {
+    this.levelSwitch.classList.toggle('hidden', this.tool !== 'tapis');
     const box = this.toolOpts;
     box.innerHTML = '';
     const g = this.game;
@@ -733,8 +755,11 @@ export class Hud implements GestureHandlers {
     const sheet = m ? this.sheetOf(m) : null;
     if (sheet) { sheet(); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
-    const b = f.beltAt(cx, cy);
-    if (b) { this.select({ kind: 'belt', x: cx, y: cy }); return; }
+    // Un tapis en hauteur d'abord ; toucher encore la même case sélectionne celui du dessous.
+    const prev = this.r.selection;
+    const again = prev?.kind === 'belt' && prev.x === cx && prev.y === cy && prev.z === 1;
+    const b = (!again && f.beltAt(cx, cy, 1)) || f.beltAt(cx, cy) || f.beltAt(cx, cy, 1);
+    if (b) { this.select({ kind: 'belt', x: cx, y: cy, ...(b.z ? { z: 1 as const } : {}) }); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
     if (this.game.inAtelier) return;
     this.game.sendRobot(w.x, w.y);
@@ -857,7 +882,7 @@ export class Hud implements GestureHandlers {
       this.cableTracer = new CableTracer(this.game.world, w.x, w.y);
       this.r.preview = { kind: this.tool === 'tuyau' ? 'pipe' : 'cable', tracer: this.cableTracer };
     } else if (this.tool === 'tapis') {
-      this.tracer = new BeltTracer(this.game.view, w.x, w.y);
+      this.tracer = new BeltTracer(this.game.view, w.x, w.y, this.beltLevel);
       this.tracer.bridges = this.game.isUnlocked('pont');
       this.r.preview = { kind: 'trace', tracer: this.tracer };
     } else if (this.tool === 'machine' || this.tool === 'move') {
@@ -1015,7 +1040,9 @@ export class Hud implements GestureHandlers {
       const price = n * RULES.beltCost + nb * RULES.bridgeCost;
       const ok = this.tracer.valid && !this.tracer.blocked;
       const affordable = this.game.money >= price;
-      const what = (this.tracer.splitFrom ? 'Séparateur · ' : '') + (nb ? `${nb > 1 ? `${nb} ponts` : 'Pont'} · ` : '');
+      const lifts = this.tracer.liftCount;
+      const what = (this.tracer.splitFrom ? 'Séparateur · ' : '') + (nb ? `${nb > 1 ? `${nb} ponts` : 'Pont'} · ` : '')
+        + (lifts ? `${lifts > 1 ? `${lifts} ascenseurs` : 'Ascenseur'} · ` : '') + (this.tracer.cells.some((c) => c.z) ? 'En hauteur · ' : '');
       if (this.tracer.linkBelt) {
         this.showBubble(sx, sy - 56, 'Lâche pour relier la machine à ce tapis', false);
         return;
@@ -1179,7 +1206,7 @@ export class Hud implements GestureHandlers {
     } else if (sel?.kind === 'robot') {
       this.closePopover();
     } else if (sel?.kind === 'belt') {
-      const b = f.beltAt(sel.x, sel.y);
+      const b = f.beltAt(sel.x, sel.y, sel.z ?? 0);
       if (!b) { this.closePopover(); return; }
       const chain = f.chainOf(b);
       const items = chain.reduce((s, c) => s + c.items.length, 0);
@@ -1202,7 +1229,7 @@ export class Hud implements GestureHandlers {
       const lmin = Math.min(...chain.map((c) => c.lvl ?? 1)), lmax = Math.max(...chain.map((c) => c.lvl ?? 1));
       const bup = this.game.beltUpgrade(b);
       const lvText = `<p class="lv-line"><span class="lv-dot l${lmin}"></span><b>Niveau ${lmin}${lmax > lmin ? ` à ${lmax}` : ''}</b> · ${fmtN(RULES.beltSpeed * RULES.beltLevelSpeed[lmin - 1])} case${lmin > 1 ? 's' : ''} par seconde</p>`;
-      const info = `<h3>${splitter ? 'Séparateur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${lvText}${splitter}${meter}
+      const info = `<h3>${splitter ? 'Séparateur' : b.z ? 'Tapis en hauteur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${lvText}${splitter}${meter}
         <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.reduce((a, c) => a + RULES.beltCost + Game.levelValue(RULES.beltLevelCost, c.lvl), 0)} ${ICONS.coinSm}</p>`;
       const feeders = (b.feeds ?? []).map((d) => f.machineAt(b.x + DX[d], b.y + DY[d])).filter((m): m is Machine => !!m);
       const fed = b.split !== undefined ? f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) : null;
@@ -1217,8 +1244,15 @@ export class Hud implements GestureHandlers {
         ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Tapis niveau ${bup.to} : à débloquer (Niveaux)</button></div>`
         : `<div class="row"><button class="btn primary" data-act="lvl"${this.game.money < bup.price ? ' disabled' : ''}>Niveau ${bup.to} · ${bup.cells.length} case${bup.cells.length > 1 ? 's' : ''} · ${ICONS.coinSm}${fmt(bup.price)}</button></div>`;
       const emptyBtn = items ? `<div class="row"><button class="btn" data-act="empty">${ICONS.gomme}Vider le tapis</button></div>` : '';
-      const actions = `${upBtn}${sortBtn}${emptyBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
-      if (!this.setPopover(`b${sel.x},${sel.y}:${items ? 'i' : ''}:${lmin}-${lmax}:${bup ? `${bup.price}${bup.locked ? 'L' : ''}${this.game.money >= bup.price ? '$' : ''}` : ''}`, info + linkInfo, actions)) return;
+      // Une machine de chaque côté (le tapis entre les deux) : un pont direct de l'une à l'autre, par-dessus.
+      const mbr = this.game.machineBridges(b);
+      const bridgeKey = mbr.map((o) => `${o.from.id}>${o.to.id}${o.from.links?.includes(o.to.id) ? '+' : ''}`).join(',');
+      const bridgeBtns = mbr.map((o, i) => {
+        const on = !!o.from.links?.includes(o.to.id);
+        return `<div class="row"><button class="btn" data-bridge="${i}">${on ? 'Retirer le pont ' : 'Pont '}${esc(machineDef(o.from.type).name.toLowerCase())} → ${esc(machineDef(o.to.type).name.toLowerCase())}</button></div>`;
+      }).join('');
+      const actions = `${upBtn}${sortBtn}${bridgeBtns}${emptyBtn}${linked ? `<div class="row"><button class="btn" data-act="unlink">Couper la liaison</button></div>` : ''}<div class="row"><button class="btn danger" data-act="del">${ICONS.trash}Supprimer le tapis</button></div>`;
+      if (!this.setPopover(`b${sel.x},${sel.y},${sel.z ?? 0}:${bridgeKey}:${items ? 'i' : ''}:${lmin}-${lmax}:${bup ? `${bup.price}${bup.locked ? 'L' : ''}${this.game.money >= bup.price ? '$' : ''}` : ''}`, info + linkInfo, actions)) return;
       const lb = p.querySelector<HTMLButtonElement>('[data-act="lvl"]');
       if (lb) lb.onclick = () => {
         const done = this.game.upgradeBelt(b);
@@ -1235,6 +1269,14 @@ export class Hud implements GestureHandlers {
       };
       const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
       if (so) so.onclick = () => this.openSortPicker(b);
+      p.querySelectorAll<HTMLButtonElement>('[data-bridge]').forEach((bt) => {
+        bt.onclick = () => {
+          const o = mbr[Number(bt.dataset.bridge)];
+          if (o.from.links?.includes(o.to.id)) this.game.unlinkMachines(o.from, o.to.id); else this.game.linkMachines(o.from, o.to);
+          this.popKey = '';
+          this.renderPopover();
+        };
+      });
       p.querySelector<HTMLButtonElement>('[data-act="del"]')!.onclick = () => { this.game.removeChain(b); this.closePopover(); };
       const un = p.querySelector<HTMLButtonElement>('[data-act="unlink"]');
       if (un) un.onclick = () => { this.game.unlinkBelt(b); this.closePopover(); };
@@ -2467,10 +2509,10 @@ export class Hud implements GestureHandlers {
   private openSortPicker(belt: Belt): void {
     this.closePopover();
     const g = this.game;
-    const at = { x: belt.x, y: belt.y };
+    const at = { x: belt.x, y: belt.y, z: belt.z ?? 0 };
     this.openSheet((sheet, close) => {
       const f = g.view;
-      const b = f.beltAt(at.x, at.y);
+      const b = f.beltAt(at.x, at.y, at.z);
       if (!b || b.split === undefined) { close(); return; }
       const tri = g.isUnlocked('tri');
       // Séparateur à 3 sorties : une seconde dérivation vers un tapis, de l'autre côté.

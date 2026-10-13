@@ -65,7 +65,7 @@ export type Preview =
   | { kind: 'ports'; id: number; io: 'in' | 'out'; slot: { x: number; y: number } | null }
   | null;
 
-export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number } | { kind: 'robot' } | null;
+export type Selection = { kind: 'machine'; id: number } | { kind: 'belt'; x: number; y: number; z?: 1 } | { kind: 'robot' } | null;
 
 interface ChunkView {
   ground: Sprite;
@@ -178,6 +178,11 @@ export class GameRenderer {
   private bridgeG = new Graphics();
   private bridgeItemLayer = new Container();
   private bridgePool: Sprite[] = [];
+  /** Tapis en hauteur (étage 2) : au-dessus des tapis du sol et des ponts, avec leurs objets ; les ascenseurs par-dessus. */
+  private upperG = new Graphics();
+  private upperItemLayer = new Container();
+  private upperPool: Sprite[] = [];
+  private liftG = new Graphics();
   private actorLayer = new Container();
   private fx = new Graphics();
   private fogLayer = new Container();
@@ -252,7 +257,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -619,10 +624,11 @@ export class GameRenderer {
     }
     const gg = this.ghostBeltG;
     gg.clear();
-    const built: Belt[] = [], ghosts: Belt[] = [];
-    // Les tapis construits, rangés par morceau de carte.
+    const built: Belt[] = [], ghosts: Belt[] = [], upper: Belt[] = [], upperGhosts: Belt[] = [];
+    // Les tapis construits, rangés par morceau de carte (ceux d'en haut à part).
     const groups = new Map<string, Belt[]>();
     for (const b of this.game.view.belts.values()) {
+      if (b.z) { (b.built ? upper : upperGhosts).push(b); continue; }
       if (!b.built) { ghosts.push(b); continue; }
       built.push(b);
       const k = chunkKey(Math.floor(b.x / CHUNK), Math.floor(b.y / CHUNK));
@@ -662,27 +668,15 @@ export class GameRenderer {
         }
       }
     };
-    for (const [k, list] of groups) {
-      let c = this.beltChunks.get(k);
-      if (!c) {
-        const [x, y] = k.split(',').map(Number);
-        c = { s: new Graphics(), t: new Graphics(), x, y };
-        this.beltShadow.addChild(c.s); this.beltTop.addChild(c.t);
-        this.beltChunks.set(k, c);
-      }
-      const gs = c.s, g = c.t;
-      gs.clear(); g.clear();
-      line(gs, list, 3);
-      gs.stroke({ width: 14, color: PALETTE.shadow, cap: 'round', join: 'round' });
-      // Le tapis prend la couleur de son niveau.
+    // La bande du tapis à la couleur de son niveau, puis les rouleaux : un chevron par case, dans le sens du tapis
+    // (deux chevrons à partir du niveau 4).
+    const body = (g: Graphics, list: Belt[]) => {
       for (let lv = 1; lv <= 5; lv++) {
         const part = list.filter((b) => (b.lvl ?? 1) === lv);
         if (!part.length) continue;
         line(g, part, 0);
         g.stroke({ width: 14, color: LEVEL_COLORS.belt[lv - 1], cap: 'round', join: 'round' });
       }
-      // Rouleaux discrets : un chevron par case, dans le sens du tapis, à la couleur de son niveau
-      // (deux chevrons à partir du niveau 4).
       for (let lv = 1; lv <= 5; lv++) {
         let any = false;
         for (const b of list) {
@@ -699,9 +693,51 @@ export class GameRenderer {
         }
         if (any) g.stroke({ width: lv === 1 ? 2 : 2.4, color: BELT_LEVEL_COLORS[lv - 1], cap: 'round', join: 'round' });
       }
+    };
+    for (const [k, list] of groups) {
+      let c = this.beltChunks.get(k);
+      if (!c) {
+        const [x, y] = k.split(',').map(Number);
+        c = { s: new Graphics(), t: new Graphics(), x, y };
+        this.beltShadow.addChild(c.s); this.beltTop.addChild(c.t);
+        this.beltChunks.set(k, c);
+      }
+      const gs = c.s, g = c.t;
+      gs.clear(); g.clear();
+      line(gs, list, 3);
+      gs.stroke({ width: 14, color: PALETTE.shadow, cap: 'round', join: 'round' });
+      body(g, list);
       // Séparateurs : une petite boîte carrée posée par-dessus (dessinée avec les pastilles de tri, au-dessus des objets).
     }
     this.drawBridges(built);
+    // En hauteur : une grande ombre décalée au sol, un liseré sombre, puis le tapis (un seul dessin : il y en a peu).
+    const ug = this.upperG;
+    ug.clear();
+    if (upper.length) {
+      // Ombre transparente : bouts plats, pour que les cases ne se chevauchent pas (pas de taches plus sombres).
+      line(ug, upper, 10);
+      ug.stroke({ width: 15, color: PALETTE.ink, alpha: 0.15, cap: 'butt', join: 'round' });
+      // Les bouts de l'ombre : un demi-disque au-delà du bout plat (là où le tapis du haut s'arrête).
+      const cap = (x: number, y: number, d: Dir) => {
+        const a0 = Math.atan2(DY[d], DX[d]), pts: number[] = [];
+        for (let i = 0; i <= 8; i++) { const a = a0 - Math.PI / 2 + Math.PI * i / 8; pts.push(x + Math.cos(a) * 7.5, y + 10 + Math.sin(a) * 7.5); }
+        ug.poly(pts).fill({ color: PALETTE.ink, alpha: 0.15 });
+      };
+      for (const b of upper) {
+        const n = f.next(b), fd = f.feederOf(b);
+        const back = ((b.inDir + 2) % 4) as Dir;
+        if (!(n?.kind === 'belt' && n.belt.z) && !f.machineAt(b.x + DX[b.dir], b.y + DY[b.dir])) cap((b.x + 0.5 + DX[b.dir] / 2) * CELL, (b.y + 0.5 + DY[b.dir] / 2) * CELL, b.dir);
+        if (!fd?.z && !f.machineAt(b.x + DX[back], b.y + DY[back])) cap((b.x + 0.5 + DX[back] / 2) * CELL, (b.y + 0.5 + DY[back] / 2) * CELL, back);
+      }
+      line(ug, upper, 0);
+      ug.stroke({ width: 19, color: 0x9fb0ba, cap: 'round', join: 'round' });
+      body(ug, upper);
+    }
+    for (const b of upperGhosts) dashedPolyline(ug, this.beltPath(b), 6, 5);
+    if (upperGhosts.length) ug.stroke({ width: 11, color: PALETTE.white, alpha: 0.9, cap: 'round' });
+    for (const b of upperGhosts) dashedPolyline(ug, this.beltPath(b), 6, 5);
+    if (upperGhosts.length) ug.stroke({ width: 2, color: PALETTE.ink, alpha: 0.5, cap: 'round' });
+    this.drawLifts();
     this.drawMeters();
     for (const b of ghosts) dashedPolyline(gg, this.beltPath(b), 6, 5);
     gg.stroke({ width: 11, color: PALETTE.white, alpha: 0.9, cap: 'round' });
@@ -714,6 +750,33 @@ export class GameRenderer {
    * Raccord propre entre un tapis et une machine : une petite bouche posée sur le bord de la machine,
    * avec un chevron dans le sens du flux (vers la machine pour une entrée, vers le tapis pour une sortie).
    */
+  /**
+   * Ascenseurs : là où un tapis change d'étage, une petite cabine carrée sur la case du haut,
+   * avec une flèche qui monte ou qui descend.
+   */
+  private drawLifts(): void {
+    const g = this.liftG;
+    g.clear();
+    const f = this.game.view;
+    for (const b of f.belts.values()) {
+      const { to } = f.liftOf(b);
+      if (!to) continue;
+      const up = !b.z; // du sol vers le haut
+      const top = up ? to : b;
+      this.liftIcon(g, top.x, top.y, up, b.built && to.built ? 1 : 0.5);
+    }
+  }
+
+  private liftIcon(g: Graphics, x: number, y: number, up: boolean, alpha: number): void {
+    const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL, hs = 8;
+    g.roundRect(cx - hs, cy - hs + 3, hs * 2, hs * 2, 5).fill({ color: PALETTE.ink, alpha: 0.2 * alpha });
+    g.roundRect(cx - hs, cy - hs, hs * 2, hs * 2, 5).fill({ color: PALETTE.white, alpha }).stroke({ width: 2, color: PALETTE.ink, alpha });
+    const s = up ? -1 : 1;
+    g.moveTo(cx - 4, cy - s * 1.5).lineTo(cx, cy + s * 2.5).lineTo(cx + 4, cy - s * 1.5);
+    g.moveTo(cx, cy - s * 4).lineTo(cx, cy + s * 2.5);
+    g.stroke({ width: 2, color: up ? PALETTE.green : PALETTE.coral, alpha, cap: 'round', join: 'round' });
+  }
+
   /** Le portique d'un compteur : deux poteaux de part et d'autre du tapis, une barre, un voyant jaune. */
   private drawMeters(): void {
     const g = this.meterG;
@@ -1022,7 +1085,7 @@ export class GameRenderer {
     if (elec !== this.electricOn) {
       this.electricOn = elec;
       const a = elec ? 0.3 : 1;
-      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
+      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
       this.actorLayer.alpha = elec ? 0.45 : 1;
       this.modeTint.visible = elec;
       this.powerG.visible = elec;
@@ -1298,7 +1361,7 @@ export class GameRenderer {
   private drawItems(): void {
     const b = this.camera.bounds(CELL);
     const far = CELL * (RULES.bridgeSpan + 1);
-    let used = 0, usedB = 0;
+    let used = 0, usedB = 0, usedU = 0;
     const sprite = (pool: Sprite[], layer: Container, i: number) => {
       let s = pool[i];
       if (!s) { s = new Sprite(); s.anchor.set(0.5); layer.addChild(s); pool.push(s); }
@@ -1342,7 +1405,7 @@ export class GameRenderer {
             continue;
           }
         }
-        const s = sprite(this.itemPool, this.itemLayer, used++);
+        const s = belt.z ? sprite(this.upperPool, this.upperItemLayer, usedU++) : sprite(this.itemPool, this.itemLayer, used++);
         s.texture = this.itemTextures.get(it.t)!;
         s.position.set(x + (it.sx ?? 0) * CELL, y + (it.sy ?? 0) * CELL);
         s.visible = true;
@@ -1350,6 +1413,7 @@ export class GameRenderer {
     }
     for (let i = used; i < this.itemPool.length; i++) this.itemPool[i].visible = false;
     for (let i = usedB; i < this.bridgePool.length; i++) this.bridgePool[i].visible = false;
+    for (let i = usedU; i < this.upperPool.length; i++) this.upperPool[i].visible = false;
   }
 
   /** Une autre machine touche-t-elle le haut de celle-ci ? */
@@ -1865,6 +1929,10 @@ export class GameRenderer {
     } else if (pv?.kind === 'trace') {
       const cells = pv.tracer.result();
       const ok = pv.tracer.valid && !pv.tracer.blocked;
+      // En hauteur : une ombre décalée au sol.
+      const ups = cells.filter((c) => c.z);
+      for (const c of ups) { const p = this.beltPath(c); g.moveTo(p[0].x, p[0].y + 10).lineTo(p[1].x, p[1].y + 10).lineTo(p[2].x, p[2].y + 10); }
+      if (ups.length) g.stroke({ width: 15, color: PALETTE.ink, alpha: 0.15, cap: 'butt', join: 'round' });
       for (const c of cells) {
         const p = this.beltPath(c);
         g.moveTo(p[0].x, p[0].y).lineTo(p[1].x, p[1].y).lineTo(p[2].x, p[2].y);
@@ -1878,8 +1946,16 @@ export class GameRenderer {
         const fx = DX[last.dir], fy = DY[last.dir];
         g.poly([cx + fx * 6, cy + fy * 6, cx - fy * 6, cy + fx * 6, cx + fy * 6, cy - fx * 6]).fill(ok ? PALETTE.ink : PALETTE.coral);
       }
-      if (pv.tracer.endTarget) {
-        const t = pv.tracer.endTarget;
+      // Ascenseurs : là où l'étage change (et au bout, s'il rejoint un tapis de l'autre étage).
+      for (let i = 1; i < cells.length; i++) {
+        const a = cells[i - 1], b = cells[i];
+        if (!!a.z !== !!b.z) this.liftIcon(g, (a.z ? a : b).x, (a.z ? a : b).y, !a.z, 1);
+      }
+      const t = pv.tracer.endTarget, lastC = cells[cells.length - 1];
+      const ft = this.game.view;
+      if (t && lastC && !ft.machineAt(t.x, t.y) && !ft.beltAt(t.x, t.y, lastC.z ?? 0) && ft.beltAt(t.x, t.y, lastC.z ? 0 : 1)) {
+        this.liftIcon(g, lastC.z ? lastC.x : t.x, lastC.z ? lastC.y : t.y, !lastC.z, 1);
+      } else if (t) {
         g.circle((t.x + 0.5) * CELL, (t.y + 0.5) * CELL, 5).fill(PALETTE.coral);
       }
     } else if (pv?.kind === 'place') {
@@ -1959,7 +2035,7 @@ export class GameRenderer {
         g.stroke({ width: 2.5, color: PALETTE.coral });
       }
     } else if (sel?.kind === 'belt') {
-      const b = this.game.view.beltAt(sel.x, sel.y);
+      const b = this.game.view.beltAt(sel.x, sel.y, sel.z ?? 0);
       if (b) {
         for (const c of this.game.view.chainOf(b)) {
           const p = this.beltPath(c);

@@ -6,7 +6,7 @@ import { item as itemDef, itemLabel } from '../data/items.ts';
 const itemValue = (id: string): number => itemDef(id).value;
 import { World } from '../world/world.ts';
 import { Factory, stopRules, type Belt, type StopRule, type FactorySave, type Line, type Machine, type VehicleKind } from './factory.ts';
-import { DX, DY, key, unkey, type Dir } from './geom.ts';
+import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
 import { firstOrder, generateChoices, orderComplete, type Order } from './orders.ts';
 import type { TraceCell } from './tracer.ts';
 import { ACHIEVEMENT_OF_SKIN, ACHIEVEMENTS, OLD_ACHIEVEMENTS } from '../data/achievements.ts';
@@ -283,12 +283,12 @@ export class Game {
     const inSel = (x: number, y: number) => x >= ax && x <= bx && y >= ay && y <= by;
     const selected = new Set(machines);
     const belts: Belt[] = [];
-    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) { const b = f.beltAt(x, y); if (b) belts.push(b); }
+    for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) for (const z of [0, 1]) { const b = f.beltAt(x, y, z); if (b) belts.push(b); }
     // La place de l'atelier : au milieu de la zone, sur des cases qui seront libres.
     const freeAfter = (x: number, y: number) => {
       if (!f.inBounds(x, y)) return false;
       if (inSel(x, y)) return true;
-      return !f.machineAt(x, y) && !f.beltAt(x, y);
+      return !f.machineAt(x, y) && !f.beltAt(x, y) && !f.beltAt(x, y, 1);
     };
     let spot: { x: number; y: number } | null = null;
     const cx = ax + Math.floor((W - 3) / 2), cy = ay + Math.floor((H - 3) / 2);
@@ -327,7 +327,7 @@ export class Game {
       }
       return p;
     };
-    const outside = (x: number, y: number) => !inSel(x, y) && (!!f.beltAt(x, y) || (!!f.machineAt(x, y) && !selected.has(f.machineAt(x, y)!)));
+    const outside = (x: number, y: number) => !inSel(x, y) && (!!f.beltAt(x, y) || !!f.beltAt(x, y, 1) || (!!f.machineAt(x, y) && !selected.has(f.machineAt(x, y)!)));
     for (const b of belts) {
       const px = b.x - DX[b.inDir], py = b.y - DY[b.inDir];
       if (outside(px, py)) port('entree', px, py);
@@ -336,7 +336,7 @@ export class Game {
         const nx = b.x + DX[d] * (1 + jump), ny = b.y + DY[d] * (1 + jump);
         if (!inSel(nx, ny) && outside(nx, ny)) {
           if (jump) { // le pont sortirait de l'intérieur : la sortie se pose juste à côté
-            const ib = inner.belts.find((c) => c[0] === b.x + ox && c[1] === b.y + oy);
+            const ib = inner.belts.find((c) => c[0] === b.x + ox && c[1] === b.y + oy && (c[16] ?? 0) === (b.z ?? 0));
             if (ib) { if (d === b.dir) ib[8] = 0; else ib[9] = 0; }
             port('sortie', b.x + DX[d], b.y + DY[d]);
           } else port('sortie', nx, ny);
@@ -373,7 +373,7 @@ export class Game {
     }
     for (const b of belts) {
       f.removeBelt(b);
-      const k = key(b.x, b.y);
+      const k = f.beltKey(b);
       this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
     }
     const a = f.addMachine('atelier', spot.x, spot.y, true);
@@ -992,7 +992,7 @@ export class Game {
     const bridges = cells.filter((c) => c.jump).length + (split?.jump ? 1 : 0);
     const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost;
     // Rien de neuf : seulement le bout d'un tapis qui se tourne (vers une machine collée, par exemple).
-    const turns = cells.some((c) => c.existing && this.view.beltAt(c.x, c.y)?.dir !== c.dir);
+    const turns = cells.some((c) => c.existing && this.view.beltAt(c.x, c.y, c.z ?? 0)?.dir !== c.dir);
     if (fresh.length === 0 && !turns) return false;
     if (split && !this.isUnlocked('separateur')) {
       this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
@@ -1013,7 +1013,7 @@ export class Game {
     else if (split) this.view.setSplit(split.from, split.dir, split.jump ?? 0);
     for (const c of cells) {
       if (c.existing) {
-        const b = this.view.beltAt(c.x, c.y);
+        const b = this.view.beltAt(c.x, c.y, c.z ?? 0);
         if (b) {
           this.view.setBeltDir(b, c.dir);
           // Le bout d'un tapis existant peut devenir un pont (vers un tapis voisin à enjamber).
@@ -1021,9 +1021,9 @@ export class Game {
         }
       } else {
         const now = !!this.inAtelier || Game.instantBuild;
-        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, now);
+        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, now, c.z ?? 0);
         if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
-        if (!now) this.pending.push({ kind: 'belt', k: key(c.x, c.y) });
+        if (!now) this.pending.push({ kind: 'belt', k: this.view.beltKey(nb) });
         else if (!this.inAtelier && this.world.reveal(c.x, c.y, 2)) this.emit({ type: 'reveal' });
       }
     }
@@ -1034,7 +1034,7 @@ export class Game {
 
   private refundBelt(b: Belt): number {
     this.view.removeBelt(b);
-    const k = key(b.x, b.y);
+    const k = this.view.beltKey(b);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
     return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0)
       + (b.meter ? MACHINES.compteur.cost : 0) + Game.levelValue(RULES.beltLevelCost, b.lvl);
@@ -1111,8 +1111,7 @@ export class Game {
       for (let x = ax; x <= bx; x++) {
         const m = f.machineAt(x, y);
         if (m) { const d = machineDef(m.type); if (d.buildable && !d.gift) machines.add(m); }
-        const b = f.beltAt(x, y);
-        if (b) belts.push(b);
+        for (const z of [1, 0]) { const b = f.beltAt(x, y, z); if (b) belts.push(b); }
         if (f.hasCable(x, y)) cables.push({ x, y });
       }
     }
@@ -1135,6 +1134,13 @@ export class Game {
   }
 
   removeAt(x: number, y: number): boolean {
+    // Un tapis en hauteur : il part en premier, celui du sol reste.
+    const up = this.view.beltAt(x, y, 1);
+    if (up) {
+      this.earn(this.refundBelt(up));
+      this.emit({ type: 'factory' });
+      return true;
+    }
     // Un pont passe au-dessus : on retire d'abord le pont, le tapis du dessous reste.
     const over = this.view.bridgeOver(x, y);
     if (over) {
@@ -1385,13 +1391,37 @@ export class Game {
 
   /** Relie deux machines collées : la production de la première passe directement dans la seconde. */
   linkMachines(from: Machine, to: Machine): boolean {
-    // Collées, ou séparées seulement par des tapis : un pont direct par-dessus.
+    // Collées, ou séparées seulement par des tapis (un pont direct par-dessus, posé depuis le tapis).
     if (from === to || (!this.view.touching(from, to) && !this.view.bridgeBetween(from, to))) return false;
     if (!from.links?.includes(to.id)) from.links = [...(from.links ?? []), to.id];
     this.view.markBuilt();
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${machineDef(from.type).name} → ${machineDef(to.type).name.toLowerCase()} : reliés`, tone: 'good' });
     return true;
+  }
+
+  /**
+   * Les ponts directs possibles depuis une case de tapis : une machine de chaque côté (le long d'un axe),
+   * séparées seulement par des tapis. Dans les deux sens.
+   */
+  machineBridges(b: Belt): { from: Machine; to: Machine }[] {
+    const f = this.view;
+    const reach = (d: Dir): Machine | null => {
+      for (let k = 1; k <= RULES.bridgeSpan; k++) {
+        const x = b.x + DX[d] * k, y = b.y + DY[d] * k;
+        const m = f.machineAt(x, y);
+        if (m) return m;
+        if (!f.beltAt(x, y) && !f.beltAt(x, y, 1)) return null;
+      }
+      return null;
+    };
+    const out: { from: Machine; to: Machine }[] = [];
+    for (const d of [0, 1] as Dir[]) {
+      const p = reach(d), q = reach(opposite(d));
+      if (!p || !q || p === q || !f.bridgeBetween(q, p)) continue;
+      out.push({ from: q, to: p }, { from: p, to: q });
+    }
+    return out;
   }
 
   unlinkMachines(from: Machine, to?: number): void {
@@ -1426,9 +1456,9 @@ export class Game {
       this.emit({ type: 'toast', text: 'Nourrir les deux côtés : débloque le Séparateur à 3 sorties (Logistique)', tone: 'warn' });
       return false;
     }
-    // Le tapis nourrit déjà une machine d'un côté : il peut aussi nourrir celle de l'autre côté (un objet sur trois chacune).
+    // Le tapis a déjà une dérivation d'un côté : il nourrit aussi la machine de l'autre côté (un objet sur trois chacun).
     if (b.split !== undefined) {
-      if (b.split2 !== undefined || b.splitJump || !this.view.machineAt(b.x + DX[b.split], b.y + DY[b.split])) return false;
+      if (b.split2 !== undefined || b.splitJump) return false;
       this.view.setSplit2(b, dir);
     } else {
       this.view.setSplit(b, dir);

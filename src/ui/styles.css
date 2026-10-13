@@ -1202,3 +1202,14 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .chest-pick b { font-size: 14px; font-weight: 900; }
 .chest-pick small { font-size: 11.5px; font-weight: 700; color: var(--ink2); }
 .chest-pick .btn { flex: none; min-height: 40px; padding: 0 12px; }
+
+/* ---------- Niveau des tapis (1 au sol, 2 en hauteur), en bas à gauche ---------- */
+.level-switch {
+  position: absolute; left: 10px; bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 4px;
+  padding: 5px; border-radius: 18px; background: #fff; box-shadow: 0 4px 0 var(--shadow); touch-action: none;
+}
+.level-switch .ls-ico { display: flex; padding: 0 3px 0 5px; color: var(--ink2); }
+.level-switch .ls-ico svg { width: 20px; height: 20px; }
+.level-switch button { width: 42px; height: 40px; border-radius: 13px; background: #F0F5F2; font-size: 15px; font-weight: 900; color: var(--ink2); }
+.level-switch button.on { background: var(--ink); color: #fff; }
+.level-switch.up button.on { box-shadow: 0 3px 0 var(--coral); }
