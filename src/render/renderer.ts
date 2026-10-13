@@ -2699,6 +2699,9 @@ interface NoyauReactor {
   core: Container;
   dot: Graphics;
   rings: { box: Container; backBox: Container; moon: Graphics; tilt: number; speed: number; a: number; rx: number; ry: number }[];
+  /** Les lunes passent derrière le cœur (backMoons) ou par-dessus tout, anneaux compris (topMoons). */
+  backMoons: Container;
+  topMoons: Container;
   spin: number;
 }
 
@@ -2729,8 +2732,9 @@ function makeNoyauReactor(S: number): NoyauReactor {
     backs.addChild(box); fronts.addChild(boxF);
     rings.push({ box: boxF, backBox: box, moon, tilt, speed, a, rx, ry });
   }
-  root.addChild(glow, backs, core, fronts);
-  return { root, glow, core, dot, rings, spin: 0 };
+  const backMoons = new Container(), topMoons = new Container();
+  root.addChild(glow, backs, backMoons, core, fronts, topMoons);
+  return { root, glow, core, dot, rings, backMoons, topMoons, spin: 0 };
 }
 
 function animateNoyauReactor(r: NoyauReactor, dt: number, time: number, pulse: number): void {
@@ -2748,10 +2752,9 @@ function animateNoyauReactor(r: NoyauReactor, dt: number, time: number, pulse: n
     g.box.rotation = tilt; back.rotation = tilt;
     const th = g.a + r.spin * g.speed;
     const x = Math.cos(th) * g.rx, y = Math.sin(th) * g.ry;
-    g.moon.position.set(x, y);
-    // Devant ou derrière le cœur, selon où elle est sur l'anneau.
-    const front = Math.sin(th) > 0;
-    const want = front ? g.box : back;
+    // Position sur l'anneau incliné, mais dessinée hors de l'anneau : devant, elle passe par-dessus les deux anneaux.
+    g.moon.position.set(x * Math.cos(tilt) - y * Math.sin(tilt), x * Math.sin(tilt) + y * Math.cos(tilt));
+    const want = Math.sin(th) > 0 ? r.topMoons : r.backMoons;
     if (g.moon.parent !== want) want.addChild(g.moon);
   }
 }

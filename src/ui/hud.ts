@@ -1371,7 +1371,7 @@ export class Hud implements GestureHandlers {
   private gridHtml(cells: ({ t: string; n: number } | null)[], cols = 5): string {
     return `<div class="inv-grid" style="grid-template-columns:repeat(${cols},minmax(0,1fr))">${cells.map((c) => {
       if (!c) return '<span class="inv-cell empty"></span>';
-      return `<span class="inv-cell" aria-label="${esc(item(c.t).name)} : ${c.n}"><img src="${this.itemIcons.get(c.t)}" alt=""><b>${c.n}</b></span>`;
+      return `<span class="inv-cell${c.t === this.chestPick ? ' on' : ''}" data-t="${c.t}" aria-label="${esc(item(c.t).name)} : ${c.n}"><img src="${this.itemIcons.get(c.t)}" alt=""><b>${c.n}</b></span>`;
     }).join('')}</div>`;
   }
 
@@ -2272,6 +2272,8 @@ export class Hud implements GestureHandlers {
   openChest(m: Machine): void {
     this.closePopover();
     this.chestId = m.id;
+    this.chestPick = null;
+    this.chestArmed = false;
     this.openSheet((sheet, close) => {
       const chest = this.game.view.machines.get(this.chestId);
       if (!chest) { close(); return; }
@@ -2282,7 +2284,7 @@ export class Hud implements GestureHandlers {
       const stop = g.view.isStop(chest), cap = g.view.slotsOf(chest) * RULES.invStack;
       if (stop && g.stationKind(chest)) { this.buildStopSheet(sheet, chest, close); return; }
       // Comme une machine : une demi-fenêtre (la carte reste visible), deux onglets, les boutons en bas.
-      if (this.chestTabOf !== chest.id) { this.chestTab = 'inv'; this.chestTabOf = chest.id; }
+      if (this.chestTabOf !== chest.id) { this.chestTab = 'inv'; this.chestTabOf = chest.id; this.chestPick = null; this.chestArmed = false; }
       sheet.classList.add('mach-sheet');
       this.r.selection = { kind: 'machine', id: chest.id };
       const name = machineDef(chest.type).name;
@@ -2303,8 +2305,30 @@ export class Hud implements GestureHandlers {
         while (cells.length < Math.max(cols, Math.ceil(cells.length / cols) * cols)) cells.push(null);
         const c1 = h('div', 'card');
         c1.innerHTML = `<div class="sfill"><b>Rempli</b><span class="mp-bar"><span style="width:${Math.min(100, (total / cap) * 100)}%"></span></span><b>${fmt(total)} / ${cap}</b></div>
-          <p class="muted small">${total ? `${kinds} sorte${kinds > 1 ? 's' : ''} d’objets · ` : ''}les tapis qui arrivent le remplissent, un tapis qui en part le vide.</p>
+          <p class="muted small">${total ? `${kinds} sorte${kinds > 1 ? 's' : ''} d’objets · touche-en un pour le jeter · ` : ''}les tapis qui arrivent le remplissent, un tapis qui en part le vide.</p>
           ${this.gridHtml(cells, cols)}`;
+        if (this.chestPick && !(chest.inBuf[this.chestPick] > 0)) this.chestPick = null;
+        c1.querySelectorAll<HTMLElement>('.inv-cell[data-t]').forEach((el) => {
+          el.onclick = () => { this.chestPick = this.chestPick === el.dataset.t ? null : el.dataset.t!; this.chestArmed = false; this.refreshSheet(); };
+        });
+        // Un objet choisi : on peut jeter tout ce qu'il y en a (en touchant deux fois).
+        if (this.chestPick) {
+          const t = this.chestPick, n = chest.inBuf[t] ?? 0;
+          const bar = h('div', 'chest-pick');
+          bar.innerHTML = `<img src="${this.itemIcons.get(t)}" alt=""><span><b>${fmt(n)} ${esc(n > 1 ? item(t).plural : item(t).name.toLowerCase())}</b><small>${this.chestArmed ? 'Pour de bon' : 'Dans ce coffre'}</small></span>`;
+          const no = h('button', 'btn', 'Annuler');
+          no.onclick = () => { this.chestPick = null; this.chestArmed = false; this.refreshSheet(); };
+          const yes = h('button', `btn danger${this.chestArmed ? ' armed' : ''}`, `${ICONS.trash}${this.chestArmed ? 'Confirmer' : 'Jeter'}`);
+          yes.onclick = () => {
+            if (!this.chestArmed) { this.chestArmed = true; this.refreshSheet(); return; }
+            const k = g.discardFromChest(chest, t);
+            this.chestPick = null; this.chestArmed = false;
+            if (k) this.toast(`${fmt(k)} ${k > 1 ? item(t).plural : item(t).name.toLowerCase()} jeté${k > 1 ? 's' : ''}`, 'info');
+            this.refreshSheet();
+          };
+          bar.append(no, yes);
+          c1.append(bar);
+        }
         body.append(c1);
       } else {
         // Ses entrées et sorties : tout passe, par où l'on veut.
@@ -2325,6 +2349,9 @@ export class Hud implements GestureHandlers {
   }
 
   private chestTab: 'inv' | 'io' = 'inv';
+  /** L'objet choisi dans la grille d'un coffre (pour le jeter), et la confirmation. */
+  private chestPick: string | null = null;
+  private chestArmed = false;
   private chestTabOf = -1;
   private stopTab: 'lines' | 'arr' | 'dep' = 'lines';
   private stopTabOf = -1;
@@ -2440,7 +2467,7 @@ export class Hud implements GestureHandlers {
       const sorted = !!(b.filter || (three && b.filter2));
       sheet.classList.add('mach-sheet');
       sheet.append(this.sheetHead(three ? 'Séparateur à 3 sorties' : 'Séparateur', sorted
-        ? `Trie : ${[b.filter, three ? b.filter2 : undefined].filter(Boolean).map((t) => esc(item(t!).name.toLowerCase())).join(' d’un côté, ')}${b.filter && three && b.filter2 ? ' de l’autre' : ''} ; le reste continue tout droit`
+        ? `Trie : ${[b.filter, three ? b.filter2 : undefined].filter(Boolean).map((t) => esc(t!.startsWith('@') ? this.filterInfo(t!).name.replace(/^Pour/, 'pour') : this.filterInfo(t!).name.toLowerCase())).join(' d’un côté, ')}${b.filter && three && b.filter2 ? ' de l’autre' : ''} ; le reste continue tout droit`
         : three ? 'Auto : un objet sur trois de chaque côté' : 'Auto : un objet sur deux de chaque côté', close));
       // Ce qui arrive : les objets sur la chaîne de tapis (le plus fréquent d'abord).
       const count = new Map<string, number>();
@@ -2486,7 +2513,7 @@ export class Hud implements GestureHandlers {
       const cStraight = h('div', 'mchip out belt', `<span class="mc-name"><span class="mc-t">Tout droit</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${straight.toLowerCase()}</small></span>`);
       place(cStraight, W - CW, midY - CH / 2);
       const cSide = h('div', `mchip out belt${b.filter ? ' locked' : ''}`, b.filter
-        ? `<span class="mc-name"><img src="${this.filterInfo(b.filter).icon}" alt=""><span class="mc-t">${esc(this.filterInfo(b.filter).name)}</span></span><span class="mc-rate"><small>${b.filter.startsWith('@') ? 'ce qui manque' : 'seulement'}</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
+        ? `<span class="mc-name"><img src="${this.filterInfo(b.filter).icon}" alt=""><span class="mc-t">${esc(this.filterInfo(b.filter).name)}</span></span><span class="mc-rate"><small>${b.filter.startsWith('@') ? 'manquant' : 'seulement'}</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
         : `<span class="mc-name"><span class="mc-t">Dérivation</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${sorted ? 'rien' : each}</small><small class="mc-tag auto">auto</small></span>`);
       place(cSide, W / 2 - CW / 2, down ? H - CH - 2 : 2);
       cSide.onclick = () => {
@@ -2503,7 +2530,7 @@ export class Hud implements GestureHandlers {
       if (three) {
         const f2 = b.filter2;
         const cSide2 = h('div', `mchip out belt${f2 ? ' locked' : ''}`, f2
-          ? `<span class="mc-name"><img src="${this.filterInfo(f2).icon}" alt=""><span class="mc-t">${esc(this.filterInfo(f2).name)}</span></span><span class="mc-rate"><small>${f2.startsWith('@') ? 'ce qui manque' : 'seulement'}</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
+          ? `<span class="mc-name"><img src="${this.filterInfo(f2).icon}" alt=""><span class="mc-t">${esc(this.filterInfo(f2).name)}</span></span><span class="mc-rate"><small>${f2.startsWith('@') ? 'manquant' : 'seulement'}</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
           : `<span class="mc-name"><span class="mc-t">2ᵉ dérivation</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${sorted ? 'rien' : each}</small><small class="mc-tag auto">auto</small></span>`);
         place(cSide2, W / 2 - CW / 2, down ? 2 : H - CH - 2);
         cSide2.onclick = () => {

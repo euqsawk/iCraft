@@ -1320,6 +1320,15 @@ export class Game {
     return true;
   }
 
+  /** Jette tout un objet d'un coffre (il disparaît). Renvoie le nombre jeté. */
+  discardFromChest(m: Machine, t: string): number {
+    if (machineDef(m.type).kind !== 'storage') return 0;
+    let n = 0;
+    for (const buf of [m.inBuf, m.outBuf]) { n += Math.max(0, buf[t] ?? 0); delete buf[t]; }
+    if (n) this.emit({ type: 'factory' });
+    return n;
+  }
+
   /** Vide un tapis (toute sa chaîne) : ce qu'il transportait disparaît. Renvoie le nombre d'objets jetés. */
   emptyChain(b: Belt): number {
     let n = 0;

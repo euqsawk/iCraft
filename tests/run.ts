@@ -603,6 +603,13 @@ test('le robot construit ce qu’on pose : il va au chantier le plus proche, pui
     assert(Math.hypot(g.robot.x - 17, g.robot.y - 15) < 8, `le robot est allé sur place : ${g.robot.x.toFixed(1)}, ${g.robot.y.toFixed(1)}`);
   } finally { Game.instantBuild = true; }
 });
+test('jeter un objet d’un coffre', () => {
+  const g = new Game('TEST-JC');
+  g.money = 1000; g.world.reveal(6, 6, 20);
+  const c = g.placeMachine('coffre', 8, 8)!;
+  g.factory.putInStorage(c, 'vis', 23); g.factory.putInStorage(c, 'charbon', 4);
+  assert(g.discardFromChest(c, 'vis') === 23 && !c.inBuf.vis && c.inBuf.charbon === 4, 'les vis sont jetées, le charbon reste');
+});
 test('vider un tapis : tout ce qu’il transporte disparaît', () => {
   const g = new Game('TEST-VT');
   g.money = 10000; g.world.reveal(6, 6, 20);
