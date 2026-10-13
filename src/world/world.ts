@@ -4,7 +4,8 @@ import { fbm, hash, hashString, rng } from './rng.ts';
 
 export type Richness = 'pauvre' | 'normal' | 'riche';
 
-export const RICHNESS_RATE: Record<Richness, number> = { pauvre: 0.6, normal: 1, riche: 1.6 };
+/** Débit d'une foreuse selon le filon : 0,25 / 0,5 / 0,75 par seconde (des chiffres ronds qui s'emboîtent). */
+export const RICHNESS_RATE: Record<Richness, number> = { pauvre: 0.5, normal: 1, riche: 1.5 };
 export const RICHNESS_LABEL: Record<Richness, string> = { pauvre: 'pauvre', normal: 'normal', riche: 'riche' };
 
 export interface Patch {

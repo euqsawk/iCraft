@@ -589,7 +589,8 @@ export class Factory {
       if (!best || best[1].n < Math.min(2, def.w * def.h)) return { ok: false, reason: 'À poser sur un filon' };
       // Une foreuse 1 × 1 : le quart d'une ancienne foreuse 2 × 2 (quatre collées valent la même chose).
       if (def.w * def.h === 1) return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate / 4, belts };
-      return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate * (best[1].n / 4 * 0.5 + 0.5), belts };
+      // Le débit ne dépend que du filon (pas du nombre de cases couvertes) : des chiffres ronds.
+      return { ok: true, ore: best[0], rate: DRILL_BASE_RATE * best[1].rate, belts };
     }
     return { ok: true, belts };
   }

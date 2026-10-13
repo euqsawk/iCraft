@@ -1169,7 +1169,7 @@ test('jour et nuit ; panneaux solaires et batteries', () => {
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
   assert(g.placeCables([{ x: 8, y: 7 }]), 'câble');
-  pr.inBuf = { lingot_fer: 10 }; pr.fuel = 0;
+  pr.inBuf = { lingot_fer: 40 }; pr.fuel = 0;
   run(g, 10);
   const net = g.factory.netOf(pr)!;
   assert(net && net.solar === 120 && (pr.power ?? 0) === 1 && (pr.outBuf.plaque_fer ?? 0) + pr.made > 0, `le soleil fait tourner la presse : ${net?.solar} kW`);
@@ -1233,12 +1233,14 @@ test('eau : pompe sur le lac, tuyaux, réacteur refroidi', () => {
   for (const m of g.factory.machines.values()) m.built = true;
   g.pending = []; g.factory.markBuilt();
   reac.inBuf = { uranium_enrichi: 3 };
-  pr.inBuf = { lingot_fer: 10 }; pr.fuel = 0;
+  pr.inBuf = { lingot_fer: 40 }; pr.fuel = 0;
   assert(g.placeCables([{ x: 17, y: -24 }]), 'câble réacteur → presse');
   run(g, 3);
   assert(reac.status === 'nowater' && !(pr.power ?? 0), `sans eau, le réacteur ne démarre pas : ${reac.status}`);
   assert(g.placePipes([9, 10, 11, 12, 13].map((x) => ({ x, y: -24 }))), 'tuyaux');
-  run(g, 5);
+  run(g, 2);
+  pr.outBuf = {}; // la presse ne doit pas être bouchée pour réclamer du courant
+  run(g, 2);
   const net = g.factory.waterNetOf(reac)!;
   assert(net && net.supply === 40 && reac.water === 1, `eau : ${net?.supply} L/s, ${reac.water}`);
   assert(reac.status === 'working' && (pr.power ?? 0) === 1, `le réacteur alimente la presse : ${reac.status}`);

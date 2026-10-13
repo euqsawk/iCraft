@@ -2881,10 +2881,17 @@ export class Hud implements GestureHandlers {
 
   /** La mission du Noyau : ce qu'il demande pour passer au palier suivant. */
   /** La pastille du train de fret, sous la mission : où il en est et ce qu'il manque. */
+  private freightSeen: { phase: string; t: number } | null = null;
+
   private refreshFreight(): void {
     const fr = this.game.freight, p = this.freightPill;
     p.classList.toggle('hidden', !fr || !!this.game.inAtelier);
     if (!fr) return;
+    // On prévient : une minute avant l'arrivée, puis à l'arrivée (bannière et pastille qui clignote).
+    const prev = this.freightSeen;
+    if (prev && prev.phase === 'away' && fr.phase === 'here') this.freightBanner('Le train de fret est à quai !', `Il repart dans ${clock(fr.t)} : remplis son coffre.`);
+    if (prev && prev.phase === 'away' && fr.phase === 'away' && prev.t > 60 && fr.t <= 60) this.freightBanner('Le train arrive dans 1 minute', 'Prépare sa commande sur le quai.');
+    this.freightSeen = { phase: fr.phase, t: fr.t };
     const left = Object.values(this.game.freightMissing()).reduce((a, n) => a + n, 0);
     const total = Object.values(fr.req).reduce((a, n) => a + n, 0) || 1;
     const here = fr.phase === 'here';
@@ -2892,6 +2899,25 @@ export class Hud implements GestureHandlers {
     p.classList.toggle('here', here);
     p.classList.toggle('urgent', urgent);
     p.innerHTML = `${ICONS.transport}<span>${here ? `À quai · part dans <b>${clock(fr.t)}</b>` : `Train dans <b>${clock(fr.t)}</b>`}</span><span class="fp-bar"><span style="width:${Math.round((1 - left / total) * 100)}%"></span></span><small>${left ? `${left} à livrer` : 'prêt'}</small>`;
+  }
+
+  /** Une bannière en haut de l'écran pour l'arrivée du train (elle s'en va seule), et la pastille qui clignote. */
+  private freightBanner(title: string, text: string): void {
+    if (this.game.inAtelier) return;
+    this.root.querySelector('.freight-banner')?.remove();
+    const b = h('div', 'freight-banner');
+    b.innerHTML = `<span class="fb-ico">${ICONS.transport}</span><span class="fb-txt"><b>${esc(title)}</b><small>${esc(text)}</small></span>`;
+    const see = h('button', 'btn primary', 'Voir');
+    see.onclick = () => { b.remove(); const q = this.game.quai(); this.r.focusOn(q.x + q.w / 2, q.y + q.h / 2, 0.9); };
+    b.append(see);
+    b.onclick = (e) => { if (e.target === b) b.remove(); };
+    this.root.append(b);
+    this.freightPill.classList.remove('flash');
+    void this.freightPill.offsetWidth;
+    this.freightPill.classList.add('flash');
+    window.setTimeout(() => { b.classList.add('out'); window.setTimeout(() => b.remove(), 400); }, 7000);
+    window.setTimeout(() => this.freightPill.classList.remove('flash'), 6000);
+    navigator.vibrate?.(120);
   }
 
   /** La fenêtre qui présente le train de fret (une seule fois, après 10 minutes de jeu). */

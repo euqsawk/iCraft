@@ -600,7 +600,6 @@ export class Game {
     if (fr.phase === 'away') {
       fr.phase = 'here';
       fr.t = FREIGHT_DOCK;
-      this.emit({ type: 'toast', text: 'Le train de fret est à quai : il repart dans 10 minutes', tone: 'info' });
     } else {
       this.freightDeparts();
       fr.phase = 'away';

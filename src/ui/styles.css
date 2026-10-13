@@ -1182,3 +1182,16 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .drop-rotate svg { width: 20px; height: 20px; }
 .drop-rotate:active { transform: translateX(-50%) scale(.95); }
 .move-banner .btn svg { width: 18px; height: 18px; }
+.freight-pill.flash { animation: fpFlash .5s ease-in-out 12 alternate; }
+@keyframes fpFlash { from { background: #fff; transform: scale(1); } to { background: #FFC857; transform: scale(1.06); } }
+.freight-banner { position: absolute; z-index: 6; left: 16px; right: 16px; top: calc(var(--top) + 172px); max-width: 520px; margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px; border-radius: 20px; background: var(--ink); color: #fff; box-shadow: 0 6px 0 rgba(28, 36, 48, .35); animation: fbIn .35s cubic-bezier(.2, 1.4, .4, 1); }
+.freight-banner.out { animation: fbOut .35s ease-in forwards; }
+.freight-banner .fb-ico { width: 40px; height: 40px; border-radius: 14px; background: var(--yellow); color: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; animation: fbWiggle 1s ease-in-out infinite; }
+.freight-banner .fb-ico svg { width: 26px; height: 26px; }
+.freight-banner .fb-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.freight-banner b { font-size: 15px; font-weight: 900; }
+.freight-banner small { font-size: 12px; font-weight: 700; color: #C8D3DD; }
+.freight-banner .btn { flex: none; min-height: 40px; padding: 0 16px; }
+@keyframes fbIn { from { transform: translateY(-20px) scale(.9); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fbOut { to { transform: translateY(-14px); opacity: 0; } }
+@keyframes fbWiggle { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(3px); } }

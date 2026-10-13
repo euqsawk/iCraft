@@ -42,6 +42,12 @@ export interface MachineDef {
 }
 
 const r = (inp: Record<string, number>, out: Record<string, number>, time: number): Recipe => ({ in: inp, out, time });
+/**
+ * Durée d'une recette d'après son débit (objets par seconde, au niveau 1). Les débits sont ronds et s'emboîtent :
+ * foreuse 0,5 → 3 foreuses pour 2 fours (0,75) → 2 fours pour 1 presse, une tour ou une tréfileuse (1,5)
+ * → 1 presse pour 2 assembleurs à engrenages (0,75) ; fourneau, raffinerie, mélangeur à 0,5 ; fabricant à 0,25 ou 0,2.
+ */
+const per = (rate: number): number => 1 / rate;
 
 export const MACHINES: Record<string, MachineDef> = {
   foreuse: {
@@ -52,101 +58,101 @@ export const MACHINES: Record<string, MachineDef> = {
     id: 'four', name: 'Four', kind: 'crafter', coal: true, w: 2, h: 2, cost: 40, unlock: 1, buildable: true,
     hint: 'Minerai → lingot',
     recipes: [
-      r({ fer: 1 }, { lingot_fer: 1 }, 1.6),
-      r({ cuivre: 1 }, { lingot_cuivre: 1 }, 1.6),
-      r({ sable: 1 }, { verre: 1 }, 1.6),
-      r({ or: 1 }, { lingot_or: 1 }, 2.4),
-      r({ titane: 1 }, { lingot_titane: 1 }, 3),
+      r({ fer: 1 }, { lingot_fer: 1 }, per(0.75)),
+      r({ cuivre: 1 }, { lingot_cuivre: 1 }, per(0.75)),
+      r({ sable: 1 }, { verre: 1 }, per(0.75)),
+      r({ or: 1 }, { lingot_or: 1 }, per(0.5)),
+      r({ titane: 1 }, { lingot_titane: 1 }, per(0.5)),
     ],
   },
   presse: {
     id: 'presse', name: 'Presse', kind: 'crafter', coal: true, w: 2, h: 2, cost: 60, unlock: 1, buildable: true,
     hint: 'Lingot → plaque',
     recipes: [
-      r({ lingot_fer: 1 }, { plaque_fer: 1 }, 1.2),
-      r({ aluminium: 1 }, { tole_alu: 1 }, 1.4),
-      r({ acier: 1 }, { poutre_acier: 1 }, 1.6),
-      r({ cristal_pur: 1 }, { lentille: 1 }, 2),
+      r({ lingot_fer: 1 }, { plaque_fer: 1 }, per(1.5)),
+      r({ aluminium: 1 }, { tole_alu: 1 }, per(1)),
+      r({ acier: 1 }, { poutre_acier: 1 }, per(0.5)),
+      r({ cristal_pur: 1 }, { lentille: 1 }, per(0.25)),
     ],
   },
   tour: {
     id: 'tour', name: 'Tour', kind: 'crafter', coal: true, w: 2, h: 2, cost: 70, unlock: 2, buildable: true,
     hint: 'Lingot de fer → vis',
     recipes: [
-      r({ lingot_fer: 1 }, { vis: 1 }, 1.2),
-      r({ acier: 1 }, { tuyau_acier: 1 }, 1.6),
+      r({ lingot_fer: 1 }, { vis: 1 }, per(1.5)),
+      r({ acier: 1 }, { tuyau_acier: 1 }, per(0.5)),
     ],
   },
   trefileuse: {
     id: 'trefileuse', name: 'Tréfileuse', kind: 'crafter', coal: true, w: 2, h: 2, cost: 70, unlock: 3, buildable: true,
     hint: 'Lingot de cuivre → fil',
     recipes: [
-      r({ lingot_cuivre: 1 }, { fil_cuivre: 1 }, 1.2),
-      r({ lingot_or: 1 }, { fil_or: 1 }, 1.6),
+      r({ lingot_cuivre: 1 }, { fil_cuivre: 1 }, per(1.5)),
+      r({ lingot_or: 1 }, { fil_or: 1 }, per(0.5)),
     ],
   },
   haut_fourneau: {
     id: 'haut_fourneau', name: 'Fourneau', kind: 'crafter', coal: true, w: 2, h: 2, cost: 120, unlock: 4, buildable: true,
     hint: 'Lingot de fer + charbon → acier',
-    recipes: [r({ lingot_fer: 1, charbon: 1 }, { acier: 1 }, 2), r({ lingot_titane: 1, acier: 1 }, { alliage: 1 }, 3)],
+    recipes: [r({ lingot_fer: 1, charbon: 1 }, { acier: 1 }, per(0.5)), r({ lingot_titane: 1, acier: 1 }, { alliage: 1 }, per(0.25))],
   },
   assembleur: {
     id: 'assembleur', name: 'Assembleur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 150, unlock: 5, buildable: true,
     hint: 'Deux pièces → une pièce travaillée',
     recipes: [
-      r({ plaque_fer: 1, vis: 1 }, { engrenage: 1 }, 1.6),
-      r({ fil_cuivre: 1, plastique: 1 }, { cable: 1 }, 1.6),
-      r({ plastique: 1, fil_or: 1 }, { circuit: 1 }, 2),
-      r({ cristal: 1, fil_cuivre: 1 }, { oscillateur: 1 }, 2),
-      r({ engrenage: 1, fil_cuivre: 1 }, { rotor: 1 }, 2),
-      r({ tuyau_acier: 1, fil_cuivre: 1 }, { stator: 1 }, 2),
-      r({ poutre_acier: 1, beton: 1 }, { cadre: 1 }, 2),
-      r({ verre: 1, circuit: 1 }, { ecran: 1 }, 2.4),
-      r({ circuit: 1, oscillateur: 1 }, { processeur: 1 }, 2.4),
-      r({ tole_alu: 1, cable: 1 }, { batterie: 1 }, 2.4),
+      r({ plaque_fer: 1, vis: 1 }, { engrenage: 1 }, per(0.75)),
+      r({ fil_cuivre: 1, plastique: 1 }, { cable: 1 }, per(0.75)),
+      r({ plastique: 1, fil_or: 1 }, { circuit: 1 }, per(0.5)),
+      r({ cristal: 1, fil_cuivre: 1 }, { oscillateur: 1 }, per(0.5)),
+      r({ engrenage: 1, fil_cuivre: 1 }, { rotor: 1 }, per(0.5)),
+      r({ tuyau_acier: 1, fil_cuivre: 1 }, { stator: 1 }, per(0.5)),
+      r({ poutre_acier: 1, beton: 1 }, { cadre: 1 }, per(0.5)),
+      r({ verre: 1, circuit: 1 }, { ecran: 1 }, per(0.25)),
+      r({ circuit: 1, oscillateur: 1 }, { processeur: 1 }, per(0.25)),
+      r({ tole_alu: 1, cable: 1 }, { batterie: 1 }, per(0.5)),
     ],
   },
   broyeur: {
     id: 'broyeur', name: 'Broyeur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 90, unlock: 6, buildable: true,
     hint: 'Calcaire → ciment, quartz → cristal',
     recipes: [
-      r({ calcaire: 1 }, { ciment: 1 }, 1.4),
-      r({ quartz: 1 }, { cristal: 1 }, 1.8),
+      r({ calcaire: 1 }, { ciment: 1 }, per(1)),
+      r({ quartz: 1 }, { cristal: 1 }, per(0.5)),
     ],
   },
   melangeur: {
     id: 'melangeur', name: 'Mélangeur', kind: 'crafter', coal: true, w: 2, h: 2, cost: 110, unlock: 7, buildable: true,
     hint: 'Ciment + sable → béton · il lui faut de l’eau (tuyau)',
-    recipes: [r({ ciment: 1, sable: 1 }, { beton: 1 }, 1.8)],
+    recipes: [r({ ciment: 1, sable: 1 }, { beton: 1 }, per(0.5))],
   },
   raffinerie: {
     id: 'raffinerie', name: 'Raffinerie', kind: 'crafter', coal: true, w: 2, h: 2, cost: 160, unlock: 8, buildable: true,
     hint: 'Bauxite → aluminium, pétrole → plastique ou carburant · il lui faut de l’eau (tuyau)',
     recipes: [
-      r({ bauxite: 1 }, { aluminium: 1 }, 2),
-      r({ petrole: 1 }, { plastique: 1 }, 2),
-      r({ petrole: 1 }, { carburant: 1 }, 2),
+      r({ bauxite: 1 }, { aluminium: 1 }, per(0.5)),
+      r({ petrole: 1 }, { plastique: 1 }, per(0.5)),
+      r({ petrole: 1 }, { carburant: 1 }, per(0.5)),
     ],
   },
   fabricant: {
     id: 'fabricant', name: 'Fabricant', kind: 'crafter', coal: true, w: 2, h: 2, cost: 250, unlock: 9, buildable: true,
     hint: 'Trois composants → une machine',
     recipes: [
-      r({ verre: 1, circuit: 1, tole_alu: 1 }, { panneau_solaire: 1 }, 3),
-      r({ rotor: 1, stator: 1, vis: 1 }, { moteur: 1 }, 3),
-      r({ processeur: 1, ecran: 1, cable: 1 }, { ordinateur: 1 }, 3.5),
-      r({ moteur: 1, ordinateur: 1, cadre: 1 }, { robot: 1 }, 4),
-      r({ moteur: 1, batterie: 1, processeur: 1 }, { drone: 1 }, 4),
-      r({ uranium_enrichi: 1, cadre: 1, ordinateur: 1 }, { reacteur: 1 }, 4),
-      r({ alliage: 1, cadre: 1, poutre_acier: 1 }, { structure_fusee: 1 }, 5),
-      r({ alliage: 1, moteur: 1, carburant: 1 }, { moteur_fusee: 1 }, 5),
-      r({ ordinateur: 1, lentille: 1, processeur: 1 }, { guidage: 1 }, 5),
+      r({ verre: 1, circuit: 1, tole_alu: 1 }, { panneau_solaire: 1 }, per(0.25)),
+      r({ rotor: 1, stator: 1, vis: 1 }, { moteur: 1 }, per(0.25)),
+      r({ processeur: 1, ecran: 1, cable: 1 }, { ordinateur: 1 }, per(0.25)),
+      r({ moteur: 1, ordinateur: 1, cadre: 1 }, { robot: 1 }, per(0.2)),
+      r({ moteur: 1, batterie: 1, processeur: 1 }, { drone: 1 }, per(0.2)),
+      r({ uranium_enrichi: 1, cadre: 1, ordinateur: 1 }, { reacteur: 1 }, per(0.2)),
+      r({ alliage: 1, cadre: 1, poutre_acier: 1 }, { structure_fusee: 1 }, per(0.2)),
+      r({ alliage: 1, moteur: 1, carburant: 1 }, { moteur_fusee: 1 }, per(0.2)),
+      r({ ordinateur: 1, lentille: 1, processeur: 1 }, { guidage: 1 }, per(0.2)),
     ],
   },
   centrifugeuse: {
     id: 'centrifugeuse', name: 'Centrifugeuse', kind: 'crafter', coal: true, w: 2, h: 2, cost: 300, unlock: 12, buildable: true,
     hint: 'Uranium → uranium enrichi',
-    recipes: [r({ uranium: 1 }, { uranium_enrichi: 1 }, 3)],
+    recipes: [r({ uranium: 1 }, { uranium_enrichi: 1 }, per(0.25))],
   },
   coffre: {
     id: 'coffre', name: 'Coffre', kind: 'storage', coal: false, w: 1, h: 1, cost: 15, unlock: 1, recipes: [], buildable: true,

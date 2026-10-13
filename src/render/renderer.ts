@@ -97,6 +97,8 @@ interface MachineView {
   lvl?: number;
   made: number;
   pop: number;
+  /** L'ombre du socle (dessinée au sol, sous les tapis). */
+  sh?: { w: number; h: number; r: number };
   /** Petit rebond quand le robot vient de la construire. */
   bp?: number;
   status: string;
@@ -217,6 +219,10 @@ export class GameRenderer {
   private buildG = new Graphics();
   private buildPuffs: { x: number; y: number; t: number; big: boolean }[] = [];
   private justBuilt = new Set<number>();
+  /** Les ombres des socles, au sol : les tapis passent par-dessus (un tapis qui entre par le bas se voit en entier). */
+  private machineShadowG = new Graphics();
+  private shadowsDirty = true;
+  private noyauShadow: { w: number; h: number; r: number } | null = null;
   /** Le train de fret sur son quai, et son compte à rebours. */
   private trainG = new Graphics();
   private trainText: Text | null = null;
@@ -264,7 +270,7 @@ export class GameRenderer {
     this.buildRobot();
     this.buildLoupe();
     game.on((e) => {
-      if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
+      if (e.type === 'factory' || e.type === 'built') { this.beltsDirty = true; this.shadowsDirty = true; }
       if (e.type === 'built') {
         const p = e.job.kind === 'belt' ? (() => { const b = this.game.view.belts.get(e.job.k); return b ? { x: b.x + 0.5, y: b.y + 0.5 } : null; })()
           : (() => { const m = this.game.view.machines.get(e.job.id); if (m) this.justBuilt.add(m.id); return m ? { x: m.x + m.w / 2, y: m.y + m.h / 2 } : null; })();
@@ -1412,19 +1418,20 @@ export class GameRenderer {
     const isDrill = def.kind === 'drill';
     const small = m.type === 'foreuse' && def.w === 1;
     const bw = small ? W - 2 : isDrill ? W - 8 : W - 2, bh = small ? H - 2 : isDrill ? H - 8 : H - 2, br = small ? 7 : isDrill ? 12 : m.w === 1 ? 7 : 15;
+    let sh: { w: number; h: number; r: number } | undefined;
     // Lampadaires et arbres : posés tels quels, sans socle blanc ni nom.
     const bare = def.kind === 'lamp' || def.kind === 'tree' || def.kind === 'freight';
     if (def.kind === 'freight') {
-      // Le Quai du train : la voie sur toute la longueur (5 cases de rails de chaque côté, puis un tunnel),
-      // le quai au milieu, en bas, avec sa bande jaune. Les tunnels sont dessinés par-dessus le train (drawTrain).
-      const x0 = -W / 2, y0 = -H / 2, side = (def.w - 6) / 2 * CELL, px = x0 + side, pw = 6 * CELL;
-      body.roundRect(px, y0 + CELL + 3, pw, CELL - 1, 6).fill(PALETTE.shadow);
-      body.roundRect(px, y0 + CELL, pw, CELL - 2, 6).fill(0xEDE6D6);
-      body.rect(px + 4, y0 + CELL + 2, pw - 8, 3).fill(PALETTE.yellow);
-      for (let i = 0; i < 3; i++) body.roundRect(px + 12 + i * CELL * 2, y0 + CELL + 9, CELL - 6, 8, 3).fill({ color: 0xC8BFA9, alpha: 0.8 });
-      body.rect(x0, y0 + 2, W, CELL - 4).fill({ color: 0xB9AE95, alpha: 0.55 });
-      for (let x = x0 + 3; x < x0 + W - 3; x += 9) body.roundRect(x, y0 + 3, 6, CELL - 6, 1.5).fill(0x9A7B5B);
-      body.rect(x0, y0 + 6, W, 3).fill(0x7D8A99).rect(x0, y0 + CELL - 9, W, 3).fill(0x7D8A99);
+      // Le Quai du train : le quai en haut (côté Noyau, là où arrivent les tapis), avec sa bande jaune au bord des rails ;
+      // la voie en dessous, sur toute la longueur (elle s'enfonce sous terre aux deux bouts, voir drawTrain).
+      const x0 = -W / 2, y0 = -H / 2, side = (def.w - 6) / 2 * CELL, px = x0 + side, pw = 6 * CELL, ry = y0 + CELL;
+      body.roundRect(px, y0 + 4, pw, CELL - 2, 6).fill(PALETTE.shadow);
+      body.roundRect(px, y0 + 1, pw, CELL - 2, 6).fill(0xEDE6D6);
+      body.rect(px + 4, y0 + CELL - 6, pw - 8, 3).fill(PALETTE.yellow);
+      for (let i = 0; i < 3; i++) body.roundRect(px + 12 + i * CELL * 2, y0 + 6, CELL - 6, 8, 3).fill({ color: 0xC8BFA9, alpha: 0.8 });
+      body.rect(x0, ry + 2, W, CELL - 4).fill({ color: 0xB9AE95, alpha: 0.55 });
+      for (let x = x0 + 3; x < x0 + W - 3; x += 9) body.roundRect(x, ry + 3, 6, CELL - 6, 1.5).fill(0x9A7B5B);
+      body.rect(x0, ry + 6, W, 3).fill(0x7D8A99).rect(x0, ry + CELL - 9, W, 3).fill(0x7D8A99);
     } else if (bare) {
       icon.scale.set(1.35);
       if (!m.built) icon.alpha = 0.4;
@@ -1448,7 +1455,9 @@ export class GameRenderer {
       shapes(4); body.fill(PALETTE.shadow);
       shapes(0); body.fill(levelFill(m));
     } else if (m.built) {
-      drawMachineBody(body, bw, bh, br, levelFill(m));
+      // Son ombre est dessinée à part, au sol, sous les tapis (drawMachineShadows).
+      drawMachineBody(body, bw, bh, br, levelFill(m), false);
+      sh = { w: bw, h: bh, r: br };
     } else {
       body.roundRect(-bw / 2, -bh / 2, bw, bh, br).fill({ color: PALETTE.white, alpha: 0.45 });
       dashedPolyline(body, roundRectPoints(-bw / 2, -bh / 2, bw, bh, br), 6, 5, true);
@@ -1485,7 +1494,7 @@ export class GameRenderer {
     root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
-    return { rot: m.rot ?? 0, root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, status: '', lvl: m.lvl ?? 1, ...(small ? { link: this.drillLink(m) } : {}) };
+    return { rot: m.rot ?? 0, root, body, icon, badge, lamp, label, built: m.built, ore: m.ore, made: m.made, pop: 0, sh, status: '', lvl: m.lvl ?? 1, ...(small ? { link: this.drillLink(m) } : {}) };
   }
 
   private buildNoyau(m: Machine): void {
@@ -1499,7 +1508,8 @@ export class GameRenderer {
     if (tex) {
       // Le dessin choisi (le cœur corail et ses quatre bras) posé sur un socle, comme les autres bâtiments.
       // Socle d'abord, puis l'anneau de progression (le trait autour), puis le dessin ; le nom au-dessus.
-      drawMachineBody(body, S - 2, S - 2, 22, PALETTE.white);
+      drawMachineBody(body, S - 2, S - 2, 22, PALETTE.white, false);
+      this.noyauShadow = { w: S - 2, h: S - 2, r: 22 };
       const sp = new Sprite(tex);
       sp.anchor.set(0.5);
       sp.width = sp.height = S - 22;
@@ -1535,6 +1545,7 @@ export class GameRenderer {
       if (!v) {
         v = this.buildMachineView(m);
         this.machineViews.set(m.id, v);
+        this.shadowsDirty = true;
         if (this.justBuilt.delete(m.id)) v.bp = 1;
       }
       if (v.bp) { v.bp = Math.max(0, v.bp - dt * 3); v.root.scale.set(1 + Math.sin(v.bp * Math.PI) * 0.14); }
@@ -1586,8 +1597,9 @@ export class GameRenderer {
       }
     }
     for (const [id, v] of this.machineViews) {
-      if (!seen.has(id)) { v.root.destroy({ children: true }); this.machineViews.delete(id); }
+      if (!seen.has(id)) { v.root.destroy({ children: true }); this.machineViews.delete(id); this.shadowsDirty = true; }
     }
+    this.drawMachineShadows();
     // Noyau : anneau de progression de la mission du palier.
     const nv = this.noyauView;
     if (nv) {
@@ -1597,7 +1609,15 @@ export class GameRenderer {
         nv.ring.clear();
         const S = 4 * CELL, r = 22, x0 = -S / 2 + 4;
         const track = trackPoints(x0, x0, S - 8, S - 8, r);
-        nv.ring.roundRect(x0, x0 + 4, S - 8, S - 8, r).stroke({ width: 8, color: PALETTE.shadow });
+        // L'ombre de l'anneau seulement en bas (en haut, elle tombait sur le socle et ne servait à rien).
+        const low = track.filter((q) => q.y > 0);
+        if (low.length > 1) {
+          const start = low.findIndex((q, i) => i === 0 || Math.hypot(q.x - low[i - 1].x, q.y - low[i - 1].y) > 12);
+          const run = [...low.slice(start), ...low.slice(0, start)];
+          nv.ring.moveTo(run[0].x, run[0].y + 4);
+          for (const q of run.slice(1)) nv.ring.lineTo(q.x, q.y + 4);
+          nv.ring.stroke({ width: 8, color: PALETTE.shadow, cap: 'round', join: 'round' });
+        }
         nv.ring.roundRect(x0, x0, S - 8, S - 8, r).stroke({ width: 8, color: PALETTE.white });
         if (prog > 0) {
           const part = partialPolyline(track, prog);
@@ -2404,7 +2424,7 @@ export class GameRenderer {
     t.position.set(x0 + W / 2, y0 - 4);
     // Le train roule d'un bout à l'autre de la voie : il sort du sol à droite, s'arrête au quai, s'enfonce à gauche.
     const xL = x0, xR = x0 + W;
-    const px = x0 + (q.w - 6) / 2 * CELL, cy = y0 + CELL / 2, car = (6 * CELL - 10) / 3, len = car * 3;
+    const px = x0 + (q.w - 6) / 2 * CELL, cy = y0 + CELL * 1.5, car = (6 * CELL - 10) / 3, len = car * 3;
     if (this.trainP > 0) {
       const e = this.trainP * this.trainP * (3 - 2 * this.trainP);
       const startOff = xR - (px + 5) + 4, endOff = -((px + 5 + len) - xL) - 4;
@@ -2439,8 +2459,8 @@ export class GameRenderer {
     // Un vrai dégradé (pas des bandes : elles se chevauchaient et faisaient des traits sur un écran net).
     const span = CELL * 4.4;
     const [gl, gr] = this.fadeGradients(ground);
-    g.rect(xL - CELL * 1.2, y0 - 4, span, CELL + 8).fill(gl);
-    g.rect(xR + CELL * 1.2 - span, y0 - 4, span, CELL + 8).fill(gr);
+    g.rect(xL - CELL * 1.2, y0 + CELL - 4, span, CELL + 8).fill(gl);
+    g.rect(xR + CELL * 1.2 - span, y0 + CELL - 4, span, CELL + 8).fill(gr);
   }
 
   private drawBuild(dt: number): void {
@@ -2483,6 +2503,20 @@ export class GameRenderer {
       g.circle(pf.x, pf.y, rr).stroke({ width: (pf.big ? 4 : 2.5) * (1 - k), color: 0xffffff, alpha: 1 - k });
     }
     this.buildPuffs = this.buildPuffs.filter((pf) => pf.t < 1);
+  }
+
+  private drawMachineShadows(): void {
+    if (!this.shadowsDirty) return;
+    this.shadowsDirty = false;
+    const g = this.machineShadowG;
+    if (!g.parent) this.groundShadows.addChildAt(g, 0);
+    g.clear();
+    for (const m of this.game.view.machines.values()) {
+      const sh = m.type === 'noyau' ? this.noyauShadow : this.machineViews.get(m.id)?.sh;
+      if (!sh || !m.built) continue;
+      const cx = (m.x + m.w / 2) * CELL, cy = (m.y + m.h / 2) * CELL;
+      g.roundRect(cx - sh.w / 2, cy - sh.h / 2 + 4, sh.w, sh.h, sh.r).fill(PALETTE.shadow);
+    }
   }
 
   private fadeCache: { color: number; l: FillGradient; r: FillGradient } | null = null;
