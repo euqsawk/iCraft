@@ -1,5 +1,7 @@
 // Tests de la simulation (sans rendu). Lancer : npm test
 import { Game } from '../src/sim/game.ts';
+// Dans les tests, tout se construit tout de suite (sauf le test du robot qui construit).
+Game.instantBuild = true;
 import { BeltTracer, type TraceCell } from '../src/sim/tracer.ts';
 import { CableTracer } from '../src/sim/cables.ts';
 import { World } from '../src/world/world.ts';
@@ -585,6 +587,21 @@ test('foreuses 2 × 2 collées : elles ne se relient pas, chacune sort son miner
   c.inBuf = {};
   run(g, 60);
   assert((c.inBuf.fer ?? 0) > 0 && (c.inBuf.fer ?? 0) <= a.made + 1, `le coffre ne reçoit que la première : ${c.inBuf.fer} / ${a.made}`);
+});
+test('le robot construit ce qu’on pose : il va au chantier le plus proche, puis au suivant', () => {
+  Game.instantBuild = false;
+  try {
+    const g = new Game('TEST-RB');
+    g.money = 10000; g.world.reveal(10, 10, 30);
+    const four = g.placeMachine('four', 14, 12)!;
+    assert(four && !four.built && g.pending.length === 1, 'un chantier');
+    assert(g.placeBelts(trace(g, [[14.5, 15.5], [20.5, 15.5]]).result()), 'tapis');
+    assert(g.pending.length === 8 && [...g.factory.belts.values()].every((b) => !b.built), `chantiers : ${g.pending.length}`);
+    let saw = false;
+    for (let i = 0; i < 400 && g.pending.length; i++) { g.tick(0.05); if (g.robot.build) saw = true; }
+    assert(saw && four.built && g.pending.length === 0 && [...g.factory.belts.values()].every((b) => b.built), `tout construit (reste ${g.pending.length})`);
+    assert(Math.hypot(g.robot.x - 17, g.robot.y - 15) < 8, `le robot est allé sur place : ${g.robot.x.toFixed(1)}, ${g.robot.y.toFixed(1)}`);
+  } finally { Game.instantBuild = true; }
 });
 test('vider un tapis : tout ce qu’il transporte disparaît', () => {
   const g = new Game('TEST-VT');

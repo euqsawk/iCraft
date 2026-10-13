@@ -5,10 +5,10 @@ import { SKIN_BOX, skinSvg } from '../data/skins.ts';
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 
-/** Image SVG du robot (avec le faisceau de sa lampe si `beam`), pour l'interface. */
+/** Image SVG du robot (le faisceau de sa lampe seulement si `beam: true`), pour l'interface. */
 export function robotSvg(look: RobotLook, opts: { beam?: boolean; spin?: boolean; cls?: string } = {}): string {
   const svg = skinSvg(look.skin, { look, cls: opts.cls ?? 'robot-svg' });
-  if (opts.beam === false) return svg;
+  if (opts.beam !== true) return svg; // plus de cône jaune par défaut
   // Le faisceau part du côté droit du robot, à mi-hauteur.
   const beam = `<polygon points="66,-96 170,-150 196,-84" fill="${hex(PALETTE.beam)}" class="rb-beam"/>`;
   const B = SKIN_BOX;

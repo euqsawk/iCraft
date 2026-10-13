@@ -97,6 +97,8 @@ interface MachineView {
   lvl?: number;
   made: number;
   pop: number;
+  /** Petit rebond quand le robot vient de la construire. */
+  bp?: number;
   status: string;
 }
 
@@ -211,6 +213,10 @@ export class GameRenderer {
   private lightSprite = new Sprite();
   /** Météo : pluie ou neige, à l'écran. */
   private weatherG = new Graphics();
+  /** Le robot qui construit : un rayon vers le chantier, des étincelles, un anneau qui se remplit, une bouffée à la fin. */
+  private buildG = new Graphics();
+  private buildPuffs: { x: number; y: number; t: number; big: boolean }[] = [];
+  private justBuilt = new Set<number>();
   /** Le train de fret sur son quai, et son compte à rebours. */
   private trainG = new Graphics();
   private trainText: Text | null = null;
@@ -240,7 +246,7 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -259,6 +265,11 @@ export class GameRenderer {
     this.buildLoupe();
     game.on((e) => {
       if (e.type === 'factory' || e.type === 'built') this.beltsDirty = true;
+      if (e.type === 'built') {
+        const p = e.job.kind === 'belt' ? (() => { const b = this.game.view.belts.get(e.job.k); return b ? { x: b.x + 0.5, y: b.y + 0.5 } : null; })()
+          : (() => { const m = this.game.view.machines.get(e.job.id); if (m) this.justBuilt.add(m.id); return m ? { x: m.x + m.w / 2, y: m.y + m.h / 2 } : null; })();
+        if (p) this.buildPuffs.push({ x: p.x * CELL, y: p.y * CELL, t: 0, big: e.job.kind === 'machine' });
+      }
       if (e.type === 'deliver' && e.at === 'noyau' && this.noyauView) this.noyauView.pulse = 1;
       if (e.type === 'look') this.refreshLook();
       if (e.type === 'teleport') this.tpAnim = { fx: e.fromX * CELL, fy: e.fromY * CELL, t: 0 };
@@ -1521,7 +1532,12 @@ export class GameRenderer {
         this.machineViews.delete(m.id);
         v = undefined;
       }
-      if (!v) { v = this.buildMachineView(m); this.machineViews.set(m.id, v); }
+      if (!v) {
+        v = this.buildMachineView(m);
+        this.machineViews.set(m.id, v);
+        if (this.justBuilt.delete(m.id)) v.bp = 1;
+      }
+      if (v.bp) { v.bp = Math.max(0, v.bp - dt * 3); v.root.scale.set(1 + Math.sin(v.bp * Math.PI) * 0.14); }
       const def = machineDef(m.type);
       v.root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
       if (v.root.zIndex !== zOf(m)) v.root.zIndex = zOf(m);
@@ -1670,7 +1686,9 @@ export class GameRenderer {
     sprite.scale.set(SKIN_SPRITE_SCALE / SKIN_SCALE);
     art.addChild(back, sprite, front);
     body.addChild(art);
-    flip.addChild(beam, body);
+    // Plus de cône de lumière devant lui : la nuit, sa lampe éclaire tout autour (drawNight).
+    beam.visible = false;
+    flip.addChild(body);
     // Son ombre est au sol, sous les machines (pas par-dessus quand il passe à côté).
     this.groundShadows.addChild(shadow);
     root.addChild(flip);
@@ -1726,7 +1744,7 @@ export class GameRenderer {
     v.flip.rotation = Math.max(-0.55, Math.min(0.55, tilt)) * (r.moving ? 0.6 : 0.3);
     v.body.y = r.moving ? Math.abs(Math.sin(this.time * 14)) * -1.5 : 0;
     const pulse = 0.5 + 0.5 * Math.sin(this.time * (Math.PI * 2 / 1.8));
-    v.beam.alpha = 0.5 + 0.35 * pulse;
+    void pulse;
     // Skins légendaires : les objets tournent doucement autour, derrière puis devant le robot.
     const n = v.items.length;
     v.items.forEach((it, k) => {
@@ -2211,15 +2229,18 @@ export class GameRenderer {
   /** Une tache de lumière douce (dégradé radial), pour les lampes de nuit. */
   private glowTexture(): Texture {
     if (this.glowTex) return this.glowTex;
+    // Une seule vraie lumière : forte au centre, qui baisse doucement avec la distance jusqu'à rien (sans palier ni anneau).
     const c = document.createElement('canvas');
-    c.width = c.height = 128;
+    c.width = c.height = 256;
     const ctx = c.getContext('2d')!;
-    const grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
-    grad.addColorStop(0, 'rgba(255,255,255,1)');
-    grad.addColorStop(0.35, 'rgba(255,255,255,0.55)');
-    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    const grad = ctx.createRadialGradient(128, 128, 0, 128, 128, 128);
+    for (let i = 0; i <= 24; i++) {
+      const d = i / 24;
+      const a = Math.pow(1 - d, 2.2) * (1 - d * d * 0.15);
+      grad.addColorStop(d, `rgba(255,255,255,${Math.max(0, a).toFixed(4)})`);
+    }
     ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillRect(0, 0, 256, 256);
     this.glowTex = new Texture({ source: new CanvasSource({ resource: asCanvas(c) }) });
     return this.glowTex;
   }
@@ -2262,21 +2283,19 @@ export class GameRenderer {
     for (const m of this.game.view.machines.values()) {
       if (!m.built) continue;
       const cx = (m.x + m.w / 2) * CELL, cy = (m.y + m.h / 2) * CELL;
-      const r = Math.max(m.w, m.h) * CELL * 0.8 + CELL * 1.2;
-      if (!this.inView(cx, cy, m.type === 'lampadaire' ? CELL * 6 : r)) continue;
+      const r = Math.max(m.w, m.h) * CELL * 1.1 + CELL * 1.6;
+      if (!this.inView(cx, cy, m.type === 'lampadaire' ? CELL * 7 : r)) continue;
       // Une machine qui travaille éclaire un peu plus, et sa lumière vacille à peine.
       const busy = m.status === 'working' ? 1 : 0.8;
       const flick = 0.95 + 0.05 * Math.sin(this.time * 3 + m.id);
-      if (m.type === 'lampadaire') { glow(cx, cy, CELL * 5.5, 0xffe7b8, 1); continue; }
+      if (m.type === 'lampadaire') { glow(cx, cy, CELL * 7, 0xffe7b8, 1); continue; }
       if (m.type === 'centrale' && m.status === 'working') { glow(cx, cy, CELL * 5, 0xc8ffd8, 0.9); continue; }
       glow(cx, cy, r, m.type === 'noyau' ? 0xffa58a : 0xffcf8f, 0.9 * busy * flick);
     }
     const rb = this.game.robot;
     const rx = rb.x * CELL, ry = (rb.y - 0.6) * CELL;
-    glow(rx, ry, CELL * 2.4, 0xfff0d0, 0.9);
-    // Le faisceau de sa lampe, dans la direction où il roule.
-    const fx = Math.cos(this.robotFace), fy = Math.sin(this.robotFace);
-    for (let i = 1; i <= 4; i++) glow(rx + fx * CELL * (0.5 + i * 0.9), ry + fy * CELL * (0.5 + i * 0.9), CELL * (0.55 + i * 0.42), 0xfff4dc, 0.78 - i * 0.12);
+    // Le robot porte une seule grande lumière autour de lui.
+    glow(rx, ry, CELL * 6, 0xfff2d6, 1);
     // Camions et trains : deux gros phares devant, et un faisceau qui éclaire la route.
     for (const vv of this.vehicleViews.values()) {
       if (!vv.root.visible) continue;
@@ -2284,9 +2303,8 @@ export class GameRenderer {
       const ca = Math.cos(lead.rotation), sa = Math.sin(lead.rotation);
       const big = vv.kind === 'train' ? 1.35 : 1;
       const nose = (vv.kind === 'train' ? 14 : 12);
-      for (const side of [-1, 1]) glow(lead.x + ca * nose - sa * side * 5, lead.y + sa * nose + ca * side * 5, CELL * 0.55 * big, 0xffffff, 1);
-      for (let i = 1; i <= 4; i++) glow(lead.x + ca * (nose + CELL * i * 0.95 * big), lead.y + sa * (nose + CELL * i * 0.95 * big), CELL * (0.6 + i * 0.45) * big, 0xfff6e0, 0.85 - i * 0.13);
-      for (const part of vv.parts) glow(part.x, part.y, CELL * 0.9 * big, 0xffd8a0, 0.35);
+      // Une seule lumière, un peu en avant (ses phares).
+      glow(lead.x + ca * (nose + CELL), lead.y + sa * (nose + CELL), CELL * 3 * big, 0xfff6e0, 0.95);
     }
     for (let i = used; i < this.glowPool.length; i++) this.glowPool[i].visible = false;
     this.app.renderer.render({ container: this.nightLayer, target: this.lightRT, clear: true, clearColor: amb });
@@ -2425,6 +2443,48 @@ export class GameRenderer {
     g.rect(xR + CELL * 1.2 - span, y0 - 4, span, CELL + 8).fill(gr);
   }
 
+  private drawBuild(dt: number): void {
+    const g = this.buildG;
+    g.clear();
+    if (this.game.inAtelier) { this.buildPuffs.length = 0; return; }
+    const r = this.game.robot, b = r.build;
+    if (b) {
+      const p = this.game.jobPos(b.job);
+      if (p) {
+        const rx = r.x * CELL, ry = (r.y - 0.75) * CELL, px = p.x * CELL, py = p.y * CELL;
+        const m = b.job.kind === 'machine' ? this.game.view.machines.get(b.job.id) : null;
+        // Un rayon en tirets qui avance vers le chantier.
+        const len = Math.hypot(px - rx, py - ry), ux = (px - rx) / (len || 1), uy = (py - ry) / (len || 1);
+        const ph = (this.time * 60) % 10;
+        for (let d = ph; d < len; d += 10) {
+          const e = Math.min(len, d + 5);
+          g.moveTo(rx + ux * d, ry + uy * d).lineTo(rx + ux * e, ry + uy * e);
+        }
+        g.stroke({ width: 2.5, color: PALETTE.yellow, alpha: 0.95, cap: 'round' });
+        g.circle(rx, ry, 3.5).fill({ color: 0xffffff, alpha: 0.9 });
+        // Des étincelles qui sautent au point de construction.
+        for (let i = 0; i < 6; i++) {
+          const a = this.time * 7 + i * 1.7, k = (this.time * 3 + i * 0.37) % 1;
+          const d = 3 + k * 10;
+          g.circle(px + Math.cos(a) * d, py + Math.sin(a) * d, 1.8 * (1 - k) + 0.6).fill({ color: i % 2 ? PALETTE.yellow : 0xffffff, alpha: 1 - k });
+        }
+        // L'anneau d'avancement.
+        const rad = m ? Math.max(m.w, m.h) * CELL * 0.5 + 6 : 10;
+        const f = Math.min(1, b.t / Math.max(0.01, b.need));
+        g.circle(px, py, rad).stroke({ width: 3, color: PALETTE.ink, alpha: 0.15 });
+        g.moveTo(px, py - rad).arc(px, py, rad, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2).stroke({ width: 3, color: PALETTE.yellow, cap: 'round' });
+      }
+    }
+    // Une petite bouffée blanche quand c'est fini.
+    for (const pf of this.buildPuffs) {
+      pf.t += dt * (pf.big ? 2.2 : 3.5);
+      const k = Math.min(1, pf.t);
+      const rr = (pf.big ? 14 : 6) + k * (pf.big ? 26 : 12);
+      g.circle(pf.x, pf.y, rr).stroke({ width: (pf.big ? 4 : 2.5) * (1 - k), color: 0xffffff, alpha: 1 - k });
+    }
+    this.buildPuffs = this.buildPuffs.filter((pf) => pf.t < 1);
+  }
+
   private fadeCache: { color: number; l: FillGradient; r: FillGradient } | null = null;
 
   /** Les deux voiles des bouts de voie : opaques au bout, transparents vers le quai. */
@@ -2513,6 +2573,7 @@ export class GameRenderer {
     this.updateActors();
     this.drawRockets(dt);
     this.drawTrain(dt);
+    this.drawBuild(dt);
     this.drawTeleport(dt);
     this.drawNight();
     this.drawWeather();

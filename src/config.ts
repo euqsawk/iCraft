@@ -137,6 +137,10 @@ export const RULES = {
   /** Écart minimal entre deux objets sur un tapis, en cases. */
   beltGap: 0.5,
   robotSpeed: 4.5,
+  /** Construction par le robot : portée (cases) et temps (s) d'une case de tapis, d'une machine (plus 0,12 s par case). */
+  buildRange: 3,
+  buildBelt: 0.1,
+  buildMachine: 0.5,
   droneSpeed: 7,
   /** Un drone au départ (avec 10 charbons en cadeau) ; les suivants viennent des commandes rares. */
   startDrones: 1,

@@ -31,6 +31,8 @@ export interface Robot {
   manual: boolean;
   heading: number;
   moving: boolean;
+  /** Le chantier en cours (le robot construit ce qu'on pose) : avancement en secondes, sur `need`. */
+  build?: { job: Job; t: number; need: number } | null;
 }
 
 export type GameEvent =
@@ -239,10 +241,14 @@ export class Game {
     return this.viewStack.includes(m);
   }
 
-  /** Après une pose : c'est construit tout de suite (plus de chantier ni de drones). */
+  /** Construit tout de suite (tests, et dans un atelier) au lieu d'attendre le robot. */
+  static instantBuild = false;
+
+  /** Après une pose : un chantier pour le robot (dans un atelier, c'est construit tout de suite). */
   private finishPlacement(m: Machine): void {
     if (this.inAtelier) m.built = true;
-    else this.finishJob({ kind: 'machine', id: m.id });
+    else if (Game.instantBuild) this.finishJob({ kind: 'machine', id: m.id });
+    else this.pending.push({ kind: 'machine', id: m.id });
     this.emit({ type: 'factory' });
   }
 
@@ -384,7 +390,7 @@ export class Game {
   /** Objets déposés au Laboratoire (pour débloquer l'arbre). */
   lab: Record<string, number> = {};
   robot: Robot = { x: 2, y: 7, target: null, manual: false, heading: 0, moving: false };
-  /** Chantiers en attente : toujours vide (tout se construit tout de suite), gardé pour les anciennes sauvegardes. */
+  /** Chantiers en attente : le robot va les construire, le plus proche d'abord. */
   pending: Job[] = [];
   order: Order | null = null;
   choices: Order[] = [];
@@ -992,9 +998,11 @@ export class Game {
           if (c.jump) b.jump = Math.min(c.jump, RULES.bridgeSpan);
         }
       } else {
-        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, true);
+        const now = !!this.inAtelier || Game.instantBuild;
+        const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, now);
         if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
-        if (!this.inAtelier && this.world.reveal(c.x, c.y, 2)) this.emit({ type: 'reveal' });
+        if (!now) this.pending.push({ kind: 'belt', k: key(c.x, c.y) });
+        else if (!this.inAtelier && this.world.reveal(c.x, c.y, 2)) this.emit({ type: 'reveal' });
       }
     }
     this.view.markBuilt();
@@ -1530,9 +1538,55 @@ export class Game {
 
 
 
-  /** Le robot se déplace où on l'envoie (il ne construit plus, ne mine plus, ne porte plus rien). */
+  /** Temps de construction d'un chantier par le robot (en secondes). */
+  private buildTime(j: Job): number {
+    if (j.kind === 'belt') return RULES.buildBelt;
+    const m = this.factory.machines.get(j.id);
+    return m ? RULES.buildMachine + 0.12 * m.w * m.h : 0;
+  }
+
+  /**
+   * Le robot construit ce qu'on pose : sans ordre du joueur, il va au chantier le plus proche ;
+   * dès qu'un chantier est à portée (même en passant), il le construit.
+   */
+  private tickBuild(dt: number): void {
+    const r = this.robot;
+    if (this.inAtelier) return;
+    if (r.build && !this.jobPos(r.build.job)) r.build = null;
+    if (!r.build) {
+      let best: Job | null = null, bd = Infinity;
+      for (const j of this.pending) {
+        const p = this.jobPos(j);
+        if (!p) continue;
+        const d = Math.hypot(p.x - r.x, p.y - (r.y - 0.4));
+        if (d < bd) { bd = d; best = j; }
+      }
+      if (best && (bd <= RULES.buildRange || !r.manual)) r.build = { job: best, t: 0, need: this.buildTime(best) };
+    }
+    const b = r.build;
+    if (!b) return;
+    const p = this.jobPos(b.job)!;
+    const d = Math.hypot(p.x - r.x, p.y - (r.y - 0.4));
+    if (d > RULES.buildRange) {
+      // Trop loin : il y va (sauf si le joueur l'envoie ailleurs).
+      if (!r.manual) {
+        const k = (d - RULES.buildRange * 0.7) / d;
+        r.target = { x: r.x + (p.x - r.x) * k, y: r.y + (p.y - (r.y - 0.4)) * k };
+      } else r.build = null;
+      return;
+    }
+    if (!r.manual) r.target = null;
+    b.t += dt * this.robotSpeedMult;
+    if (b.t >= b.need) {
+      this.finishJob(b.job);
+      r.build = null;
+    }
+  }
+
+  /** Le robot se déplace où on l'envoie, et construit ce qu'on pose. */
   private tickRobot(dt: number): void {
     const r = this.robot;
+    this.tickBuild(dt);
     if (r.target) {
       const dx = r.target.x - r.x, dy = r.target.y - r.y;
       const d = Math.hypot(dx, dy);
@@ -1767,15 +1821,15 @@ export class Game {
     this.achQuiet = true;
     this.rockets = s.rockets ?? 0;
     if (s.freight) { this.freight = { ...s.freight, req: { ...s.freight.req } }; this.quai(true); }
-    // Les chantiers d'une ancienne partie se terminent tout de suite (plus de drones pour les construire).
-    for (const j of s.pending ?? []) {
-      if (j.kind === 'belt') { const b = this.factory.belts.get(j.k); if (b) b.built = true; }
-      else { const m = this.factory.machines.get(j.id); if (m) m.built = true; }
-    }
-    for (const b of this.factory.belts.values()) b.built = true;
-    for (const m of this.factory.machines.values()) m.built = true;
-    this.factory.markBuilt();
+    // Ce qui n'est pas encore construit redevient un chantier pour le robot.
     this.pending = [];
+    for (const m of this.factory.machines.values()) {
+      if (m.built) continue;
+      if (!machineDef(m.type).buildable || machineDef(m.type).gift) { m.built = true; continue; }
+      this.pending.push({ kind: 'machine', id: m.id });
+    }
+    for (const [k, b] of this.factory.belts) if (!b.built) this.pending.push({ kind: 'belt', k });
+    this.factory.markBuilt();
     this.order = s.order; this.choices = s.choices;
     this.orderSeq = s.orderSeq; this.rerolls = s.rerolls; this.delivered = s.delivered ?? 0;
     if (this.order) { this.order.xp = 0; delete this.order.equip; }
