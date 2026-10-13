@@ -22,6 +22,7 @@ import { orbitPoint, skinBody, skinOf } from '../data/skins.ts';
 import { inTunnel, pointAt, stepCells, type LegRoute } from '../sim/routes.ts';
 import { isStationType, rotDims, stationGeo, type Rot } from '../sim/stations.ts';
 import { SKIN_ART } from '../data/skinArt.ts';
+import { nodeColor } from '../data/nodeColors.ts';
 
 /** Contour d'un rectangle arrondi qui part du milieu du bord haut, dans le sens des aiguilles d'une montre. */
 function trackPoints(x: number, y: number, w: number, h: number, r: number): { x: number; y: number }[] {
@@ -245,8 +246,13 @@ export class GameRenderer {
   private rocketAnim: { x: number; y: number; t: number } | null = null;
   /** Téléportation du robot vers sa base : d'où il part, et depuis combien de temps. */
   private tpAnim: { fx: number; fy: number; t: number } | null = null;
-  /** Tri : l'objet trié, en petit, sur la case du séparateur. */
+  /** Les boîtes (séparateurs, filtres) de l'étage 2, par-dessus ses tapis ; celles du sol sous les ponts. */
   private filterLayer = new Container();
+  private lowFilterLayer = new Container();
+  /** L'étage 2 (tapis, objets, boîtes), qu'on pâlit pour ne voir que le 1ᵉʳ étage. */
+  private upperLayer = new Container();
+  /** Les boîtes du sol sous un tapis en hauteur : par-dessus lui, à demi effacées (nettes avec « Étage 1 seul »). */
+  private coverLayer = new Container();
   /** Les trieurs, par-dessus les machines (leur pastille déborde du tapis). */
   private pickLayer = new Container();
   private glowPool: Sprite[] = [];
@@ -264,7 +270,9 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.filterLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeG, this.bridgeItemLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.upperLayer.addChild(this.upperG, this.upperItemLayer, this.filterLayer);
+    this.coverLayer.alpha = 0.5;
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
     this.lightSprite.blendMode = 'multiply';
@@ -589,46 +597,75 @@ export class GameRenderer {
     for (const [x, y] of joints) g.circle(x, y, 5.5).fill(0x2b5f8a).circle(x, y, 3).fill(0xbfe4fb);
   }
 
+  /** Ne montrer que le 1ᵉʳ étage : l'étage 2 est pâli (on voit ce qui passe dessous). */
+  setUpperFaded(on: boolean): void {
+    this.upperLayer.alpha = on ? 0.12 : 1;
+    this.coverLayer.alpha = on ? 1 : 0.5;
+  }
+
+  /**
+   * Une boîte (séparateur ou filtre) sur sa case : un carré blanc par-dessus le tapis, un dessin au milieu
+   * (une fourche, ou l'entonnoir du filtre), une pastille de couleur par sortie, et l'objet trié dans la pastille.
+   */
+  private drawNode(b: Belt): void {
+    const f = this.game.view;
+    const layer = b.z ? this.filterLayer : f.beltAt(b.x, b.y, 1) ? this.coverLayer : this.lowFilterLayer;
+    const outs = f.nodeOutputs(b);
+    const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL, hs = 10.5;
+    const a = b.built ? 1 : 0.55;
+    const g = new Graphics();
+    g.roundRect(cx - hs, cy - hs + 3, hs * 2, hs * 2, 6).fill({ color: PALETTE.ink, alpha: 0.2 * a });
+    g.roundRect(cx - hs, cy - hs, hs * 2, hs * 2, 6).fill({ color: PALETTE.white, alpha: a }).stroke({ width: 2, color: PALETTE.ink, alpha: a });
+    if (b.node === 'tri') {
+      g.moveTo(cx - 5.5, cy - 4).lineTo(cx + 5.5, cy - 4).moveTo(cx - 3.5, cy).lineTo(cx + 3.5, cy).moveTo(cx - 1.4, cy + 4).lineTo(cx + 1.4, cy + 4);
+    } else {
+      // La fourche, tournée dans le sens du tapis.
+      const ax = DX[b.dir], ay = DY[b.dir], px = -ay, py = ax;
+      g.moveTo(cx - ax * 5.5, cy - ay * 5.5).lineTo(cx, cy).lineTo(cx + ax * 4.5 + px * 4.5, cy + ay * 4.5 + py * 4.5)
+        .moveTo(cx, cy).lineTo(cx + ax * 4.5 - px * 4.5, cy + ay * 4.5 - py * 4.5);
+    }
+    g.stroke({ width: 2.2, color: PALETTE.ink, alpha: a, cap: 'round', join: 'round' });
+    layer.addChild(g);
+    const dest = (t: string) => ({ '@noyau': 'noyau', '@labo': 'laboratoire', '@comptoir': 'comptoir', '@train': 'depot' } as Record<string, string>)[t];
+    for (const o of outs) {
+      const col = nodeColor(b.dir, o.d);
+      const rule = b.node === 'tri' ? b.rules?.[o.d] : undefined;
+      // L'autre étage : une pastille dans le coin, avec une flèche vers le haut ou le bas.
+      const x = o.d === 4 ? cx + hs - 1 : cx + DX[o.d] * hs, y = o.d === 4 ? cy + hs - 1 : cy + DY[o.d] * hs;
+      const dot = new Graphics();
+      if (rule?.length) {
+        dot.circle(x, y, 7.5).fill({ color: 0xffffff, alpha: a }).stroke({ width: 2.4, color: col, alpha: a });
+        layer.addChild(dot);
+        const t = rule[0], d = dest(t);
+        const tex = d ? buildingTexture(d) : this.itemTextures.get(t);
+        if (tex) {
+          const sp = new Sprite(tex);
+          sp.anchor.set(0.5);
+          if (d) sp.width = sp.height = 10; else sp.scale.set(0.44);
+          sp.position.set(x, y);
+          sp.alpha = a;
+          layer.addChild(sp);
+        }
+        continue;
+      }
+      dot.circle(x, y, o.d === 4 ? 6 : 4.6).fill({ color: col, alpha: a }).stroke({ width: 1.8, color: 0xffffff, alpha: a });
+      if (o.d === 4) {
+        const s = b.z ? 1 : -1;
+        dot.moveTo(x, y - 3 * s).lineTo(x, y + 3 * s).moveTo(x - 2.5, y + 0.6 * s).lineTo(x, y + 3 * s).lineTo(x + 2.5, y + 0.6 * s)
+          .stroke({ width: 1.6, color: 0xffffff, alpha: a, cap: 'round', join: 'round' });
+      }
+      layer.addChild(dot);
+    }
+  }
+
   private redrawBelts(): void {
     this.beltsDirty = false;
     this.drawPipes();
     this.filterLayer.removeChildren().forEach((c) => c.destroy());
     this.pickLayer.removeChildren().forEach((c) => c.destroy());
-    for (const b of this.game.view.belts.values()) {
-      if (b.split === undefined) continue;
-      const fv = this.game.view;
-      // Un tapis qui nourrit une machine par le côté n'est pas un vrai séparateur : pas de boîte.
-      if (fv.machineAt(b.x + DX[b.split], b.y + DY[b.split])) continue;
-      // La boîte du séparateur : un carré par-dessus les objets (ils y entrent, puis ressortent tout droit ou sur le côté),
-      // avec une petite encoche de chaque côté où ça sort.
-      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL, hs = 10;
-      const box = new Graphics();
-      box.roundRect(cx - hs, cy - hs + 3, hs * 2, hs * 2, 6).fill({ color: PALETTE.ink, alpha: 0.2 });
-      box.roundRect(cx - hs, cy - hs, hs * 2, hs * 2, 6).fill(b.built ? PALETTE.white : { color: PALETTE.white, alpha: 0.6 }).stroke({ width: 2, color: PALETTE.ink, alpha: b.built ? 1 : 0.5 });
-      for (const d of [b.dir, b.split, b.split2].filter((x): x is Dir => x !== undefined)) {
-        const ax = DX[d], ay = DY[d], px = -ay, py = ax;
-        const ex = cx + ax * hs, ey = cy + ay * hs;
-        box.moveTo(ex - ax * 4 + px * 3.5, ey - ay * 4 + py * 3.5).lineTo(ex - ax * 1, ey - ay * 1).lineTo(ex - ax * 4 - px * 3.5, ey - ay * 4 - py * 3.5)
-          .stroke({ width: 2, color: PALETTE.ink, cap: 'round', join: 'round' });
-      }
-      this.filterLayer.addChild(box);
-      // Une pastille par dérivation triée : l'objet (ou le bâtiment) qui y part, sur la boîte, du côté de la dérivation.
-      for (const [t, d] of [[b.filter, b.split], [b.filter2, b.split2]] as [string | undefined, number | undefined][]) {
-        if (!t || d === undefined) continue;
-        const two = !!b.filter && !!b.filter2;
-        const x = cx + (two ? DX[d] * 4 : 0), y = cy + (two ? DY[d] * 4 : 0);
-        const badge = new Graphics().circle(x, y, 6.5).fill(0xffffff).stroke({ width: 1.4, color: PALETTE.ink });
-        // Tri par destination : la petite image du bâtiment (Noyau, Laboratoire, Comptoir, quai du train).
-        const dest = ({ '@noyau': 'noyau', '@labo': 'laboratoire', '@comptoir': 'comptoir', '@train': 'depot' } as Record<string, string>)[t];
-        const tex = dest ? buildingTexture(dest) : this.itemTextures.get(t);
-        if (!tex) continue;
-        const sp = new Sprite(tex);
-        sp.anchor.set(0.5);
-        if (dest) sp.width = sp.height = 10; else sp.scale.set(0.42);
-        sp.position.set(x, y);
-        this.filterLayer.addChild(badge, sp);
-      }
-    }
+    this.lowFilterLayer.removeChildren().forEach((c) => c.destroy());
+    this.coverLayer.removeChildren().forEach((c) => c.destroy());
+    for (const b of this.game.view.belts.values()) if (b.node && !this.game.view.nodeIsLink(b)) this.drawNode(b);
     const gg = this.ghostBeltG;
     gg.clear();
     const built: Belt[] = [], ghosts: Belt[] = [], upper: Belt[] = [], upperGhosts: Belt[] = [];
@@ -660,13 +697,11 @@ export class GameRenderer {
         // Pont : seule la rampe (jusqu'au milieu de la case) est au sol ; le tablier est dessiné à part, plus haut.
         if (b.jump) { g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy); continue; }
         g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy).lineTo(p[2].x + DX[b.dir] * e2, p[2].y + DY[b.dir] * e2 + dy);
-        if (b.split !== undefined && !b.splitJump) {
-          const es = CELL / 2 + under(b, b.split);
-          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split] * es, p[1].y + DY[b.split] * es + dy);
-        }
-        if (b.split2 !== undefined) {
-          const es = CELL / 2 + under(b, b.split2);
-          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[b.split2] * es, p[1].y + DY[b.split2] * es + dy);
+        // Les sorties de côté d'une boîte : un bout de tapis jusqu'au bord (les ponts sont dessinés à part).
+        if (b.node) for (const o of f.nodeOutputs(b)) {
+          if (o.d >= 4 || o.d === b.dir || b.jumps?.[o.d]) continue;
+          const es = CELL / 2 + under(b, o.d);
+          g.moveTo(p[1].x, p[1].y + dy).lineTo(p[1].x + DX[o.d] * es, p[1].y + DY[o.d] * es + dy);
         }
         // Liaison de côté avec une machine : un bout de tapis qui file sous elle.
         for (const fd of b.feeds ?? []) {
@@ -1116,7 +1151,7 @@ export class GameRenderer {
     if (elec !== this.electricOn) {
       this.electricOn = elec;
       const a = elec ? 0.3 : 1;
-      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
+      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.filterLayer, this.lowFilterLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
       this.actorLayer.alpha = elec ? 0.45 : 1;
       this.modeTint.visible = elec;
       this.powerG.visible = elec;
@@ -1249,11 +1284,10 @@ export class GameRenderer {
       const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL, e = CELL / 2 + jump * CELL + into;
       decks.push({ x0: cx, y0: cy, x1: cx + DX[d] * e, y1: cy + DY[d] * e, d, jump });
     };
-    const splitters: Belt[] = [];
     for (const b of built) {
       if (b.jump) deck(b, b.dir, b.jump);
-      // Dérivation d'un séparateur qui passe par-dessus un tapis collé.
-      if (b.splitJump && b.split !== undefined) { deck(b, b.split, b.splitJump); splitters.push(b); }
+      // Sortie d'une boîte qui passe par-dessus un tapis collé.
+      for (const [d, j] of Object.entries(b.jumps ?? {})) if (j > 0) deck(b, +d, j);
     }
     if (!decks.length) return;
     // Ombre portée au sol (le pont est en hauteur), puis piliers, liseré et tablier blanc.
@@ -1354,8 +1388,7 @@ export class GameRenderer {
       // Entrée : le tapis donne dans une machine.
       const L = span(b);
       if (f.machineAt(b.x + DX[b.dir] * L, b.y + DY[b.dir] * L)) port(b, b.dir, true, L);
-      if (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split])) port(b, b.split, true);
-      if (b.split2 !== undefined && f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2])) port(b, b.split2, true);
+      if (b.node) for (const o of f.nodeOutputs(b)) if (o.d < 4 && o.d !== b.dir && o.next?.kind === 'machine') port(b, o.d, true);
       // Sortie : le tapis part d'une machine.
       const back = (b.inDir + 2) % 4;
       if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
@@ -1447,7 +1480,7 @@ export class GameRenderer {
       if (!belt.built || belt.items.length === 0) continue;
       const bx = (belt.x + 0.5) * CELL, by = (belt.y + 0.5) * CELL;
       if (cabinSet.has(belt)) continue;
-      const m = belt.jump || belt.splitJump ? far : 0;
+      const m = belt.jump || belt.jumps ? far : 0;
       if (bx < b.x0 - m || bx > b.x1 + m || by < b.y0 - m || by > b.y1 + m) continue;
       if (belt.jump) {
         // Sur un pont : la rampe (de l'arrière jusqu'au milieu), puis le tablier jusqu'à la case d'arrivée, au-dessus du reste.
@@ -1470,9 +1503,11 @@ export class GameRenderer {
           x = bx + DX[belt.inDir] * t * CELL / 2; y = by + DY[belt.inDir] * t * CELL / 2;
         } else {
           const t = (p - 0.5) * 2;
-          const d = it.o === 2 && belt.split2 !== undefined ? belt.split2 : it.o && belt.split !== undefined ? belt.split : belt.dir;
-          // Dérivation en pont : la seconde moitié file sur le tablier, par-dessus le tapis collé.
-          const reach = it.o === 1 && belt.splitJump ? 0.5 + belt.splitJump : 0.5;
+          // Vers l'autre étage (5) : l'objet reste au milieu, l'ascenseur de la boîte le prend.
+          const d = it.o ? (it.o - 1) % 4 : belt.dir;
+          const up = it.o === 5;
+          // Sortie en pont : la seconde moitié file sur le tablier, par-dessus le tapis collé.
+          const reach = up ? 0 : 0.5 + (it.o ? belt.jumps?.[d] ?? 0 : 0);
           x = bx + DX[d] * t * CELL * reach; y = by + DY[d] * t * CELL * reach;
           if (reach > 0.5) {
             const s = sprite(this.bridgePool, this.bridgeItemLayer, usedB++);

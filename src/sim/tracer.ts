@@ -63,7 +63,7 @@ export class BeltTracer {
       if (this.freeEnd(b)) {
         this.extend = b;
         this.cells = [{ x: sx, y: sy, z: b.z ?? 0 }];
-      } else if (b.built && !b.jump && (b.split === undefined || (b.split2 === undefined && !b.splitJump && factory.thirdOutput))) {
+      } else if (b.built && !b.jump && factory.canBranch(b)) {
         this.splitFrom = b;
       } else {
         this.blocked = true;
@@ -76,6 +76,9 @@ export class BeltTracer {
     } else {
       this.blocked = true;
     }
+    // On part d'un tapis existant : le tracé reste à son étage (jusqu'au bouton d'étage).
+    const from = this.extend ?? this.splitFrom;
+    if (from) this.level = (from.z ?? 0) as 0 | 1;
   }
 
   /** Un bout de tapis libre (qui ne donne dans rien) se prolonge ; s'il donne dans une machine, on part en dérivation. */
@@ -195,13 +198,11 @@ export class BeltTracer {
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.8) return;
       const d: Dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
       this.intoMachine = null;
-      if (d === sb.dir || d === opposite(sb.inDir) || d === sb.split) return;
+      if (d === sb.dir || d === opposite(sb.inDir) || this.factory.nodeOutputs(sb).some((o) => o.d === d)) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
       if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
       const sz = (sb.z ?? 0) as 0 | 1;
       const free = this.usable(x, y, L) && this.liftOk({ x: sb.x, y: sb.y, z: sz }, x, y, L);
-      // Seconde dérivation (séparateur à 3 sorties) : pas en pont.
-      if (sb.split !== undefined && (!this.factory.thirdOutput || sb.split2 !== undefined || sb.splitJump || !free)) { this.blocked = true; return; }
       if (!free) {
         // Un tapis collé sur ce côté : avec les ponts (au sol), la dérivation passe par-dessus quand le doigt va au-delà.
         const k = this.bridges && !L && !sz && this.factory.beltAt(x, y) ? this.landing(sb.x, sb.y, d) : 0;

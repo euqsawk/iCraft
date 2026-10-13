@@ -1,5 +1,6 @@
 // L'état complet d'une partie : monde, usine, robot, argent, paliers, laboratoire et commandes.
 import { isStationType, rotDims, type Rot } from './stations.ts';
+import type { NodeKind } from './factory.ts';
 import { CHUNK, RULES } from '../config.ts';
 import { MACHINES, machineDef } from '../data/machines.ts';
 import { item as itemDef, itemLabel } from '../data/items.ts';
@@ -164,7 +165,7 @@ export class Game {
   contentValue(f: Factory): number {
     let v = 0;
     for (const m of f.machines.values()) v += machineDef(m.type).cost + (m.inner ? this.contentValue(m.inner) : 0);
-    for (const b of f.belts.values()) v += RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0) + Game.levelValue(RULES.beltLevelCost, b.lvl);
+    for (const b of f.belts.values()) v += RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + Object.keys(b.jumps ?? {}).length * RULES.bridgeCost + (b.node ? RULES.nodeCost : 0) + Game.levelValue(RULES.beltLevelCost, b.lvl);
     return v;
   }
 
@@ -331,13 +332,13 @@ export class Game {
     for (const b of belts) {
       const px = b.x - DX[b.inDir], py = b.y - DY[b.inDir];
       if (outside(px, py)) port('entree', px, py);
-      for (const [d, jump] of [[b.dir, b.jump ?? 0], [b.split, b.splitJump ?? 0], [b.split2, 0]] as [Dir | undefined, number][]) {
-        if (d === undefined) continue;
+      const sides = f.nodeOutputs(b).filter((o) => o.d < 4 && o.d !== b.dir).map((o) => [o.d, b.jumps?.[o.d] ?? 0]);
+      for (const [d, jump] of [[b.dir, b.jump ?? 0], ...sides] as [Dir, number][]) {
         const nx = b.x + DX[d] * (1 + jump), ny = b.y + DY[d] * (1 + jump);
         if (!inSel(nx, ny) && outside(nx, ny)) {
           if (jump) { // le pont sortirait de l'intérieur : la sortie se pose juste à côté
             const ib = inner.belts.find((c) => c[0] === b.x + ox && c[1] === b.y + oy && (c[16] ?? 0) === (b.z ?? 0));
-            if (ib) { if (d === b.dir) ib[8] = 0; else ib[9] = 0; }
+            if (ib) { if (d === b.dir) ib[8] = 0; else { const nd = ib[17]; if (nd && nd.j) delete nd.j[d]; } }
             port('sortie', b.x + DX[d], b.y + DY[d]);
           } else port('sortie', nx, ny);
         }
@@ -354,7 +355,7 @@ export class Game {
         if (f.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) === m || (b.feeds ?? []).some((d) => f.machineAt(b.x + DX[d], b.y + DY[d]) === m)) {
           const p = port('sortie', x, y);
           im.links = [...(im.links ?? []).filter((id) => id !== p.id), p.id];
-        } else if (f.machineAt(b.x + DX[b.dir] * (1 + (b.jump ?? 0)), b.y + DY[b.dir] * (1 + (b.jump ?? 0))) === m || (b.split !== undefined && f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) === m)) {
+        } else if (f.machineAt(b.x + DX[b.dir] * (1 + (b.jump ?? 0)), b.y + DY[b.dir] * (1 + (b.jump ?? 0))) === m || f.nodeOutputs(b).some((o) => o.next?.kind === 'machine' && o.next.machine === m)) {
           const p = port('entree', x, y);
           const ip = inner.machines.find((q) => q.id === p.id)!;
           ip.links = [...(ip.links ?? []).filter((id) => id !== m.id), m.id];
@@ -881,12 +882,15 @@ export class Game {
 
   /** Chenilles : vitesse du robot (le meilleur niveau débloqué). */
   robotSpeedMult = 1;
+  /** Ascenseurs : 2ᵉ étage des tapis débloqué. */
+  levels2 = false;
 
   private applyUnlocks(): void {
     const speed = 1;
     let slots = RULES.chestSlots, copy = 1, size = 20, nest = false;
     let beltMax = RULES.beltBaseMax, drillMax = RULES.drillBaseMax, machineMax = RULES.machineBaseMax;
     this.robotSpeedMult = 1;
+    this.levels2 = false;
     for (const id of this.unlocks) {
       const e = NODE[id]?.effect;
       if (e?.kind === 'robotSpeed') this.robotSpeedMult = Math.max(this.robotSpeedMult, e.mult);
@@ -897,6 +901,7 @@ export class Game {
       if (e?.kind === 'copyRate') copy = Math.min(copy, e.rate);
       if (e?.kind === 'atelierSize') size = Math.max(size, e.size);
       if (e?.kind === 'nesting') nest = true;
+      if (e?.kind === 'levels') this.levels2 = true;
     }
     this.copyRate = copy;
     this.nesting = nest;
@@ -911,7 +916,6 @@ export class Game {
     }
     this.factory.speedMult = speed;
     this.factory.chestSlots = slots;
-    this.factory.thirdOutput = this.unlocks.has('separateur2');
     this.factory.setElectric([...this.unlocks].flatMap((id) => { const e = NODE[id]?.effect; return e?.kind === 'electric' ? [e.id] : []; }));
   }
 
@@ -990,7 +994,7 @@ export class Game {
   placeBelts(cells: TraceCell[], split?: { from: Belt; dir: Dir; jump?: number }): boolean {
     const fresh = cells.filter((c) => !c.existing);
     const bridges = cells.filter((c) => c.jump).length + (split?.jump ? 1 : 0);
-    const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost;
+    const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost + (split && !split.from.node ? RULES.nodeCost : 0);
     // Rien de neuf : seulement le bout d'un tapis qui se tourne (vers une machine collée, par exemple).
     const turns = cells.some((c) => c.existing && this.view.beltAt(c.x, c.y, c.z ?? 0)?.dir !== c.dir);
     if (fresh.length === 0 && !turns) return false;
@@ -1002,15 +1006,18 @@ export class Game {
       this.emit({ type: 'toast', text: 'Ponts : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
     }
-    // Une seconde dérivation (de l'autre côté d'un séparateur) : le séparateur à 3 sorties.
-    const third = !!split && split.from.split !== undefined && split.from.split !== split.dir;
-    if (third && !this.isUnlocked('separateur2')) {
-      this.emit({ type: 'toast', text: 'Séparateur à 3 sorties : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
+    // Une boîte a 4 sorties au plus.
+    if (split && split.from.node && this.view.nodeOutputs(split.from).length >= 4) {
+      this.emit({ type: 'toast', text: 'Ce séparateur a déjà 4 sorties', tone: 'warn' });
       return false;
     }
     if (!this.spend(cost)) return false;
-    if (split && third) this.view.setSplit2(split.from, split.dir);
-    else if (split) this.view.setSplit(split.from, split.dir, split.jump ?? 0);
+    // Une dérivation depuis le milieu d'un tapis : la case devient un séparateur (s'il n'y a pas déjà une boîte).
+    if (split) {
+      if (!split.from.node) this.view.setNode(split.from, 'sep');
+      this.view.setNodeOff(split.from, split.dir, false);
+      if (split.jump) this.view.setNodeJump(split.from, split.dir, split.jump);
+    }
     for (const c of cells) {
       if (c.existing) {
         const b = this.view.beltAt(c.x, c.y, c.z ?? 0);
@@ -1036,7 +1043,7 @@ export class Game {
     this.view.removeBelt(b);
     const k = this.view.beltKey(b);
     this.pending = this.pending.filter((j) => !(j.kind === 'belt' && j.k === k));
-    return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + (b.splitJump ? RULES.bridgeCost : 0)
+    return RULES.beltCost + (b.jump ? RULES.bridgeCost : 0) + Object.keys(b.jumps ?? {}).length * RULES.bridgeCost + (b.node ? RULES.nodeCost : 0)
       + (b.meter ? MACHINES.compteur.cost : 0) + Game.levelValue(RULES.beltLevelCost, b.lvl);
   }
 
@@ -1145,7 +1152,11 @@ export class Game {
     const over = this.view.bridgeOver(x, y);
     if (over) {
       if (over.split) {
-        this.view.clearSplit(over.belt);
+        // La sortie en pont d'une boîte : on retire le pont (la sortie se coupe).
+        for (const d of Object.keys(over.belt.jumps ?? {}).map(Number)) {
+          const k = over.belt.jumps![d];
+          for (let i = 1; i <= k; i++) if (over.belt.x + DX[d] * i === x && over.belt.y + DY[d] * i === y) { this.view.setNodeJump(over.belt, d, 0); this.view.setNodeOff(over.belt, d, true); }
+        }
         this.earn(RULES.bridgeCost);
       } else {
         this.earn(this.refundBelt(over.belt));
@@ -1441,28 +1452,26 @@ export class Game {
     return true;
   }
 
-  /** Le tapis nourrit la machine qu'il longe : un objet sur deux y entre (tout, si le tapis s'arrête là). */
+  /** Le tapis nourrit la machine qu'il longe : la case devient un séparateur (il faut l'avoir débloqué), la machine une sortie. */
   linkBeltToMachine(b: Belt, dir: Dir): boolean {
     const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
-    if (!m || dir === b.dir || dir === b.split || dir === b.split2) return false;
-    // Au milieu d'un tapis qui continue, c'est une dérivation : il faut le Séparateur (et le Séparateur à 3 sorties pour les deux côtés).
-    const ax = b.x + DX[b.dir], ay = b.y + DY[b.dir];
-    const continues = !!this.view.beltAt(ax, ay) || !!this.view.machineAt(ax, ay) || b.split !== undefined;
-    if (continues && !this.isUnlocked('separateur')) {
+    if (!m || dir === b.dir) return false;
+    if (!this.isUnlocked('separateur')) {
       this.emit({ type: 'toast', text: 'Nourrir une machine depuis le milieu d’un tapis : débloque le Séparateur (Logistique)', tone: 'warn' });
       return false;
     }
-    if (b.split !== undefined && !this.isUnlocked('separateur2')) {
-      this.emit({ type: 'toast', text: 'Nourrir les deux côtés : débloque le Séparateur à 3 sorties (Logistique)', tone: 'warn' });
+    if (b.node && !b.off?.includes(dir) && this.view.nodeOutputs(b).some((o) => o.d === dir)) return false;
+    if (b.node && this.view.nodeOutputs(b).length >= 4) {
+      this.emit({ type: 'toast', text: 'Ce séparateur a déjà 4 sorties', tone: 'warn' });
       return false;
     }
-    // Le tapis a déjà une dérivation d'un côté : il nourrit aussi la machine de l'autre côté (un objet sur trois chacun).
-    if (b.split !== undefined) {
-      if (b.split2 !== undefined || b.splitJump) return false;
-      this.view.setSplit2(b, dir);
-    } else {
-      this.view.setSplit(b, dir);
+    if (!b.node) {
+      if (!this.spend(RULES.nodeCost)) return false;
+      this.view.setNode(b, 'sep');
+      // Seulement cette machine : les autres côtés restent coupés.
+      for (let d = 0; d < 4; d++) if (d !== dir && d !== b.dir && this.view.nodeSides(b)[d] === 'out') this.view.setNodeOff(b, d, true);
     }
+    this.view.setNodeOff(b, dir, false);
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `Le tapis nourrit ${machineDef(m.type).name.toLowerCase()}`, tone: 'good' });
     return true;
@@ -1471,12 +1480,106 @@ export class Game {
   /** Coupe les liaisons d'un tapis avec les machines qu'il longe. */
   unlinkBelt(b: Belt): void {
     this.view.clearFeeds(b);
-    if (b.split2 !== undefined) delete b.split2;
-    if (b.split !== undefined && !b.splitJump && this.view.machineAt(b.x + DX[b.split], b.y + DY[b.split])) {
-      delete b.split;
-      this.view.markBuilt();
+    if (b.node) {
+      const link = this.view.nodeIsLink(b);
+      for (const o of this.view.nodeOutputs(b)) if (o.d < 4 && o.d !== b.dir && o.next?.kind === 'machine') this.view.setNodeOff(b, o.d, true);
+      // Ce n'était qu'une liaison : la case redevient un tapis simple.
+      if (link) { this.view.clearNode(b); this.earn(RULES.nodeCost); }
     }
     this.emit({ type: 'factory' });
+  }
+
+  // ---------- Séparateurs et filtres (des boîtes posées sur une case de tapis) ----------
+
+  /** Pose une boîte sur un tapis (ou change son genre) : séparateur ou filtre. */
+  placeNode(b: Belt, kind: NodeKind): boolean {
+    if (!this.isUnlocked('separateur')) {
+      this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
+      return false;
+    }
+    if (kind === 'tri' && !this.isUnlocked('tri')) {
+      this.emit({ type: 'toast', text: 'Filtre : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
+      return false;
+    }
+    if (b.jump) {
+      this.emit({ type: 'toast', text: 'Pas sur un pont', tone: 'warn' });
+      return false;
+    }
+    if (b.node === kind) return true;
+    if (!b.node && !this.spend(RULES.nodeCost)) return false;
+    this.view.setNode(b, kind);
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Retire la boîte : la case redevient un tapis simple (remboursé). */
+  removeNode(b: Belt): void {
+    if (!b.node) return;
+    this.view.clearNode(b);
+    this.earn(RULES.nodeCost);
+    this.emit({ type: 'factory' });
+  }
+
+  /** Filtre : les objets qui partent par une sortie (null : « le reste »). */
+  setNodeRule(b: Belt, d: number, items: string[] | null): void {
+    if (!b.node) return;
+    if (items?.length && b.node !== 'tri') { if (!this.placeNode(b, 'tri')) return; }
+    this.view.setNodeRule(b, d, items);
+    this.emit({ type: 'factory' });
+  }
+
+  /** Une sortie de côté (ou vers l'autre étage) : ouverte, ou coupée (« Rien »). */
+  setNodeOutput(b: Belt, d: number, on: boolean): boolean {
+    if (!b.node) return false;
+    if (on && this.view.nodeOutputs(b).length >= 4 && !this.view.nodeOutputs(b).some((o) => o.d === d)) {
+      this.emit({ type: 'toast', text: 'Une boîte a 4 sorties au plus', tone: 'warn' });
+      return false;
+    }
+    this.view.setNodeOff(b, d, !on);
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /**
+   * Ascenseur : à partir de cette case, la suite du tapis passe à l'autre étage (jusqu'à son bout, une boîte,
+   * un pont ou un autre tapis qu'il rejoint). Là où il change d'étage, un ascenseur. Il faut la place à l'autre étage.
+   */
+  liftFrom(b: Belt): boolean {
+    const f = this.view;
+    const warn = (text: string) => { this.emit({ type: 'toast', text, tone: 'warn' }); return false; };
+    if (!this.levels2) return warn('Ascenseurs : à débloquer dans l’arbre (Logistique)');
+    if (b.jump) return warn('Pas d’ascenseur sur un pont');
+    if (b.node) return warn('Pas d’ascenseur sur un séparateur ou un filtre');
+    const z: 0 | 1 = b.z ? 0 : 1;
+    const run: Belt[] = [];
+    const seen = new Set<Belt>();
+    let c: Belt | undefined = b;
+    let after: Belt | null = null;
+    while (c && !seen.has(c)) {
+      seen.add(c);
+      if (!f.isFree(c.x, c.y, z)) return warn('Pas la place à l’autre étage');
+      run.push(c);
+      const n = f.next(c);
+      if (n?.kind !== 'belt') break;
+      const nb = n.belt;
+      // On s'arrête là où il rejoint un autre tapis par le côté, à une boîte, un pont, ou un ascenseur.
+      if (n.side || nb.node || nb.jump || (nb.z ?? 0) !== (c.z ?? 0)) { after = nb; break; }
+      c = nb;
+    }
+    if (run.some((r) => r.jumps || r.node)) return warn('Pas d’ascenseur à travers un séparateur');
+    // Là où il redescend (ou remonte) : rien à l'autre étage dans la case suivante, sinon il s'y brancherait.
+    if (after && (after.z ?? 0) !== z && f.beltAt(after.x, after.y, z)) return warn('Pas la place à l’autre étage');
+    const feeder = f.feederOf(b);
+    if (feeder && (feeder.z ?? 0) !== z && f.beltAt(feeder.x, feeder.y, z)) return warn('Pas la place à l’autre étage');
+    for (const r of run) {
+      const k0 = f.beltKey(r);
+      f.setBeltZ(r, z);
+      const k1 = f.beltKey(r);
+      for (const j of this.pending) if (j.kind === 'belt' && j.k === k0) j.k = k1;
+    }
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: `${run.length} case${run.length > 1 ? 's' : ''} au ${z ? '2ᵉ' : '1ᵉʳ'} étage`, tone: 'good' });
+    return true;
   }
 
   /** Retire les tapis sous une zone ; renvoie le remboursement. */
@@ -1807,18 +1910,6 @@ export class Game {
     for (const p of h) if (p.t <= target) old = p; else break;
     const dt = Math.max(10, this.played - old.t);
     return ((now - (old.made[item] ?? 0)) / dt) * 60;
-  }
-
-  /** Change ce que trie un séparateur (null : il ne trie plus, un objet sur deux de chaque côté). */
-  setBeltFilter(b: Belt, item: string | null, which: 1 | 2 = 1): boolean {
-    if (!this.isUnlocked('tri') || b.split === undefined) return false;
-    if (which === 2) {
-      if (!this.isUnlocked('tri2') || b.split2 === undefined) return false;
-      if (item) b.filter2 = item; else delete b.filter2;
-    } else if (item) b.filter = item; else delete b.filter;
-    this.view.markBuilt();
-    this.emit({ type: 'factory' });
-    return true;
   }
 
   tick(dt: number): void {

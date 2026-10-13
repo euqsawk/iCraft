@@ -11,10 +11,8 @@ export type UnlockEffect =
   | { kind: 'splitter' }
   /** Le séparateur peut trier : un seul type d'objet part dans la dérivation. */
   | { kind: 'sorter' }
-  /** Séparateur à trois sorties : une seconde dérivation de l'autre côté, vers un tapis. */
-  | { kind: 'splitter3' }
-  /** Trieur à deux objets : chacun sa dérivation, le reste tout droit. */
-  | { kind: 'sorter2' }
+  /** Le 2e étage des tapis et les ascenseurs. */
+  | { kind: 'levels' }
   | { kind: 'bridge' }
   | { kind: 'vehicle'; id: 'camion' | 'train' }
   /** Les tapis peuvent monter jusqu'à ce niveau (chaque tapis s'améliore et se paie à part). */
@@ -96,13 +94,12 @@ export const BRANCHES: Branch[] = [
   {
     id: 'logistique', label: 'Logistique', angle: 210, color: '#E0A82E', nodes: [
       n('tapis', 'Tapis', 'tapis', 1, 0, 1, {}, [], 'Tracés au doigt, droits et rangés.', base),
-      n('separateur', 'Séparateur', 'separateur', 2, 0, 1, { lingot_fer: 20 }, ['tapis'], 'Glisse depuis le milieu d’un tapis : un objet sur deux part dans la dérivation.', { kind: 'splitter' }),
+      n('separateur', 'Séparateur', 'separateur', 2, 0, 1, { lingot_fer: 20 }, ['tapis'], 'Une boîte posée sur un tapis (outil Tapis → Séparateur) : jusqu’à 4 sorties et autant d’entrées qu’on veut ; les objets partent à tour de rôle. Glisser depuis le milieu d’un tapis en pose une aussi.', { kind: 'splitter' }),
       n('pont', 'Ponts', 'pont', 2, -1, 3, { acier: 40 }, ['tapis'], 'En traçant un tapis, continue tout droit par-delà un autre tapis : il passe par-dessus (jusqu’à 4 cases).', { kind: 'bridge' }),
-      n('separateur2', 'Séparateur à 3 sorties', 'separateur', 3, -0.5, 3, { engrenage: 20, plaque_fer: 40 }, ['separateur'], 'Depuis un séparateur, glisse aussi de l’autre côté : une seconde dérivation. Un objet sur trois part de chaque côté, un sur trois continue tout droit.', { kind: 'splitter3' }),
+      n('ascenseurs', 'Ascenseurs', 'ascenseurs', 3, -0.5, 3, { acier: 30, engrenage: 20 }, ['pont'], 'Le 2ᵉ étage des tapis : ils passent au-dessus des tapis du sol. Pendant un tracé, touche le bouton d’étage : là où le tapis change d’étage, un ascenseur. Ou outil Tapis → Ascenseur, puis touche un tapis.', { kind: 'levels' }),
       n('grand_coffre', 'Grand coffre', 'grand_coffre', 2, 1, 2, { plaque_fer: 60 }, ['tapis'], 'Un coffre de 2 × 2 qui garde 300 objets (un coffre simple en garde 100).', m('grand_coffre')),
       n('camion', 'Camions', 'camion', 3, -1.5, 4, { moteur: 10 }, ['pont'], 'Le Dépôt : pose-en deux, remplis-les par tapis comme un coffre, puis relie-les depuis la fenêtre d’un dépôt. Un camion fait les allers-retours (20 objets à la fois) ; on peut ajouter des camions et un troisième arrêt.', m('depot')),
-      n('tri', 'Tri', 'tri', 3, 0.5, 3, { engrenage: 20 }, ['separateur'], 'Un séparateur qui choisit : touche un séparateur et choisis l’objet qui part dans la dérivation ; tout le reste continue tout droit.', { kind: 'sorter' }),
-      n('tri2', 'Trieur à 2 objets', 'tri', 4, 0, 4, { circuit: 20, engrenage: 40 }, ['tri', 'separateur2'], 'Sur un séparateur à 3 sorties : choisis un objet pour chaque dérivation ; tout le reste continue tout droit.', { kind: 'sorter2' }),
+      n('tri', 'Filtre', 'tri', 3, 0.5, 3, { engrenage: 20 }, ['separateur'], 'Une boîte qui trie (outil Tapis → Filtre) : chaque sortie prend les objets qu’on lui choisit, une sortie « le reste » prend tout le reste. Jusqu’à 4 sorties, et vers le tapis de l’autre étage.', { kind: 'sorter' }),
       n('entrepot', 'Entrepôt', 'entrepot', 4, 1.5, 6, { cadre: 20, acier: 100 }, ['grand_coffre', 'tri'], 'Un grand bâtiment de 3 × 3 qui garde 900 objets et les range par sorte (il montre ce qu’il garde le plus).', m('entrepot')),
       n('train', 'Trains', 'train', 4, -1.5, 5, { moteur: 40 }, ['camion'], 'La Gare : comme le dépôt, mais pour un train, plus rapide, qui emporte 80 objets à la fois. Pour aller chercher l’or et l’uranium au loin.', m('gare')),
     ],

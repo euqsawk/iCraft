@@ -781,6 +781,11 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .topt.on { background: var(--ink); color: #fff; }
 .topt.locked { opacity: .5; }
 .topt-hint { padding: 0 6px; font-size: 11px; font-weight: 800; color: var(--ink2); }
+/* Le menu du tapis : quatre grands boutons sur toute la largeur. */
+.tool-opts.wide { left: 10px; right: 10px; transform: none; gap: 6px; }
+.tool-opts.wide .topt { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 3px; padding: 8px 2px; font-size: 11.5px; font-weight: 900; position: relative; }
+.tool-opts.wide .topt svg { width: 22px; height: 22px; }
+.tool-opts.wide .topt svg.lock { position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; }
 .stop-row .seg { display: flex; gap: 4px; }
 .stop-row .seg .btn { padding: 6px 10px; font-size: 12px; }
 
@@ -1203,13 +1208,48 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .chest-pick small { font-size: 11.5px; font-weight: 700; color: var(--ink2); }
 .chest-pick .btn { flex: none; min-height: 40px; padding: 0 12px; }
 
-/* ---------- Niveau des tapis (1 au sol, 2 en hauteur), en bas à gauche ---------- */
-.level-switch {
-  position: absolute; left: 10px; bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 4px;
-  padding: 5px; border-radius: 18px; background: #fff; box-shadow: 0 4px 0 var(--shadow); touch-action: none;
+/* ---------- Le bouton d'étage (en bas à gauche) : « Étage 2 » ou « Étage 1 seul » ; pendant un tracé, l'étage du tapis ---------- */
+.level-btn {
+  position: absolute; left: 10px; bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px 6px 6px; border-radius: 17px; background: #fff; box-shadow: 0 4px 0 var(--shadow); touch-action: none; text-align: left;
 }
-.level-switch .ls-ico { display: flex; padding: 0 3px 0 5px; color: var(--ink2); }
-.level-switch .ls-ico svg { width: 20px; height: 20px; }
-.level-switch button { width: 42px; height: 40px; border-radius: 13px; background: #F0F5F2; font-size: 15px; font-weight: 900; color: var(--ink2); }
-.level-switch button.on { background: var(--ink); color: #fff; }
-.level-switch.up button.on { box-shadow: 0 3px 0 var(--coral); }
+.level-btn.raised { bottom: calc(var(--bottom) + 160px); }
+.level-btn .lb-ico { width: 36px; height: 36px; border-radius: 12px; background: #EEF3F0; color: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; }
+.level-btn .lb-ico svg { width: 22px; height: 22px; }
+.level-btn.on .lb-ico { background: var(--ink); color: #fff; }
+.level-btn.tracing .lb-ico { box-shadow: 0 0 0 3px var(--coral); }
+.level-btn .lb-t { display: flex; flex-direction: column; line-height: 1.15; }
+.level-btn .lb-t b { font-size: 13.5px; font-weight: 900; color: var(--ink); }
+.level-btn .lb-t small { font-size: 11px; font-weight: 800; color: var(--ink2); }
+
+/* ---------- La fenêtre d'une boîte (séparateur, filtre) : la boussole ---------- */
+.node-sheet .ns-kind { margin: 4px 0 12px; }
+.mtab.locked { opacity: .55; }
+.mtab svg.lock { width: 10px; height: 10px; }
+.ns-cross { display: grid; grid-template-columns: 1fr 76px 1fr; gap: 6px; }
+.ns-tile { min-height: 58px; border-radius: 14px; border: 3px solid transparent; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 4px 6px; font: inherit; color: var(--ink2); }
+.ns-tile.in { background: #D6E4DC; border-color: #D6E4DC; }
+.ns-tile.none, .ns-tile.off { background: transparent; border: 2px dashed #B9CBC1; }
+.ns-tile .ns-name { font-size: 11px; font-weight: 900; color: var(--ink2); }
+.ns-tile .ns-in { font-size: 13px; font-weight: 900; }
+.ns-tile small { font-size: 11.5px; font-weight: 900; color: var(--ink2); }
+.ns-tile.none small, .ns-tile.off small { color: #9AAFA4; }
+.ns-what { display: flex; align-items: center; gap: 3px; }
+.ns-what img { width: 20px; height: 20px; }
+.ns-center { border-radius: 16px; background: #fff; border: 2.5px solid var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: var(--ink); }
+.ns-center svg { width: 26px; height: 26px; }
+.ns-center small { font-size: 10px; font-weight: 900; color: var(--ink2); }
+.ns-tag { display: flex; align-items: flex-start; justify-content: flex-end; }
+.ns-tag span { padding: 3px 9px; border-radius: 9px; background: #fff; font-size: 11.5px; font-weight: 900; color: var(--ink2); }
+.ns-edit { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+.ns-ed-head { display: flex; align-items: center; gap: 8px; }
+.ns-ed-head b { font-size: 15px; font-weight: 900; }
+.ns-ed-head small { margin-left: auto; font-size: 12px; font-weight: 800; color: var(--ink2); text-align: right; }
+.ns-dot { width: 12px; height: 12px; border-radius: 6px; flex: none; }
+.ns-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.ns-chip { display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 10px 0 6px; border-radius: 12px; background: #F4F8F6; box-shadow: 0 2px 0 var(--shadow); font: 800 12.5px var(--font); color: var(--ink); }
+.ns-chip img { width: 24px; height: 24px; }
+.ns-chip i { font-style: normal; font-weight: 900; color: var(--ink2); }
+.ns-chip.add { width: 38px; padding: 0; justify-content: center; background: transparent; box-shadow: none; border: 2px dashed #B9CBC1; font-size: 18px; font-weight: 900; color: var(--ink2); }
+.ns-hint { margin: 0; font-size: 12px; font-weight: 700; color: var(--ink2); }
+.node-sheet > .row { margin-top: 12px; }

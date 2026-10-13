@@ -59,6 +59,8 @@ export const BIOME_NAMES: Record<BiomeId, string> = {
 export const RULES = {
   startMoney: 600,
   beltCost: 1,
+  /** Prix d'une boîte (séparateur ou filtre) posée sur un tapis. */
+  nodeCost: 10,
   /** Électricité : prix d'une case de câble ; un charbon fait tourner un générateur à pleine charge pendant 10 s. */
   cableCost: 2,
   /** Un câble alimente les machines à cette distance (en cases, carré autour de chaque case de câble). */

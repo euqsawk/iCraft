@@ -201,7 +201,7 @@ test('pont depuis un tapis collé à un autre : dérivation ou bout de tapis, pa
   assert(t.splitJump === 1 && t.result().length === 2, 'repris');
   assert(g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir!, jump: t.splitJump }), 'posé');
   const top = g.factory.beltAt(5, 5)!;
-  assert(top.split === 1 && top.splitJump === 1, 'séparateur en pont');
+  assert(top.node === 'sep' && top.jumps?.[1] === 1, 'séparateur en pont');
   const chest = g.placeMachine('coffre', 5, 9)!;
   for (const b of g.factory.belts.values()) b.built = true;
   chest.built = true; g.pending = []; g.factory.markBuilt();
@@ -217,14 +217,14 @@ test('pont depuis un tapis collé à un autre : dérivation ou bout de tapis, pa
   const r2 = t2.result();
   assert(r2[0].existing && r2[0].jump === 1 && r2[0].dir === 1 && r2[1].y === 7, `bout en pont : ${JSON.stringify(r2)}`);
   assert(g.placeBelts(r2) && g.factory.beltAt(10, 5)!.jump === 1, 'pont posé depuis le bout');
-  // Gomme sur la case sous la dérivation en pont : la dérivation part, le séparateur redevient un tapis simple.
+  // Gomme sur la case sous la dérivation en pont : le pont part, cette sortie est coupée.
   const snap = g.factory.serialize();
-  assert(g.removeAt(5, 6) && g.factory.beltAt(5, 5)!.split === undefined && !!g.factory.beltAt(5, 6), 'dérivation en pont retirée');
+  assert(g.removeAt(5, 6) && !g.factory.beltAt(5, 5)!.jumps && g.factory.nodeOutputs(g.factory.beltAt(5, 5)!).length === 1 && !!g.factory.beltAt(5, 6), 'dérivation en pont retirée');
   g.factory.load(snap);
   // Sauvegarde
   const g2 = new Game('TEST-B2');
   g2.factory.load(g.factory.serialize());
-  assert(g2.factory.beltAt(5, 5)!.splitJump === 1 && g2.factory.beltAt(10, 5)!.jump === 1, 'rechargés');
+  assert(g2.factory.beltAt(5, 5)!.jumps?.[1] === 1 && g2.factory.beltAt(10, 5)!.jump === 1, 'rechargés');
 });
 test('un tapis tracé depuis une machine en sort, et entre dans la machine visée', () => {
   const g = new Game('TEST-4');
@@ -384,7 +384,11 @@ test('séparateur : un tapis tracé depuis le milieu d’un autre partage les ob
   const main = g.factory.beltAt(-6, -5)!, branch = g.factory.beltAt(-9, 1)!;
   assert(main.items.length > 0 && branch.items.length > 0, `principal ${main.items.length}, dérivation ${branch.items.length}`);
   g.removeAt(-9, -4); // on retire la première case de la dérivation
-  assert(g.factory.beltAt(-9, -5)!.split === undefined, 'le séparateur aurait dû redevenir un tapis simple');
+  const sb = g.factory.beltAt(-9, -5)!;
+  assert(g.factory.nodeOutputs(sb).length === 1, 'plus que la sortie tout droit');
+  const m0 = g.money;
+  g.removeNode(sb);
+  assert(!sb.node && g.money === m0 + RULES.nodeCost, 'la boîte retirée est remboursée');
 });
 test('séparateur : à débloquer dans l’arbre', () => {
   const g = new Game('TEST-12');
@@ -727,42 +731,105 @@ test('trieur « pour le Noyau » : il n’envoie que ce qui manque, en comptant 
   const t = trace(g, [[1.5, 6.5], [1.5, 4.5]]);
   assert(t.splitFrom && g.placeBelts(t.result(), { from: t.splitFrom, dir: t.splitDir!, jump: t.splitJump }), 'dérivation vers le Noyau');
   const sb = g.factory.beltAt(1, 6)!;
-  assert(g.setBeltFilter(sb, '@noyau'), 'tri pour le Noyau');
+  g.setNodeRule(sb, 3, ['@noyau']);
+  assert(sb.node === 'tri' && sb.rules?.[3]?.[0] === '@noyau', 'tri pour le Noyau');
   g.factory.putInStorage(src, 'lingot_fer', 20);
   g.factory.putInStorage(src, 'charbon', 5);
   run(g, 60);
   assert(g.palier === 2, `le Noyau a eu ses 3 lingots : palier ${g.palier}`);
   assert((end.inBuf.lingot_fer ?? 0) === 17 && (end.inBuf.charbon ?? 0) === 5, `le reste continue : ${JSON.stringify(end.inBuf)}`);
 });
-test('séparateur à 3 sorties : un tiers de chaque côté ; trieur à 2 objets', () => {
-  const setup = (tri: boolean) => {
+test('séparateur : 4 sorties, dont l’étage du dessus ; filtre : des objets par sortie, le reste ailleurs', () => {
+  const setup = () => {
     const g = new Game('TEST-S3'); g.money = 1e5; g.world.reveal(0, 9, 20);
-    for (const id of ['separateur', 'tri', 'grand_coffre', ...(tri ? ['separateur2', 'tri2'] : ['separateur2'])]) g.unlocks.add(id);
+    for (const id of ['separateur', 'tri', 'grand_coffre', 'pont', 'ascenseurs']) g.unlocks.add(id);
     (g as unknown as { applyUnlocks(): void }).applyUnlocks();
-    const src = g.placeMachine('coffre', -7, 9)!, eS = g.placeMachine('coffre', 5, 9)!, eU = g.placeMachine('coffre', 0, 5)!, eD = g.placeMachine('coffre', 0, 13)!;
+    const src = g.placeMachine('coffre', -7, 9)!, eS = g.placeMachine('coffre', 5, 9)!, eU = g.placeMachine('coffre', 0, 5)!;
+    const eD = g.placeMachine('coffre', 0, 13)!, eV = g.placeMachine('coffre', 2, 13)!;
     assert(g.placeBelts(trace(g, [[-6.5, 9.5], [5.5, 9.5]]).result()), 'tapis');
     for (const end of [5.5, 13.5]) {
       const t = trace(g, [[0.5, 9.5], [0.5, end]]);
       assert(t.splitFrom && t.splitDir !== null && g.placeBelts(t.result(), { from: t.splitFrom, dir: t.splitDir, jump: t.splitJump }), `dérivation vers ${end}`);
     }
+    // Au 2ᵉ étage, un tapis part d'au-dessus de la boîte vers un 4ᵉ coffre.
+    const up: TraceCell[] = [
+      { x: 0, y: 9, dir: 0, inDir: 0, z: 1 }, { x: 1, y: 9, dir: 0, inDir: 0, z: 1 }, { x: 2, y: 9, dir: 1, inDir: 0, z: 1 },
+      { x: 2, y: 10, dir: 1, inDir: 1, z: 1 }, { x: 2, y: 11, dir: 1, inDir: 1, z: 1 }, { x: 2, y: 12, dir: 1, inDir: 1, z: 1 },
+    ];
+    assert(g.placeBelts(up), 'tapis du haut');
+    for (const m of g.factory.machines.values()) m.built = true;
+    for (const b of g.factory.belts.values()) b.built = true;
+    g.pending = []; g.factory.markBuilt();
     const sb = g.factory.beltAt(0, 9)!;
-    assert(sb.split !== undefined && sb.split2 !== undefined, 'trois sorties');
-    g.factory.putInStorage(src, 'fer', 30); g.factory.putInStorage(src, 'cuivre', 30); g.factory.putInStorage(src, 'charbon', 30);
-    return { g, sb, eS, eU, eD };
+    assert(g.factory.nodeOutputs(sb).length === 3 && g.factory.nodeSides(sb)[4] === 'off', 'trois sorties, l’étage du dessus coupé');
+    assert(g.setNodeOutput(sb, 4, true) && g.factory.nodeOutputs(sb).length === 4 && !g.factory.canBranch(sb), 'quatre sorties, pas plus');
+    return { g, sb, src, eS, eU, eD, eV };
   };
-  const a = setup(false);
-  run(a.g, 60);
-  for (const c of [a.eS, a.eU, a.eD]) assert(Object.values(c.inBuf).reduce((x, n) => x + n, 0) === 30, `un tiers chacun : ${JSON.stringify(c.inBuf)}`);
-  const b = setup(true);
-  const up = b.sb.split === 3 ? b.eU : b.eD, down = up === b.eU ? b.eD : b.eU;
-  assert(b.g.setBeltFilter(b.sb, 'fer') && b.g.setBeltFilter(b.sb, 'cuivre', 2), 'deux tris');
-  run(b.g, 60);
-  assert(up.inBuf.fer === 30 && !up.inBuf.cuivre && !up.inBuf.charbon, `dérivation 1 : ${JSON.stringify(up.inBuf)}`);
-  assert(down.inBuf.cuivre === 30 && !down.inBuf.fer, `dérivation 2 : ${JSON.stringify(down.inBuf)}`);
-  assert(b.eS.inBuf.charbon === 30 && !b.eS.inBuf.fer, `tout droit : ${JSON.stringify(b.eS.inBuf)}`);
+  const total = (m: Machine) => Object.values(m.inBuf).reduce((x, n) => x + n, 0);
+  const a = setup();
+  a.g.factory.putInStorage(a.src, 'fer', 40);
+  run(a.g, 80);
+  for (const c of [a.eS, a.eU, a.eD, a.eV]) assert(total(c) === 10, `un quart chacun : ${[a.eS, a.eU, a.eD, a.eV].map(total).join(' / ')}`);
+  // Filtre : le fer en haut, le cuivre et le charbon à l'étage du dessus ; le reste (lingots) tout droit et en bas.
+  const b = setup();
+  b.g.setNodeRule(b.sb, 3, ['fer']);
+  b.g.setNodeRule(b.sb, 4, ['cuivre', 'charbon']);
+  assert(b.sb.node === 'tri', 'devenu un filtre');
+  for (const t of ['fer', 'cuivre', 'charbon', 'lingot_fer']) b.g.factory.putInStorage(b.src, t, 20);
+  run(b.g, 120);
+  assert(b.eU.inBuf.fer === 20 && total(b.eU) === 20, `en haut : ${JSON.stringify(b.eU.inBuf)}`);
+  assert(b.eV.inBuf.cuivre === 20 && b.eV.inBuf.charbon === 20 && total(b.eV) === 40, `au 2ᵉ étage : ${JSON.stringify(b.eV.inBuf)}`);
+  assert(b.eS.inBuf.lingot_fer === 10 && b.eD.inBuf.lingot_fer === 10 && total(b.eS) === 10 && total(b.eD) === 10, `le reste : ${JSON.stringify(b.eS.inBuf)} ${JSON.stringify(b.eD.inBuf)}`);
   const s2 = JSON.parse(JSON.stringify(b.g.serialize()));
   const g2 = new Game(s2.seed, s2);
-  assert(g2.factory.beltAt(0, 9)!.filter2 === 'cuivre', 'second tri sauvegardé');
+  const sb2 = g2.factory.beltAt(0, 9)!;
+  assert(sb2.rules?.[4]?.length === 2 && sb2.vert === 1 && g2.factory.nodeOutputs(sb2).length === 4, 'filtre sauvegardé');
+  // Une ancienne partie : séparateur à deux dérivations triées (fer en haut, lingots en bas).
+  const fs = b.g.factory.serialize();
+  const old = fs.belts.find((t) => t[0] === 0 && t[1] === 9 && !t[16])!;
+  old[6] = 3; old[11] = 1; old[12] = 'fer'; old[15] = 'lingot_fer'; old[17] = 0;
+  const g3 = new Game('TEST-S3');
+  g3.factory.load(fs);
+  const sb3 = g3.factory.beltAt(0, 9)!;
+  assert(sb3.node === 'tri' && sb3.rules?.[3]?.[0] === 'fer' && sb3.rules?.[1]?.[0] === 'lingot_fer' && g3.factory.nodeOutputs(sb3).length === 3, `ancien trieur repris : ${JSON.stringify(sb3.rules)}`);
+});
+test('séparateur posé d’un toucher, avec plusieurs entrées ; ascenseur sur un tapis', () => {
+  const g = new Game('TEST-S5'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  for (const id of ['separateur', 'pont']) g.unlocks.add(id);
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const a = g.placeMachine('coffre', -7, 9)!, c = g.placeMachine('coffre', 0, 4)!;
+  const eS = g.placeMachine('coffre', 5, 9)!, eD = g.placeMachine('coffre', 0, 13)!;
+  assert(g.placeBelts(trace(g, [[-6.5, 9.5], [5.5, 9.5]]).result()), 'tapis');
+  assert(g.placeBelts([5, 6, 7, 8].map((y) => ({ x: 0, y, dir: 1, inDir: 1 }) as TraceCell)), 'tapis qui arrive du haut');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const sb = g.factory.beltAt(0, 9)!;
+  const m0 = g.money;
+  assert(g.placeNode(sb, 'sep') && sb.node === 'sep' && g.money === m0 - RULES.nodeCost, 'séparateur posé');
+  assert(!g.placeNode(sb, 'tri') && sb.node === 'sep', 'filtre : à débloquer');
+  const t = trace(g, [[0.5, 9.5], [0.5, 13.5]]);
+  assert(t.splitFrom === sb && g.placeBelts(t.result(), { from: sb, dir: t.splitDir!, jump: t.splitJump }), 'sortie vers le bas');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const sides = g.factory.nodeSides(sb);
+  assert(sides[2] === 'in' && sides[3] === 'in' && sides[0] === 'main' && sides[1] === 'out', `deux entrées : ${JSON.stringify(sides)}`);
+  g.factory.putInStorage(a, 'fer', 10);
+  g.factory.putInStorage(c, 'cuivre', 10);
+  run(g, 60);
+  const total = (m: Machine) => Object.values(m.inBuf).reduce((x, n) => x + n, 0);
+  assert(total(eS) === 10 && total(eD) === 10 && (eS.inBuf.fer ?? 0) > 0 && (eS.inBuf.cuivre ?? 0) > 0, `partagé : ${JSON.stringify(eS.inBuf)} ${JSON.stringify(eD.inBuf)}`);
+  // Ascenseur : sans le déblocage, refusé ; avec, la fin de la sortie du bas passe au 2ᵉ étage.
+  const lb = g.factory.beltAt(0, 11)!;
+  assert(!g.liftFrom(lb), 'ascenseurs : à débloquer');
+  g.unlocks.add('ascenseurs');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(g.liftFrom(lb) && g.factory.beltAt(0, 11, 1) === lb && !!g.factory.beltAt(0, 12, 1) && !g.factory.beltAt(0, 11), 'la suite passe en haut');
+  assert(g.factory.liftOf(g.factory.beltAt(0, 10)!).to === lb, 'un ascenseur');
+  assert(!g.liftFrom(sb), 'pas sur une boîte');
+  g.factory.putInStorage(a, 'fer', 10);
+  run(g, 60);
+  assert(total(eD) === 15, `le coffre du bas reçoit par le 2ᵉ étage : ${total(eD)}`);
 });
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
@@ -1177,7 +1244,7 @@ test('gomme en zone : tout ce qui est dans le rectangle part, remboursé ; le No
 test('un tapis nourrit deux machines de part et d’autre et continue tout droit', () => {
   const g = new Game('TEST-S3');
   g.money = 100000; g.world.reveal(6, 5, 20);
-  g.unlocks.add('separateur'); g.unlocks.add('separateur2'); g.factory.thirdOutput = true;
+  g.unlocks.add('separateur');
   const src = g.placeMachine('coffre', 1, 5)!;
   const end = g.placeMachine('coffre', 11, 5)!;
   const up = g.placeMachine('coffre', 5, 4)!;
@@ -1192,20 +1259,20 @@ test('un tapis nourrit deux machines de part et d’autre et continue tout droit
   assert(t1.intoMachine === 3 && g.linkBeltToMachine(t1.splitFrom!, 3), 'nourrit le coffre du haut');
   const t2 = new BeltTracer(g.factory, 5.5, 5.5); t2.move(5.5, 6.6);
   assert(t2.splitFrom === b && t2.intoMachine === 1 && g.linkBeltToMachine(b, 1), 'et celui du bas');
-  assert(b.split === 3 && b.split2 === 1, 'deux dérivations');
+  assert(b.node === 'sep' && g.factory.nodeOutputs(b).map((o) => o.d).sort().join() === '0,1,3' && g.factory.nodeIsLink(b), 'deux dérivations');
   g.factory.putInStorage(src, 'fer', 30);
   run(g, 60);
   const n = (m: typeof src) => m.inBuf.fer ?? 0;
   assert(n(up) >= 9 && n(down) >= 9 && n(end) >= 9 && n(up) + n(down) + n(end) === 30, `répartition : haut ${n(up)}, bas ${n(down)}, tout droit ${n(end)}`);
   const g2 = new Game('TEST-S3', JSON.parse(JSON.stringify(g.serialize())));
-  assert(g2.factory.beltAt(5, 5)!.split2 === 1, 'sauvegardé');
+  assert(g2.factory.nodeOutputs(g2.factory.beltAt(5, 5)!).some((o) => o.d === 1), 'sauvegardé');
   g.unlinkBelt(b);
-  assert(b.split === undefined && b.split2 === undefined, 'liaisons coupées');
+  assert(!b.node, 'liaisons coupées');
 });
 test('le bout d’un tapis se tourne vers une machine collée, puis nourrit aussi celle d’en face', () => {
   const g = new Game('TEST-S4');
   g.money = 100000; g.world.reveal(6, 5, 20);
-  g.unlocks.add('separateur'); g.unlocks.add('separateur2');
+  g.unlocks.add('separateur');
   const up = g.placeMachine('coffre', 5, 4)!, down = g.placeMachine('coffre', 5, 6)!;
   assert(g.placeBelts(trace(g, [[1.5, 5.5], [5.5, 5.5]]).result()), 'tapis');
   for (const m of g.factory.machines.values()) m.built = true;
@@ -1270,13 +1337,14 @@ test('tri : seul l’objet choisi part de côté ; entrepôt ; statistiques et s
   for (const b of g.factory.belts.values()) b.built = true;
   g.pending = []; g.factory.markBuilt();
   const sb = g.factory.beltAt(5, 5)!;
-  assert(g.setBeltFilter(sb, 'cuivre') && sb.filter === 'cuivre', 'tri sur le cuivre');
+  g.setNodeRule(sb, 1, ['cuivre']);
+  assert(sb.node === 'tri' && sb.rules?.[1]?.[0] === 'cuivre', 'tri sur le cuivre');
   g.factory.putInStorage(src, 'fer', 10);
   g.factory.putInStorage(src, 'cuivre', 10);
   run(g, 40);
   assert(side.inBuf.cuivre === 10 && !side.inBuf.fer && straight.inBuf.fer === 10 && !straight.inBuf.cuivre, `tri : côté ${JSON.stringify(side.inBuf)}, tout droit ${JSON.stringify(straight.inBuf)}`);
   const g2 = new Game('TEST-T1', JSON.parse(JSON.stringify(g.serialize())));
-  assert(g2.factory.beltAt(5, 5)!.filter === 'cuivre', 'tri sauvegardé');
+  assert(g2.factory.beltAt(5, 5)!.rules?.[1]?.[0] === 'cuivre', 'tri sauvegardé');
   const e = g.placeMachine('entrepot', 14, 12)!;
   assert(e && g.factory.slotsOf(e) === 90 && g.factory.putInStorage(e, 'fer', 2000) === 900, 'entrepôt : 900 objets');
   // Statistiques et succès.

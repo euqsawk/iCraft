@@ -24,6 +24,7 @@ import { exportPanel, playTime } from './title.ts';
 import { ALL_NODES, type UnlockNode } from '../data/unlocks.ts';
 import { palierMission } from '../data/paliers.ts';
 import { NODE_ICONS, UNLOCK_ICON } from './nodeIcons.ts';
+import { hexCss, nodeColor } from '../data/nodeColors.ts';
 import { buildingSvgUrl } from '../render/buildingIcons.ts';
 import { isStationType, rotDims, type Rot } from '../sim/stations.ts';
 import { swipeToClose } from './swipe.ts';
@@ -85,6 +86,13 @@ const GIFT_TEXT: Record<string, { title: string; lines: string[]; open: string }
 interface PickOpt { id: string | null; label: string; sub?: string; icon?: string; badge?: string; on?: boolean; group?: string; danger?: boolean }
 
 /** Petit entonnoir : un séparateur qui trie. */
+/** Le menu du tapis : séparateur, filtre, ascenseur. */
+const BI = (p: string) => `<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const BELT_ICONS = {
+  sep: BI('<rect x="7" y="7" width="8" height="8" rx="2"/><path d="M2 11 H7 M15 11 H20 M11 2 V7 M11 15 V20"/>'),
+  tri: BI('<rect x="6" y="6" width="10" height="10" rx="2"/><path d="M8.5 9 H13.5 M9.5 11 H12.5 M10.5 13 H11.5"/><path d="M1 11 H6 M16 11 H21"/>'),
+  lift: BI('<rect x="5" y="5" width="12" height="12" rx="2.5"/><path d="M11 14 V8 M8.5 10.5 L11 8 L13.5 10.5"/><circle cx="5" cy="5" r="1.2" fill="currentColor"/><circle cx="17" cy="5" r="1.2" fill="currentColor"/><circle cx="5" cy="17" r="1.2" fill="currentColor"/><circle cx="17" cy="17" r="1.2" fill="currentColor"/>'),
+};
 const FUNNEL = '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor" aria-hidden="true"><path d="M1 1.5 H9 L6 5.2 V8.5 L4 9.2 V5.2 Z"/></svg>';
 const CHECK_SM = '<svg class="plan-check" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2E6B51" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5 L6.5 12 L13 4.5"/></svg>';
 const fmt = (n: number) => Math.floor(n).toLocaleString('fr-FR').replace(/ | /g, ' ');
@@ -157,9 +165,16 @@ export class Hud implements GestureHandlers {
   private toolButtons = new Map<string, HTMLButtonElement>();
   /** Options de l'outil en cours (Câble / Tuyau, Gomme / Zone). */
   private toolOpts!: HTMLElement;
-  /** Étage des tapis qu'on pose (0 : au sol, 1 : en hauteur), et son interrupteur en bas à gauche. */
-  private beltLevel: 0 | 1 = 0;
-  private levelSwitch!: HTMLElement;
+  /**
+   * Le bouton d'étage (en bas à gauche) : « Étage 2 » (on voit les deux étages) ou « Étage 1 seul » (le haut pâlit).
+   * Pendant un tracé, il fait passer le tapis à l'autre étage (un ascenseur là où il change).
+   */
+  private upperFaded = false;
+  private levelBtn!: HTMLButtonElement;
+  /** Le menu du tapis : tracer, ou poser d'un toucher un séparateur, un filtre, un ascenseur. */
+  private beltMode: 'tapis' | 'sep' | 'tri' | 'lift' = 'tapis';
+  /** Fenêtre d'une boîte : le côté choisi (0–3, 4 : l'autre étage). */
+  private nodeSel: number | null = null;
   private bubble!: HTMLElement;
   private popover!: HTMLElement;
   private toasts!: HTMLElement;
@@ -274,18 +289,15 @@ export class Hud implements GestureHandlers {
     }
 
     this.toolOpts = h('div', 'tool-opts hidden');
-    // Niveau 1 / 2 des tapis : se change aussi pendant le tracé (avec un autre doigt), là où il change, un ascenseur.
-    this.levelSwitch = h('div', 'level-switch hidden',
-      `<span class="ls-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3 21 8l-9 5-9-5z"/><path d="m3 12.5 9 5 9-5" opacity=".55"/><path d="m3 17 9 5 9-5" opacity=".3"/></svg></span><button data-l="0" aria-label="Tapis au sol">1</button><button data-l="1" aria-label="Tapis en hauteur">2</button>`);
-    this.levelSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.setBeltLevel(b.dataset.l === '1' ? 1 : 0); });
-    });
+    // Le bouton d'étage : se touche aussi pendant un tracé (avec un autre doigt).
+    this.levelBtn = h('button', 'level-btn hidden') as HTMLButtonElement;
+    this.levelBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.pressLevel(); });
     this.bubble = h('div', 'bubble hidden');
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
-    this.root.append(top, row, this.freightPill, this.palette, this.toolOpts, this.levelSwitch, toolbar, this.bubble, this.popover, this.toasts);
-    this.setBeltLevel(0);
-    this.tree = new TreeScreen(this.root, this.game, this.itemIcons, () => { this.renderPalette(); this.refreshLevel(); });
+    this.root.append(top, row, this.freightPill, this.palette, this.toolOpts, this.levelBtn, toolbar, this.bubble, this.popover, this.toasts);
+    this.updateLevelBtn();
+    this.tree = new TreeScreen(this.root, this.game, this.itemIcons, () => { this.renderPalette(); this.refreshLevel(); this.renderToolOpts(); });
     // On ne reconstruit pas une feuille pendant qu'un doigt appuie dessus (le bouton serait perdu).
     const press = (on: boolean) => () => { this.pressing = on; };
     this.root.addEventListener('pointerdown', press(true), true);
@@ -362,7 +374,7 @@ export class Hud implements GestureHandlers {
       case 'order': this.refreshOrder(); this.sheetDirty = true; break;
       case 'freight': this.refreshFreight(); if (this.sheetKind === 'freight') this.sheetDirty = true; break;
       case 'gift': this.onGift(e.building, e.id, !!e.again); break;
-      case 'factory': if (this.tool === 'machine') this.renderPalette(); break;
+      case 'factory': if (this.tool === 'machine') this.renderPalette(); this.updateLevelBtn(); break;
       case 'orderDone': this.celebrate(e.order); break;
       case 'toast': this.toast(e.text, e.tone); break;
       default: break;
@@ -632,24 +644,61 @@ export class Hud implements GestureHandlers {
     this.setTool(same ? 'none' : t === 'cable' && !this.game.isUnlocked('generateur') ? 'tuyau' : t);
   }
 
-  /** Niveau des tapis qu'on pose : pendant un tracé, les cases suivantes passent à ce niveau. */
-  private setBeltLevel(l: 0 | 1): void {
-    this.beltLevel = l;
-    this.levelSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((b) => b.classList.toggle('on', b.dataset.l === String(l)));
-    this.levelSwitch.classList.toggle('up', l === 1);
+  /** Le bouton d'étage : pendant un tracé, le tapis change d'étage ; sinon, on montre ou pâlit l'étage 2. */
+  private pressLevel(): void {
     if (this.tracer) {
-      this.tracer.setLevel(l);
+      if (!this.game.levels2) { this.toast('Ascenseurs : à débloquer dans l’arbre (Logistique, comme les ponts)', 'info'); return; }
+      this.tracer.setLevel(this.tracer.level ? 0 : 1);
       if (this.dragAt) this.toolMove(this.dragAt.x, this.dragAt.y);
+      this.updateLevelBtn();
+      return;
     }
+    this.upperFaded = !this.upperFaded;
+    this.r.setUpperFaded(this.upperFaded);
+    if (this.upperFaded) this.toast('Étage 1 seul : le haut pâlit, tu touches ce qui passe dessous', 'info');
+    this.updateLevelBtn();
+  }
+
+  /** Le bouton d'étage : toujours là dès que les ascenseurs sont débloqués (ou qu'un tapis est en hauteur). */
+  private updateLevelBtn(): void {
+    const b = this.levelBtn;
+    if (!b) return;
+    const show = this.game.levels2 || [...this.game.view.belts.values()].some((x) => x.z);
+    b.classList.toggle('hidden', !show);
+    if (!show) {
+      if (this.upperFaded) { this.upperFaded = false; this.r.setUpperFaded(false); }
+      return;
+    }
+    const t = this.tracer;
+    const on = t ? t.level === 1 : !this.upperFaded;
+    const title = t ? `Tracé : étage ${t.level + 1}` : this.upperFaded ? 'Étage 1 seul' : 'Étage 2';
+    const sub = t ? 'touche pour changer' : this.upperFaded ? 'le haut pâlit' : 'on voit les 2 étages';
+    const sig = `${on}|${title}|${sub}|${!!t}`;
+    if (b.dataset.sig === sig) return;
+    b.dataset.sig = sig;
+    b.classList.toggle('on', on);
+    b.classList.toggle('tracing', !!t);
+    b.innerHTML = `<span class="lb-ico"><svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3 L19 7.5 L11 12 L3 7.5 Z"${on ? '' : ' opacity=".35"'}/><path d="M3 11.5 L11 16 L19 11.5"/></svg></span><span class="lb-t"><b>${title}</b><small>${sub}</small></span>`;
   }
 
   /** Les options d'un outil, au-dessus de la barre : Câble / Tuyau, Gomme / Zone. */
   private renderToolOpts(): void {
-    this.levelSwitch.classList.toggle('hidden', this.tool !== 'tapis');
     const box = this.toolOpts;
     box.innerHTML = '';
     const g = this.game;
     let opts: { label: string; icon: string; on: boolean; locked: boolean; pick: () => void; why: string }[] = [];
+    if (this.tool === 'tapis') {
+      const mode = (m: typeof this.beltMode) => () => { this.beltMode = m; this.renderToolOpts(); this.beltModeHint(); };
+      opts = [
+        { label: 'Tapis', icon: ICONS.tapis, on: this.beltMode === 'tapis', locked: false, pick: mode('tapis'), why: '' },
+        { label: 'Séparateur', icon: BELT_ICONS.sep, on: this.beltMode === 'sep', locked: !g.isUnlocked('separateur'), pick: mode('sep'), why: 'Séparateur : à débloquer dans l’arbre (Logistique)' },
+        { label: 'Filtre', icon: BELT_ICONS.tri, on: this.beltMode === 'tri', locked: !g.isUnlocked('tri'), pick: mode('tri'), why: 'Filtre : à débloquer dans l’arbre (Logistique)' },
+        { label: 'Ascenseur', icon: BELT_ICONS.lift, on: this.beltMode === 'lift', locked: !g.levels2, pick: mode('lift'), why: 'Ascenseurs : à débloquer dans l’arbre (Logistique, comme les ponts)' },
+      ];
+      if (opts.slice(1).every((o) => o.locked)) opts = [];
+    }
+    box.classList.toggle('wide', this.tool === 'tapis');
+    this.levelBtn.classList.toggle('raised', this.tool === 'tapis' && opts.length > 0);
     if (this.tool === 'cable' || this.tool === 'tuyau') {
       opts = [
         { label: 'Câble', icon: ICONS.cable, on: this.tool === 'cable', locked: !g.isUnlocked('generateur'), pick: () => this.setTool('cable'), why: 'Câbles : débloque le Générateur (Énergie, palier 4)' },
@@ -698,8 +747,26 @@ export class Hud implements GestureHandlers {
     this.root.append(banner);
   }
 
+  /** Ce que fait le mode choisi dans le menu du tapis. */
+  private beltModeHint(): void {
+    const msg = { tapis: '', sep: 'Touche un tapis : un séparateur s’y pose. Trace ensuite des tapis qui en partent (jusqu’à 4 sorties).', tri: 'Touche un tapis : un filtre s’y pose, puis choisis ce qui part par chaque sortie.', lift: 'Touche un tapis : à partir de là, il passe à l’autre étage.' }[this.beltMode];
+    if (msg) this.toast(msg, 'info');
+  }
+
+  /** Le menu du tapis, d'un toucher sur un tapis : séparateur, filtre ou ascenseur. */
+  private beltAction(b: Belt): void {
+    const g = this.game;
+    if (this.beltMode === 'lift') { g.liftFrom(b); return; }
+    const kind = this.beltMode === 'tri' ? 'tri' : 'sep';
+    const had = b.node;
+    if (had !== kind && !g.placeNode(b, kind)) return;
+    if (!had) this.toast(kind === 'tri' ? `Filtre posé · ${RULES.nodeCost} ${'pièces'}` : `Séparateur posé · ${RULES.nodeCost} pièces : trace des tapis qui en partent`, 'good');
+    if (kind === 'tri' || had) this.openNodeSheet(b);
+  }
+
   private setTool(t: Tool): void {
     this.clearZone();
+    if (t !== 'tapis') this.beltMode = 'tapis';
     if (t !== 'move') this.copying = null;
     if (t !== 'move') {
       this.r.movingId = null;
@@ -726,6 +793,8 @@ export class Hud implements GestureHandlers {
 
   toolActive(): boolean {
     // Avec la palette ouverte, la carte se déplace normalement : les machines se posent en glissant leur carte.
+    // Menu du tapis en mode séparateur, filtre ou ascenseur : la carte se déplace, un toucher pose.
+    if (this.tool === 'tapis' && this.beltMode !== 'tapis') return false;
     return this.tool !== 'none' && this.tool !== 'machine' && !this.r.introRunning;
   }
 
@@ -756,9 +825,16 @@ export class Hud implements GestureHandlers {
     if (sheet) { sheet(); return; }
     if (m) { this.select({ kind: 'machine', id: m.id }); return; }
     // Un tapis en hauteur d'abord ; toucher encore la même case sélectionne celui du dessous.
+    // Avec « Étage 1 seul », seulement ceux du dessous.
     const prev = this.r.selection;
     const again = prev?.kind === 'belt' && prev.x === cx && prev.y === cy && prev.z === 1;
-    const b = (!again && f.beltAt(cx, cy, 1)) || f.beltAt(cx, cy) || f.beltAt(cx, cy, 1);
+    const b = this.upperFaded ? f.beltAt(cx, cy) : (!again && f.beltAt(cx, cy, 1)) || f.beltAt(cx, cy) || f.beltAt(cx, cy, 1);
+    if (this.tool === 'tapis' && this.beltMode !== 'tapis') {
+      const tb = this.upperFaded ? f.beltAt(cx, cy) : f.beltAt(cx, cy, 1) ?? f.beltAt(cx, cy);
+      if (tb) this.beltAction(tb); else this.toast('Touche un tapis', 'info');
+      return;
+    }
+    if (b?.node && !f.nodeIsLink(b)) { this.closePopover(); this.openNodeSheet(b); return; }
     if (b) { this.select({ kind: 'belt', x: cx, y: cy, ...(b.z ? { z: 1 as const } : {}) }); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
     if (this.game.inAtelier) return;
@@ -882,8 +958,11 @@ export class Hud implements GestureHandlers {
       this.cableTracer = new CableTracer(this.game.world, w.x, w.y);
       this.r.preview = { kind: this.tool === 'tuyau' ? 'pipe' : 'cable', tracer: this.cableTracer };
     } else if (this.tool === 'tapis') {
-      this.tracer = new BeltTracer(this.game.view, w.x, w.y, this.beltLevel);
+      // Là où il y a un tapis en hauteur (et qu'on le voit), on part de lui ; sinon, au 1ᵉʳ étage.
+      const up = !this.upperFaded && !!this.game.view.beltAt(Math.floor(w.x), Math.floor(w.y), 1);
+      this.tracer = new BeltTracer(this.game.view, w.x, w.y, up ? 1 : 0);
       this.tracer.bridges = this.game.isUnlocked('pont');
+      this.updateLevelBtn();
       this.r.preview = { kind: 'trace', tracer: this.tracer };
     } else if (this.tool === 'machine' || this.tool === 'move') {
       this.updatePlacement(sx, sy);
@@ -1037,7 +1116,7 @@ export class Hud implements GestureHandlers {
     if (this.tool === 'tapis' && this.tracer) {
       this.tracer.move(w.x, w.y);
       const n = this.tracer.newCount, nb = this.tracer.bridgeCount;
-      const price = n * RULES.beltCost + nb * RULES.bridgeCost;
+      const price = n * RULES.beltCost + nb * RULES.bridgeCost + (this.tracer.splitFrom && !this.tracer.splitFrom.node ? RULES.nodeCost : 0);
       const ok = this.tracer.valid && !this.tracer.blocked;
       const affordable = this.game.money >= price;
       const lifts = this.tracer.liftCount;
@@ -1103,6 +1182,7 @@ export class Hud implements GestureHandlers {
       }
     }
     this.tracer = null;
+    this.updateLevelBtn();
     this.cableTracer = null;
     this.r.preview = null;
     this.r.guides = [];
@@ -1211,13 +1291,6 @@ export class Hud implements GestureHandlers {
       const chain = f.chainOf(b);
       const items = chain.reduce((s, c) => s + c.items.length, 0);
       const pending = chain.some((c) => !c.built);
-      const isSplit = b.split !== undefined && !f.machineAt(b.x + DX[b.split], b.y + DY[b.split]);
-      const splitter = !isSplit ? '' : b.filter
-        ? b.filter.startsWith('@') ? `<p><b>Tri ${esc(this.filterInfo(b.filter).name.toLowerCase())}</b> : seulement ce qui lui manque part dans la dérivation (sans compter ce qui est déjà en route) ; tout le reste continue tout droit.</p>`
-        : `<p><b>Tri</b> : seul ${esc(item(b.filter).name.toLowerCase())} part dans la dérivation ; tout le reste continue tout droit.</p>`
-        : b.split2 !== undefined && !f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2])
-          ? '<p>Séparateur à 3 sorties : un objet sur trois part de chaque côté, un sur trois continue tout droit.</p>'
-          : `<p>Séparateur : un objet sur deux part dans la dérivation. Si une sortie est pleine, tout passe par l’autre.${this.game.isUnlocked('separateur2') ? ' Glisse depuis lui de l’autre côté pour une troisième sortie.' : ''}</p>`;
       // Un compteur sur la chaîne : son débit, matière par matière.
       const mb = chain.find((c) => c.meter);
       let meter = '';
@@ -1229,17 +1302,16 @@ export class Hud implements GestureHandlers {
       const lmin = Math.min(...chain.map((c) => c.lvl ?? 1)), lmax = Math.max(...chain.map((c) => c.lvl ?? 1));
       const bup = this.game.beltUpgrade(b);
       const lvText = `<p class="lv-line"><span class="lv-dot l${lmin}"></span><b>Niveau ${lmin}${lmax > lmin ? ` à ${lmax}` : ''}</b> · ${fmtN(RULES.beltSpeed * RULES.beltLevelSpeed[lmin - 1])} case${lmin > 1 ? 's' : ''} par seconde</p>`;
-      const info = `<h3>${splitter ? 'Séparateur' : b.z ? 'Tapis en hauteur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${lvText}${splitter}${meter}
+      const info = `<h3>${b.z ? 'Tapis en hauteur' : 'Tapis'} · ${chain.length} case${chain.length > 1 ? 's' : ''}</h3>${lvText}${meter}
         <p>${pending ? 'En construction.' : items ? `${items} objet${items > 1 ? 's' : ''} en route.` : 'Vide pour l’instant.'} Pour en effacer une partie, prends la gomme.</p><p class="refund">Supprimer rend ${chain.reduce((a, c) => a + RULES.beltCost + Game.levelValue(RULES.beltLevelCost, c.lvl), 0)} ${ICONS.coinSm}</p>`;
       const feeders = (b.feeds ?? []).map((d) => f.machineAt(b.x + DX[d], b.y + DY[d])).filter((m): m is Machine => !!m);
-      const fed = b.split !== undefined ? f.machineAt(b.x + DX[b.split], b.y + DY[b.split]) : null;
-      const fed2 = b.split2 !== undefined ? f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2]) : null;
-      const linked = feeders.length > 0 || !!fed;
-      const fedText = fed && fed2
-        ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} et ${esc(machineDef(fed2.type).name.toLowerCase())} de part et d’autre, et continue tout droit : un objet sur trois pour chacun.</p>`
-        : fed ? `<p>Ce tapis nourrit ${esc(machineDef(fed.type).name.toLowerCase())} par le côté : un objet sur deux y entre. Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.</p>` : '';
+      // Les machines que ce tapis nourrit par le côté (une liaison : un séparateur sans boîte).
+      const fed = b.node ? f.nodeOutputs(b).flatMap((o) => (o.d < 4 && o.d !== b.dir && o.next?.kind === 'machine' ? [o.next.machine] : [])) : [];
+      const linked = feeders.length > 0 || fed.length > 0;
+      const fedText = fed.length
+        ? `<p>Ce tapis nourrit ${fed.map((x) => esc(machineDef(x.type).name.toLowerCase())).join(' et ')} par le côté, et continue tout droit : chacun son tour.${fed.length < 3 ? ' Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.' : ''}</p>` : '';
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
-      const sortBtn = isSplit ? `<div class="row"><button class="btn" data-act="sort">${b.filter ? `<img class="btn-ico" src="${this.filterInfo(b.filter).icon}" alt="">Changer le tri` : this.game.isUnlocked('tri') ? 'Trier un objet' : 'Voir le séparateur'}</button></div>` : '';
+      const sortBtn = fed.length && this.game.isUnlocked('tri') ? `<div class="row"><button class="btn" data-act="sort">${FUNNEL}Régler comme un filtre</button></div>` : '';
       const upBtn = !bup ? '' : bup.locked
         ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Tapis niveau ${bup.to} : à débloquer (Niveaux)</button></div>`
         : `<div class="row"><button class="btn primary" data-act="lvl"${this.game.money < bup.price ? ' disabled' : ''}>Niveau ${bup.to} · ${bup.cells.length} case${bup.cells.length > 1 ? 's' : ''} · ${ICONS.coinSm}${fmt(bup.price)}</button></div>`;
@@ -1268,7 +1340,7 @@ export class Hud implements GestureHandlers {
         this.renderPopover();
       };
       const so = p.querySelector<HTMLButtonElement>('[data-act="sort"]');
-      if (so) so.onclick = () => this.openSortPicker(b);
+      if (so) so.onclick = () => { if (this.game.placeNode(b, 'tri')) this.openNodeSheet(b); };
       p.querySelectorAll<HTMLButtonElement>('[data-bridge]').forEach((bt) => {
         bt.onclick = () => {
           const o = mbr[Number(bt.dataset.bridge)];
@@ -2506,104 +2578,141 @@ export class Hud implements GestureHandlers {
     return list.map(([id, sub]) => ({ id, label: this.filterInfo(id).name, sub, icon: this.filterInfo(id).icon, on: current === id, group: 'Destinations' }));
   }
 
-  private openSortPicker(belt: Belt): void {
+  /**
+   * La fenêtre d'une boîte (séparateur ou filtre), « la boussole » : la boîte au milieu, une tuile par côté
+   * (entrée, sortie ou rien) et une pour l'autre étage ; on touche une tuile pour la régler en dessous.
+   */
+  private openNodeSheet(belt: Belt): void {
     this.closePopover();
     const g = this.game;
     const at = { x: belt.x, y: belt.y, z: belt.z ?? 0 };
+    this.nodeSel = null;
     this.openSheet((sheet, close) => {
       const f = g.view;
       const b = f.beltAt(at.x, at.y, at.z);
-      if (!b || b.split === undefined) { close(); return; }
-      const tri = g.isUnlocked('tri');
-      // Séparateur à 3 sorties : une seconde dérivation vers un tapis, de l'autre côté.
-      const three = b.split2 !== undefined && !f.machineAt(b.x + DX[b.split2], b.y + DY[b.split2]);
-      const tri2 = three && g.isUnlocked('tri2');
-      const sorted = !!(b.filter || (three && b.filter2));
-      sheet.classList.add('mach-sheet');
-      sheet.append(this.sheetHead(three ? 'Séparateur à 3 sorties' : 'Séparateur', sorted
-        ? `Trie : ${[b.filter, three ? b.filter2 : undefined].filter(Boolean).map((t) => esc(t!.startsWith('@') ? this.filterInfo(t!).name.replace(/^Pour/, 'pour') : this.filterInfo(t!).name.toLowerCase())).join(' d’un côté, ')}${b.filter && three && b.filter2 ? ' de l’autre' : ''} ; le reste continue tout droit`
-        : three ? 'Auto : un objet sur trois de chaque côté' : 'Auto : un objet sur deux de chaque côté', close));
-      // Ce qui arrive : les objets sur la chaîne de tapis (le plus fréquent d'abord).
-      const count = new Map<string, number>();
-      for (const c of f.chainOf(b)) for (const it of c.items) count.set(it.t, (count.get(it.t) ?? 0) + 1);
-      const seen = [...count.entries()].sort((p, q) => q[1] - p[1]).map(([t]) => t);
-      const W = 340, H = three ? 300 : 214, M = 80, CW = 118, CH = 52;
-      const box = h('div', 'mdiag');
-      const inner = h('div', 'mdiag-in');
-      inner.style.height = `${H}px`;
-      box.append(inner);
-      const rel = (b.split - b.dir + 4) % 4;
-      const down = rel === 1;
-      const mx = (W - M) / 2, my = three ? (H - M) / 2 : down ? 20 : H - M - 20;
-      const place = (el: HTMLElement, x: number, y: number) => { el.style.left = `${x}px`; el.style.top = `${y}px`; inner.append(el); };
-      // La case du séparateur : un tapis qui se divise.
-      const fork = `<svg width="80" height="80" viewBox="0 0 80 80" aria-hidden="true"><rect x="2" y="2" width="76" height="76" rx="18" fill="#fff"/><rect x="2" y="2" width="76" height="76" rx="18" fill="none" stroke="#BCD2C6" stroke-width="3"/>
-        <path d="M14 40 H66" stroke="#2E3A4B" stroke-width="6" stroke-linecap="round"/><path d="M58 32 L66 40 L58 48" fill="none" stroke="#2E3A4B" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M40 40 V${down ? 66 : 14}" stroke="${b.filter ? '#2E6B51' : '#2E3A4B'}" stroke-width="6" stroke-linecap="round"/><path d="M32 ${down ? 58 : 22} L40 ${down ? 66 : 14} L48 ${down ? 58 : 22}" fill="none" stroke="${b.filter ? '#2E6B51' : '#2E3A4B'}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-      const mEl = h('div', 'mdiag-m', fork);
-      place(mEl, mx, my);
-      const midY = my + M / 2;
-      // Les fils et les chevrons
-      const wire = (cls: string, x: number, y: number, w: number, hgt: number) => { const el = h('div', `mdiag-wire ${cls}`); el.style.width = `${w}px`; el.style.height = `${hgt}px`; place(el, x, y); };
-      wire('in belt h', CW, midY - 2, mx - CW, 4);
-      wire('out belt h', mx + M, midY - 2, W - CW - mx - M, 4);
-      const dy0 = down ? my + M : CH + 2, dy1 = down ? H - CH - 2 : my;
-      wire(`out ${b.filter ? 'belt' : 'belt'} v`, W / 2 - 2, dy0, 4, dy1 - dy0);
-      const chev = (cls: string, x: number, y: number, rot: number) => place(h('span', `mdiag-chev ${cls}`, `<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="transform:rotate(${rot}deg)"><path d="M3.5 2 L6.5 5 L3.5 8"/></svg>`), x - 10, y - 10);
-      chev('in belt', mx, midY, 0);
-      chev('out belt', mx + M, midY, 0);
-      chev('out belt', W / 2, down ? my + M : my, down ? 90 : 270);
-      if (three) {
-        const ey0 = down ? CH + 2 : my + M, ey1 = down ? my : H - CH - 2;
-        wire('out belt v', W / 2 - 2, ey0, 4, ey1 - ey0);
-        chev('out belt', W / 2, down ? my : my + M, down ? 270 : 90);
+      if (!b || !b.node) { close(); return; }
+      const tri = b.node === 'tri';
+      const sides = f.nodeSides(b);
+      const outs = f.nodeOutputs(b);
+      const nIn = [0, 1, 2, 3].filter((d) => sides[d] === 'in').length;
+      if (this.nodeSel === null) this.nodeSel = outs.find((o) => o.d !== b.dir)?.d ?? b.dir;
+      const sel = this.nodeSel;
+      const below = b.z ? 'dessous' : 'dessus';
+      const NAME = ['Droite →', '↓ Bas', '← Gauche', '↑ Haut', b.z ? '⤓ Dessous' : '⤒ Dessus'];
+      const OF = ['de droite', 'du bas', 'de gauche', 'du haut', `du ${below}`];
+      const rules = b.rules ?? {};
+      const restOuts = outs.filter((o) => !rules[o.d]?.length);
+      sheet.classList.add('node-sheet');
+      sheet.append(this.sheetHead(tri ? 'Filtre' : 'Séparateur',
+        `${b.z ? '2ᵉ étage' : '1ᵉʳ étage'} · ${nIn} entrée${nIn > 1 ? 's' : ''}, ${outs.length} sortie${outs.length > 1 ? 's' : ''} sur 4`, close));
+      // Séparateur ou filtre.
+      const kinds = h('div', 'mtabs ns-kind');
+      for (const [k, label] of [['sep', 'Séparateur'], ['tri', 'Filtre']] as const) {
+        const locked = k === 'tri' && !g.isUnlocked('tri');
+        const bt = h('button', `mtab${b.node === k ? ' on' : ''}${locked ? ' locked' : ''}`, `${label}${locked ? ICONS.lock : ''}`);
+        bt.onclick = () => { if (b.node !== k && g.placeNode(b, k)) this.refreshSheet(); };
+        kinds.append(bt);
       }
-      // Les cartes
-      const icons = seen.slice(0, 3).map((t) => `<img src="${this.itemIcons.get(t)}" alt="">`).join('');
-      const cIn = h('div', 'mchip in belt', `<span class="mc-name">${icons || ''}<span class="mc-t">${seen.length === 1 ? esc(item(seen[0]).name) : seen.length ? `${seen.length} sortes` : 'Rien encore'}</span></span><span class="mc-rate"><small>arrive</small></span>`);
-      place(cIn, 0, midY - CH / 2);
-      const frac = three ? '⅓' : '½', each = three ? 'un sur trois' : 'un sur deux';
-      const straight = sorted ? 'Tout le reste' : each;
-      const cStraight = h('div', 'mchip out belt', `<span class="mc-name"><span class="mc-t">Tout droit</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${straight.toLowerCase()}</small></span>`);
-      place(cStraight, W - CW, midY - CH / 2);
-      const cSide = h('div', `mchip out belt${b.filter ? ' locked' : ''}`, b.filter
-        ? `<span class="mc-name"><img src="${this.filterInfo(b.filter).icon}" alt=""><span class="mc-t">${esc(this.filterInfo(b.filter).name)}</span></span><span class="mc-rate"><small>${b.filter.startsWith('@') ? 'manquant' : 'seulement'}</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
-        : `<span class="mc-name"><span class="mc-t">Dérivation</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${sorted ? 'rien' : each}</small><small class="mc-tag auto">auto</small></span>`);
-      place(cSide, W / 2 - CW / 2, down ? H - CH - 2 : 2);
-      cSide.onclick = () => {
-        if (!tri) { this.toast('Débloque Tri dans l’arbre (Logistique) pour choisir ce qui part ici', 'info'); return; }
-        const opts: PickOpt[] = [{ id: null, label: 'Un objet sur deux', sub: 'Rien n’est trié', badge: '<span class="plan-auto">Auto</span>', on: !b.filter }];
-        const order = [...new Set([...seen, ...Object.keys(g.factory.stats.made), ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
-        opts.push(...this.destOptions(b.filter));
-        for (const t of order) opts.push({ id: t, label: `Seulement ${item(t).name.toLowerCase()}`, icon: this.itemIcons.get(t), on: b.filter === t, group: seen.includes(t) ? 'Sur ce tapis' : 'Autres objets' });
-        this.openPicker('Dérivation', 'En auto, les objets se partagent entre les sorties. Choisis un objet pour que lui seul parte ici : tout le reste continue tout droit.', opts, (t) => {
-          g.setBeltFilter(b, t);
-          this.refreshSheet();
-        });
+      sheet.append(kinds);
+      // Ce qu'une sortie envoie, en court, sur sa tuile.
+      const what = (d: number): string => {
+        if (!tri) return `<small>${outs.length > 1 ? `1 sur ${outs.length}` : 'tout'}</small>`;
+        const r = rules[d];
+        if (!r?.length) return '<small>le reste</small>';
+        return r.slice(0, 3).map((t) => `<img src="${this.filterInfo(t).icon}" alt="">`).join('') + (r.length > 3 ? `<small>+${r.length - 3}</small>` : '');
       };
-      if (three) {
-        const f2 = b.filter2;
-        const cSide2 = h('div', `mchip out belt${f2 ? ' locked' : ''}`, f2
-          ? `<span class="mc-name"><img src="${this.filterInfo(f2).icon}" alt=""><span class="mc-t">${esc(this.filterInfo(f2).name)}</span></span><span class="mc-rate"><small>${f2.startsWith('@') ? 'manquant' : 'seulement'}</small><small class="mc-tag lock">${FUNNEL}triée</small></span>`
-          : `<span class="mc-name"><span class="mc-t">2ᵉ dérivation</span></span><span class="mc-rate"><b>${sorted ? '' : frac}</b><small>${sorted ? 'rien' : each}</small><small class="mc-tag auto">auto</small></span>`);
-        place(cSide2, W / 2 - CW / 2, down ? 2 : H - CH - 2);
-        cSide2.onclick = () => {
-          if (!tri2) { this.toast('Débloque le Trieur à 2 objets dans l’arbre (Logistique) pour choisir ce qui part ici', 'info'); return; }
-          const opts: PickOpt[] = [{ id: null, label: 'Rien de trié ici', sub: 'Sans tri, un objet sur trois part de chaque côté', badge: '<span class="plan-auto">Auto</span>', on: !f2 }];
+      const tile = (d: number): HTMLElement => {
+        const st = sides[d] ?? 'none';
+        const open = st === 'main' || st === 'out';
+        const col = hexCss(nodeColor(b.dir, d));
+        const body = st === 'in' ? '<b class="ns-in">Entrée</b>' : open ? `<span class="ns-what">${what(d)}</span>`
+          : st === 'off' ? '<small>coupée</small>' : '<small>rien</small>';
+        const el = h('button', `ns-tile ${st}${d === sel ? ' sel' : ''}`, `<span class="ns-name"${open ? ` style="color:${col}"` : ''}>${NAME[d]}</span>${body}`);
+        if (open) el.style.borderColor = col;
+        if (d === sel) el.style.boxShadow = `0 0 0 4px ${open ? col : '#9AAFA4'}40`;
+        el.onclick = () => { this.nodeSel = d; this.refreshSheet(); };
+        return el;
+      };
+      const cross = h('div', 'ns-cross');
+      const center = h('div', 'ns-center', `${tri ? BELT_ICONS.tri : BELT_ICONS.sep}<small>${tri ? 'Filtre' : 'Séparateur'}</small>`);
+      const tag = h('div', 'ns-tag', `<span>${b.z ? '2ᵉ étage' : '1ᵉʳ étage'}</span>`);
+      cross.append(h('div', ''), tile(3), tag, tile(2), center, tile(0), h('div', ''), tile(1), tile(4));
+      sheet.append(cross);
+      // Le réglage du côté choisi.
+      const st = sides[sel] ?? 'none';
+      const open = st === 'main' || st === 'out';
+      const col = open ? hexCss(nodeColor(b.dir, sel)) : '#9AAFA4';
+      const ed = h('div', 'card ns-edit');
+      const next = outs.find((o) => o.d === sel)?.next;
+      const to = !next ? '' : next.kind === 'machine' ? `vers ${esc(machineDef(next.machine.type).name.toLowerCase())}` : (next.belt.z ?? 0) !== (b.z ?? 0) ? `vers le tapis du ${below}` : 'vers un tapis';
+      ed.append(h('div', 'ns-ed-head', `<span class="ns-dot" style="background:${col}"></span><b>${st === 'in' ? 'Entrée' : 'Sortie'} ${OF[sel]}</b>${to ? `<small>${to}</small>` : ''}`));
+      const seg = (opts: [string, boolean, () => void][]) => {
+        const row = h('div', 'mtabs');
+        for (const [label, on, act] of opts) {
+          const bt = h('button', `mtab${on ? ' on' : ''}`, label);
+          bt.onclick = () => { if (!on) act(); };
+          row.append(bt);
+        }
+        ed.append(row);
+      };
+      const hint = (t: string) => ed.append(h('p', 'ns-hint', t));
+      if (st === 'in') hint('Un tapis arrive par ici : ses objets entrent dans la boîte. Une boîte prend autant d’entrées que tu veux.');
+      else if (st === 'none') hint(sel === 4
+        ? `Pas de tapis au ${below} de cette case. Fais-y passer un tapis de l’autre étage : la boîte pourra lui envoyer des objets.`
+        : 'Rien de ce côté. Avec l’outil Tapis, trace un tapis qui part de la boîte (ou colle une machine) : il devient une sortie.');
+      else {
+        if (st === 'main') hint('Tout droit : la sortie principale, toujours ouverte.');
+        else seg([
+          ['Sortie', st === 'out', () => { if (g.setNodeOutput(b, sel, true)) this.refreshSheet(); }],
+          ['Rien', st === 'off', () => { g.setNodeOutput(b, sel, false); this.refreshSheet(); }],
+        ]);
+        if (st === 'off') hint(`Coupée : rien ne part ${sel === 4 ? `au ${below}` : 'par ici'}, même si un tapis part de ce côté.`);
+      }
+      if (open && !tri) hint(outs.length > 1 ? `Chacun son tour : un objet sur ${outs.length} part par ici. Si une sortie est pleine, l’objet prend la suivante.` : 'Tout passe par ici pour l’instant : trace des tapis qui partent de la boîte (jusqu’à 4 sorties) pour partager.');
+      if (open && tri) {
+        const list = rules[sel] ?? [];
+        const add = () => {
+          const count = new Map<string, number>();
+          for (const c of f.chainOf(b)) for (const it of c.items) count.set(it.t, (count.get(it.t) ?? 0) + 1);
+          const seen = [...count.entries()].sort((p, q) => q[1] - p[1]).map(([t]) => t);
           const order = [...new Set([...seen, ...Object.keys(g.factory.stats.made), ...ITEM_LIST.map((x) => x.id)])].filter((id) => !FLUIDS.has(id));
-          opts.push(...this.destOptions(f2));
-          for (const t of order) opts.push({ id: t, label: `Seulement ${item(t).name.toLowerCase()}`, icon: this.itemIcons.get(t), on: f2 === t, group: seen.includes(t) ? 'Sur ce tapis' : 'Autres objets' });
-          this.openPicker('Seconde dérivation', 'Choisis l’objet qui part de ce côté-ci ; tout le reste continue tout droit.', opts, (t) => {
-            g.setBeltFilter(b, t, 2);
+          const opts: PickOpt[] = this.destOptions(undefined).map((o) => ({ ...o, on: list.includes(o.id!) }));
+          for (const t of order) opts.push({ id: t, label: item(t).name, icon: this.itemIcons.get(t), on: list.includes(t), group: seen.includes(t) ? 'Sur ce tapis' : 'Autres objets' });
+          this.openPicker(`Sortie ${OF[sel]}`, 'Ce qui part par ici. Touche encore un objet coché pour l’enlever.', opts, (t) => {
+            if (!t) return;
+            g.setNodeRule(b, sel, list.includes(t) ? list.filter((x) => x !== t) : [...list, t]);
             this.refreshSheet();
           });
         };
+        seg([
+          ['Seulement…', list.length > 0, add],
+          ['Le reste', list.length === 0, () => { g.setNodeRule(b, sel, null); this.refreshSheet(); }],
+        ]);
+        if (list.length) {
+          const chips = h('div', 'ns-chips');
+          for (const t of list) {
+            const info = this.filterInfo(t);
+            const c = h('button', 'ns-chip', `<img src="${info.icon}" alt=""><span>${esc(t.startsWith('@') ? info.name : item(t).name)}</span><i>×</i>`);
+            c.onclick = () => { g.setNodeRule(b, sel, list.filter((x) => x !== t)); this.refreshSheet(); };
+            chips.append(c);
+          }
+          const plus = h('button', 'ns-chip add', '+');
+          plus.setAttribute('aria-label', 'Ajouter un objet');
+          plus.onclick = add;
+          chips.append(plus);
+          ed.append(chips);
+          hint(list.some((t) => t.startsWith('@')) ? 'Une destination : seulement ce qui lui manque encore (sans compter ce qui est déjà en route).' : 'Touche un objet pour l’enlever. Ceux qui ne sont choisis nulle part vont dans « le reste ».');
+        } else {
+          const others = restOuts.filter((o) => o.d !== sel).length;
+          hint(restOuts.length === outs.length
+            ? 'Rien n’est encore trié : tout se partage entre les sorties. Choisis « Seulement… » pour qu’un objet parte par ici.'
+            : `Ce qui n’est choisi par aucune autre sortie part par ici${others ? `, chacun son tour avec ${others} autre${others > 1 ? 's' : ''} sortie${others > 1 ? 's' : ''}` : ''}.`);
+        }
       }
-      box.append(h('p', 'mdiag-hint', tri ? `Touche ${three ? 'une dérivation' : 'la dérivation'} pour choisir ce qui y part.` : `En auto, ${three ? 'un objet sur trois' : 'un objet sur deux'} de chaque côté. Avec Tri (arbre, Logistique), tu choisis ce qui part dans la dérivation.`));
-      sheet.append(box);
+      sheet.append(ed);
       const acts = h('div', 'row');
-      const del = h('button', 'btn danger', `${ICONS.trash}Supprimer le tapis`);
-      del.onclick = () => { g.removeChain(b); close(); };
+      const del = h('button', 'btn danger', `${ICONS.trash}Retirer · ${ICONS.coinSm}${RULES.nodeCost}`);
+      del.onclick = () => { g.removeNode(b); close(); };
       const ok = h('button', 'btn primary', 'Terminé');
       ok.onclick = close;
       acts.append(del, ok);
