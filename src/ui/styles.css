@@ -1219,8 +1219,6 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .level-switch button { width: 42px; height: 40px; border-radius: 13px; background: #F0F5F2; font-size: 15px; font-weight: 900; color: var(--ink2); }
 .level-switch button.on { background: var(--ink); color: #fff; }
 .level-switch.up button.on { box-shadow: 0 3px 0 var(--coral); }
-.level-switch.locked button[data-l="1"] { opacity: .45; }
-.level-switch.locked button[data-l="1"].on { opacity: 1; }
 
 /* ---------- La fenêtre d'une boîte (séparateur, filtre) : la boussole ---------- */
 .node-sheet .ns-kind { margin: 4px 0 12px; }

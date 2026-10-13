@@ -19,7 +19,7 @@ const f = (v: number) => v.toFixed(1);
 const SHORT: Record<string, string> = {
   tapis2: 'Tapis niv. 2', rapide: 'Tapis niv. 3', tapis4: 'Tapis niv. 4', express: 'Tapis niv. 5',
   foreuse2: 'Foreuses niv. 2', foreuse3: 'Foreuses niv. 3', foreuse4: 'Foreuses niv. 4', forage: 'Foreuses niv. 5',
-  machine2: 'Machines niv. 2', machine3: 'Machines niv. 3', ascenseurs: 'Ascenseurs',
+  machine2: 'Machines niv. 2', machine3: 'Machines niv. 3', separateur: 'Tri et étages',
   rampe: 'Rampe', base_robot: 'Base du robot',
 };
 const short = (x: UnlockNode) => SHORT[x.id] ?? x.name.replace(' électrique', '');

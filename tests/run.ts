@@ -370,7 +370,7 @@ test('les objets gardent leurs distances sur le tapis', () => {
 test('séparateur : un tapis tracé depuis le milieu d’un autre partage les objets', () => {
   const g = new Game('TEST-11');
   g.money = 10000;
-  g.lab = { lingot_fer: 20 }; assert(g.unlock('separateur'), 'déblocage du séparateur');
+  g.lab = { lingot_fer: 30 }; assert(g.unlock('separateur'), 'déblocage du séparateur');
   g.world.reveal(-6, 2, 20);
   g.placeMachine('foreuse', -13, -5);
   g.placeBelts(trace(g, [[-12.5, -4.5], [-5.5, -4.5]]).result());
@@ -795,7 +795,7 @@ test('séparateur : 4 sorties, dont l’étage du dessus ; filtre : des objets p
 });
 test('séparateur posé d’un toucher, avec plusieurs entrées ; ascenseur sur un tapis', () => {
   const g = new Game('TEST-S5'); g.money = 1e5; g.world.reveal(0, 9, 20);
-  for (const id of ['separateur', 'pont']) g.unlocks.add(id);
+  g.unlocks.add('pont');
   (g as unknown as { applyUnlocks(): void }).applyUnlocks();
   const a = g.placeMachine('coffre', -7, 9)!, c = g.placeMachine('coffre', 0, 4)!;
   const eS = g.placeMachine('coffre', 5, 9)!, eD = g.placeMachine('coffre', 0, 13)!;
@@ -805,9 +805,14 @@ test('séparateur posé d’un toucher, avec plusieurs entrées ; ascenseur sur 
   for (const b of g.factory.belts.values()) b.built = true;
   g.pending = []; g.factory.markBuilt();
   const sb = g.factory.beltAt(0, 9)!;
+  // Une seule compétence pour tout le menu du tapis : séparateur, filtre et ascenseur.
+  assert(!g.placeNode(sb, 'sep') && !g.liftFrom(g.factory.beltAt(3, 9)!) && !g.levels2, 'à débloquer');
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(g.levels2, 'le 2ᵉ étage vient avec');
   const m0 = g.money;
-  assert(g.placeNode(sb, 'sep') && sb.node === 'sep' && g.money === m0 - RULES.nodeCost, 'séparateur posé');
-  assert(!g.placeNode(sb, 'tri') && sb.node === 'sep', 'filtre : à débloquer');
+  assert(g.placeNode(sb, 'tri') && sb.node === 'tri' && g.money === m0 - RULES.nodeCost, 'filtre posé');
+  assert(g.placeNode(sb, 'sep') && sb.node === 'sep' && g.money === m0 - RULES.nodeCost, 'devenu un séparateur');
   const t = trace(g, [[0.5, 9.5], [0.5, 13.5]]);
   assert(t.splitFrom === sb && g.placeBelts(t.result(), { from: sb, dir: t.splitDir!, jump: t.splitJump }), 'sortie vers le bas');
   for (const b of g.factory.belts.values()) b.built = true;
@@ -819,11 +824,8 @@ test('séparateur posé d’un toucher, avec plusieurs entrées ; ascenseur sur 
   run(g, 60);
   const total = (m: Machine) => Object.values(m.inBuf).reduce((x, n) => x + n, 0);
   assert(total(eS) === 10 && total(eD) === 10 && (eS.inBuf.fer ?? 0) > 0 && (eS.inBuf.cuivre ?? 0) > 0, `partagé : ${JSON.stringify(eS.inBuf)} ${JSON.stringify(eD.inBuf)}`);
-  // Ascenseur : sans le déblocage, refusé ; avec, la fin de la sortie du bas passe au 2ᵉ étage.
+  // Ascenseur : la fin de la sortie du bas passe au 2ᵉ étage.
   const lb = g.factory.beltAt(0, 11)!;
-  assert(!g.liftFrom(lb), 'ascenseurs : à débloquer');
-  g.unlocks.add('ascenseurs');
-  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
   assert(g.liftFrom(lb) && g.factory.beltAt(0, 11, 1) === lb && !!g.factory.beltAt(0, 12, 1) && !g.factory.beltAt(0, 11), 'la suite passe en haut');
   assert(g.factory.liftOf(g.factory.beltAt(0, 10)!).to === lb, 'un ascenseur');
   assert(!g.liftFrom(sb), 'pas sur une boîte');
@@ -1876,6 +1878,11 @@ test('arbre : effets appliqués et gardés dans la sauvegarde', () => {
   const s = JSON.parse(JSON.stringify(g.serialize()));
   const g2 = new Game(s.seed, s);
   assert(g2.hasMachine('presse') && g2.beltMaxLevel === 3 && g2.palier === 2, 'sauvegarde de l’arbre');
+  // Une ancienne partie avec le Filtre (ou les Ascenseurs) a le déblocage unique Séparateur, filtre et ascenseur.
+  const s3 = JSON.parse(JSON.stringify(g.serialize()));
+  s3.unlocks = (s3.unlocks as string[]).filter((x) => x !== 'separateur').concat('tri');
+  const g3 = new Game(s3.seed, s3);
+  assert(g3.unlocks.has('separateur') && !g3.unlocks.has('tri') && g3.levels2, 'Filtre repris dans le Séparateur');
   assert(JSON.stringify(g2.lab) === JSON.stringify(g.lab), 'labo');
 });
 test('une sauvegarde d’avant les paliers garde ses déblocages et repart au palier 1', () => {

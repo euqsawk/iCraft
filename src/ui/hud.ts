@@ -653,14 +653,10 @@ export class Hud implements GestureHandlers {
   /** Le bouton d'étage : pendant un tracé, l'étage du tapis ; sinon, 1 pâlit l'étage 2, 2 montre les deux. */
   private pressLevel(l: 0 | 1): void {
     if (this.tracer) {
-      if (l && !this.game.levels2) { this.toast('Ascenseurs : à débloquer dans l’arbre (Logistique, comme les ponts)', 'info'); return; }
+      if (l && !this.game.levels2) { this.toast('Ascenseur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)', 'info'); return; }
       this.tracer.setLevel(l);
       if (this.dragAt) this.toolMove(this.dragAt.x, this.dragAt.y);
       this.updateLevelBtn();
-      return;
-    }
-    if (!this.game.levels2 && ![...this.game.view.belts.values()].some((x) => x.z)) {
-      this.toast('Le 2ᵉ étage des tapis : débloque les Ascenseurs dans l’arbre (Logistique, comme les ponts)', 'info');
       return;
     }
     const faded = l === 0;
@@ -675,9 +671,13 @@ export class Hud implements GestureHandlers {
   private updateLevelBtn(): void {
     const b = this.levelBtn;
     if (!b) return;
-    // Toujours là ; sans les ascenseurs, le 2 dit qu'il faut les débloquer.
-    b.classList.remove('hidden');
-    b.classList.toggle('locked', !this.game.levels2);
+    // Seulement une fois débloqué (ou s'il y a déjà un tapis en hauteur).
+    const show = this.game.levels2 || [...this.game.view.belts.values()].some((x) => x.z);
+    b.classList.toggle('hidden', !show);
+    if (!show) {
+      if (this.upperFaded) { this.upperFaded = false; this.r.setUpperFaded(false); }
+      return;
+    }
     const t = this.tracer;
     const l = t ? t.level : this.upperFaded ? 0 : 1;
     b.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.classList.toggle('on', x.dataset.l === String(l)));
@@ -694,9 +694,9 @@ export class Hud implements GestureHandlers {
       const mode = (m: typeof this.beltMode) => () => { this.beltMode = m; this.renderToolOpts(); this.beltModeHint(); };
       opts = [
         { label: 'Tapis', icon: ICONS.tapis, on: this.beltMode === 'tapis', locked: false, pick: mode('tapis'), why: '' },
-        { label: 'Séparateur', icon: BELT_ICONS.sep, on: this.beltMode === 'sep', locked: !g.isUnlocked('separateur'), pick: mode('sep'), why: 'Séparateur : à débloquer dans l’arbre (Logistique)' },
-        { label: 'Filtre', icon: BELT_ICONS.tri, on: this.beltMode === 'tri', locked: !g.isUnlocked('tri'), pick: mode('tri'), why: 'Filtre : à débloquer dans l’arbre (Logistique)' },
-        { label: 'Ascenseur', icon: BELT_ICONS.lift, on: this.beltMode === 'lift', locked: !g.levels2, pick: mode('lift'), why: 'Ascenseurs : à débloquer dans l’arbre (Logistique, comme les ponts)' },
+        { label: 'Séparateur', icon: BELT_ICONS.sep, on: this.beltMode === 'sep', locked: !g.isUnlocked('separateur'), pick: mode('sep'), why: 'Séparateur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)' },
+        { label: 'Filtre', icon: BELT_ICONS.tri, on: this.beltMode === 'tri', locked: !g.isUnlocked('separateur'), pick: mode('tri'), why: 'Filtre : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)' },
+        { label: 'Ascenseur', icon: BELT_ICONS.lift, on: this.beltMode === 'lift', locked: !g.levels2, pick: mode('lift'), why: 'Ascenseur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)' },
       ];
       if (opts.slice(1).every((o) => o.locked)) opts = [];
     }
@@ -1330,7 +1330,7 @@ export class Hud implements GestureHandlers {
       const fedText = fed.length
         ? `<p>Ce tapis nourrit ${fed.map((x) => esc(machineDef(x.type).name.toLowerCase())).join(' et ')} par le côté, et continue tout droit : chacun son tour.${fed.length < 3 ? ' Il peut aussi nourrir une machine collée de l’autre côté : pars de cette case vers elle.' : ''}</p>` : '';
       const linkInfo = `${feeders.map((m) => `<p>${esc(machineDef(m.type).name)} y dépose sa production par le côté.</p>`).join('')}${fedText}`;
-      const sortBtn = fed.length && this.game.isUnlocked('tri') ? `<div class="row"><button class="btn" data-act="sort">${FUNNEL}Régler comme un filtre</button></div>` : '';
+      const sortBtn = fed.length && this.game.isUnlocked('separateur') ? `<div class="row"><button class="btn" data-act="sort">${FUNNEL}Régler comme un filtre</button></div>` : '';
       const upBtn = !bup ? '' : bup.locked
         ? `<div class="row"><button class="btn" data-act="lvl">${ICONS.lock}Tapis niveau ${bup.to} : à débloquer (Niveaux)</button></div>`
         : `<div class="row"><button class="btn primary" data-act="lvl"${this.game.money < bup.price ? ' disabled' : ''}>Niveau ${bup.to} · ${bup.cells.length} case${bup.cells.length > 1 ? 's' : ''} · ${ICONS.coinSm}${fmt(bup.price)}</button></div>`;
@@ -2628,7 +2628,7 @@ export class Hud implements GestureHandlers {
       // Séparateur ou filtre.
       const kinds = h('div', 'mtabs ns-kind');
       for (const [k, label] of [['sep', 'Séparateur'], ['tri', 'Filtre']] as const) {
-        const locked = k === 'tri' && !g.isUnlocked('tri');
+        const locked = !g.isUnlocked('separateur');
         const bt = h('button', `mtab${b.node === k ? ' on' : ''}${locked ? ' locked' : ''}`, `${label}${locked ? ICONS.lock : ''}`);
         bt.onclick = () => { if (b.node !== k && g.placeNode(b, k)) this.refreshSheet(); };
         kinds.append(bt);

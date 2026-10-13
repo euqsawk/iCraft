@@ -901,7 +901,7 @@ export class Game {
       if (e?.kind === 'copyRate') copy = Math.min(copy, e.rate);
       if (e?.kind === 'atelierSize') size = Math.max(size, e.size);
       if (e?.kind === 'nesting') nest = true;
-      if (e?.kind === 'levels') this.levels2 = true;
+      if (e?.kind === 'levels' || e?.kind === 'splitter') this.levels2 = true;
     }
     this.copyRate = copy;
     this.nesting = nest;
@@ -1497,10 +1497,6 @@ export class Game {
       this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
     }
-    if (kind === 'tri' && !this.isUnlocked('tri')) {
-      this.emit({ type: 'toast', text: 'Filtre : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
-      return false;
-    }
     if (b.jump) {
       this.emit({ type: 'toast', text: 'Pas sur un pont', tone: 'warn' });
       return false;
@@ -1547,7 +1543,7 @@ export class Game {
   liftFrom(b: Belt): boolean {
     const f = this.view;
     const warn = (text: string) => { this.emit({ type: 'toast', text, tone: 'warn' }); return false; };
-    if (!this.levels2) return warn('Ascenseurs : à débloquer dans l’arbre (Logistique)');
+    if (!this.levels2) return warn('Ascenseurs : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)');
     if (b.jump) return warn('Pas d’ascenseur sur un pont');
     if (b.node) return warn('Pas d’ascenseur sur un séparateur ou un filtre');
     const z: 0 | 1 = b.z ? 0 : 1;
@@ -2020,6 +2016,8 @@ export class Game {
       for (const x of ALL_NODES) if (this.unlocks.has(x.id)) for (const pa of x.parents) if (!this.unlocks.has(pa) && NODE[pa]) { this.unlocks.add(pa); changed = true; }
     }
     // Les déblocages retirés du jeu (tapis souterrains) disparaissent de la partie.
+    // Filtre et Ascenseurs sont maintenant dans le Séparateur.
+    if (this.unlocks.has('tri') || this.unlocks.has('ascenseurs') || this.unlocks.has('separateur2') || this.unlocks.has('tri2')) this.unlocks.add('separateur');
     for (const id of [...this.unlocks]) if (!NODE[id]) this.unlocks.delete(id);
     this.applyUnlocks();
     // Partie d'avant les niveaux de tapis : la vitesse débloquée pour tous devient le niveau de chaque tapis.
