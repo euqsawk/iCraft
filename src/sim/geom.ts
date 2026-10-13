@@ -34,5 +34,12 @@ export function key(x: number, y: number): number {
 }
 
 export function unkey(k: number): [number, number] {
+  k %= Z_STEP; // un tapis en hauteur a sa clé décalée (keyZ)
   return [Math.floor(k / 65536) - 32768, (k % 65536) - 32768];
+}
+
+/** Clé d'une case de tapis à un étage : 0 au sol, 1 en hauteur (les deux peuvent se superposer). */
+const Z_STEP = 2 ** 33;
+export function keyZ(x: number, y: number, z: number): number {
+  return key(x, y) + (z ? Z_STEP : 0);
 }

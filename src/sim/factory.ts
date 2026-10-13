@@ -3,7 +3,7 @@ import { RULES } from '../config.ts';
 import { isStationType, rotDims, stationGeo, type Rot } from './stations.ts';
 import { computeCrossings, computeLine, computeTunnels, laneCells, makeLeg, routeSig, type CrossMember, type Crossing, type LaneMap, type LineRoute, type RouteWorld } from './routes.ts';
 import { acceptedInputs, baseType, MACHINES, machineDef, type MachineDef, type Recipe } from '../data/machines.ts';
-import { DX, DY, key, opposite, unkey, type Dir } from './geom.ts';
+import { DX, DY, key, keyZ, opposite, unkey, type Dir } from './geom.ts';
 import { RICHNESS_RATE, type World } from '../world/world.ts';
 import { isFuel } from '../data/items.ts';
 import { addTo, burnOne, moveFuel, takeOf } from './fuel.ts';
@@ -22,6 +22,8 @@ export interface BeltItem {
 export interface Belt {
   x: number;
   y: number;
+  /** En hauteur (étage 2) : passe au-dessus des tapis du sol ; un ascenseur le relie au sol à ses bouts. */
+  z?: 1;
   /** Sens de sortie. */
   dir: Dir;
   /** Sens d'entrée (d'où viennent les objets). */
@@ -348,8 +350,22 @@ export class Factory {
 
   // ---------- Consultation ----------
 
-  beltAt(x: number, y: number): Belt | undefined {
-    return this.belts.get(key(x, y));
+  beltAt(x: number, y: number, z = 0): Belt | undefined {
+    return this.belts.get(keyZ(x, y, z));
+  }
+
+  /** La clé d'une case de tapis (avec son étage). */
+  beltKey(b: Belt): number {
+    return keyZ(b.x, b.y, b.z ?? 0);
+  }
+
+  /**
+   * Ascenseur : le tapis de l'autre étage qui continue celui-ci dans la case suivante (même sens),
+   * quand rien ne le continue à son propre étage.
+   */
+  private liftAt(b: Belt, nx: number, ny: number, dir: Dir): Belt | null {
+    const o = this.beltAt(nx, ny, b.z ? 0 : 1);
+    return o && o.inDir === dir && !o.jump ? o : null;
   }
 
   machineAt(x: number, y: number): Machine | undefined {
@@ -493,9 +509,13 @@ export class Factory {
   /** La case de tapis qui nourrit celle-ci par l'arrière (voisine, ou un pont qui atterrit ici). */
   feederOf(b: Belt): Belt | null {
     for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
-      const f = this.beltAt(b.x - DX[b.inDir] * k, b.y - DY[b.inDir] * k);
+      const f = this.beltAt(b.x - DX[b.inDir] * k, b.y - DY[b.inDir] * k, b.z ?? 0);
       if (f && f.x + DX[f.dir] * span(f) === b.x && f.y + DY[f.dir] * span(f) === b.y) return f;
     }
+    // Par un ascenseur : le tapis de l'autre étage juste derrière, qui n'a rien à son étage devant lui.
+    const px = b.x - DX[b.inDir], py = b.y - DY[b.inDir];
+    const o = this.beltAt(px, py, b.z ? 0 : 1);
+    if (o && o.dir === b.inDir && !o.jump && !this.beltAt(b.x, b.y, o.z ?? 0)) return o;
     return null;
   }
 
@@ -518,8 +538,10 @@ export class Factory {
     // Aval
     cur = b;
     while (cur) {
-      const L = span(cur);
-      const n = this.beltAt(cur.x + DX[cur.dir] * L, cur.y + DY[cur.dir] * L);
+      const c: Belt = cur;
+      const L = span(c);
+      const nx: number = c.x + DX[c.dir] * L, ny: number = c.y + DY[c.dir] * L;
+      const n: Belt | undefined = this.beltAt(nx, ny, c.z ?? 0) ?? this.liftAt(c, nx, ny, c.dir) ?? undefined;
       if (!n || seen.has(n)) break;
       if (n.inDir !== cur.dir) break; // chargement par le côté : autre chaîne
       out.push(n); seen.add(n); cur = n;
@@ -551,6 +573,7 @@ export class Factory {
         if (m && m !== ignore) return { ok: false, reason: 'Place occupée' };
         const q = this.quays.get(k);
         if (q && q !== ignore) return { ok: false, reason: 'Le quai d’une gare doit rester libre' };
+        if (this.belts.has(keyZ(cx, cy, 1))) return { ok: false, reason: 'Un tapis passe au-dessus' };
         if (this.belts.has(k)) {
           if (!overBelts) return { ok: false, reason: 'Place occupée' };
           belts++;
@@ -658,9 +681,9 @@ export class Factory {
     this.dirty = true;
   }
 
-  addBelt(x: number, y: number, dir: Dir, inDir: Dir, built = false): Belt {
-    const b: Belt = { x, y, dir, inDir, built, items: [] };
-    this.belts.set(key(x, y), b);
+  addBelt(x: number, y: number, dir: Dir, inDir: Dir, built = false, z = 0): Belt {
+    const b: Belt = { x, y, dir, inDir, built, items: [], ...(z ? { z: 1 as const } : {}) };
+    this.belts.set(keyZ(x, y, z), b);
     this.dirty = true;
     return b;
   }
@@ -690,7 +713,7 @@ export class Factory {
   }
 
   removeBelt(b: Belt): void {
-    this.belts.delete(key(b.x, b.y));
+    this.belts.delete(this.beltKey(b));
     // Un séparateur dont on retire la dérivation redevient un tapis simple.
     for (let d = 0; d < 4; d++) {
       for (let k = 1; k <= RULES.bridgeSpan + 1; k++) {
@@ -1369,7 +1392,8 @@ export class Factory {
     // Un pont atterrit plus loin, tout droit.
     const L = dir === b.dir ? span(b) : dir === b.split ? 1 + (b.splitJump ?? 0) : 1;
     const nx = b.x + DX[dir] * L, ny = b.y + DY[dir] * L;
-    const nb = this.beltAt(nx, ny);
+    // Un tapis en hauteur ne voit que les tapis en hauteur ; à son bout, un ascenseur le relie au sol (et inversement).
+    const nb = this.beltAt(nx, ny, b.z ?? 0) ?? (dir === b.dir ? this.liftAt(b, nx, ny, dir) : null);
     if (nb) {
       // Deux tapis face à face ne se relient pas.
       if (nb.x + DX[nb.dir] * span(nb) === b.x && nb.y + DY[nb.dir] * span(nb) === b.y) return null;
