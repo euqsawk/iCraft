@@ -182,8 +182,6 @@ export const RULES = {
   robotBeltTime: 0.3,
   robotMachineTime: 1.6,
   /** Production hors ligne : 10 % de la vitesse, sur 8 h au plus. */
-  offlineRate: 0.1,
-  offlineMaxSeconds: 8 * 3600,
   /** Stock maximum par objet au Laboratoire. */
   labCap: 500,
   /** Revente : un passage du gros drone toutes les 5 min, 0,2 pièce par point de valeur, 400 objets au plus. */

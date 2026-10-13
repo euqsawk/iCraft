@@ -6,7 +6,7 @@ import { BUILDABLE, MACHINES, machineDef, type MachineDef } from '../data/machin
 import type { Gestures, GestureHandlers } from '../input/gestures.ts';
 import type { GameRenderer } from '../render/renderer.ts';
 import { Factory, ROCKET_NEEDS, stopRules, type Belt, type StopRule, type Line, type Machine } from '../sim/factory.ts';
-import { Game, type GameEvent, type OfflineReport } from '../sim/game.ts';
+import { Game, type GameEvent } from '../sim/game.ts';
 import { nodeForMachine } from '../data/unlocks.ts';
 import { RARITY_LABEL, type Order } from '../sim/orders.ts';
 import { CableTracer } from '../sim/cables.ts';
@@ -86,6 +86,7 @@ const GIFT_TEXT: Record<string, { title: string; lines: string[]; open: string }
 interface PickOpt { id: string | null; label: string; sub?: string; icon?: string; badge?: string; on?: boolean; group?: string; danger?: boolean }
 
 /** Petit entonnoir : un séparateur qui trie. */
+const PAUSE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6" fill="currentColor"/></svg>';
 /** Le menu du tapis : séparateur, filtre, ascenseur. */
 const BI = (p: string) => `<svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 const BELT_ICONS = {
@@ -110,6 +111,8 @@ export interface HudCallbacks {
   toTitle(): void;
   /** Avant une mise à jour : sauvegarde, et reprendre cette partie au rechargement. */
   beforeReload(): Promise<void>;
+  /** Le jeu se met en pause : on sauvegarde. */
+  onPause(): void;
 }
 
 
@@ -238,7 +241,11 @@ export class Hud implements GestureHandlers {
     const menu = h('button', 'round', ICONS.menu);
     menu.setAttribute('aria-label', 'Menu');
     menu.onclick = () => this.openMenu();
-    right.append(this.money, menu);
+    // Pause, à côté de l'argent.
+    const pause = h('button', 'round pause-btn', PAUSE_ICON);
+    pause.setAttribute('aria-label', 'Pause');
+    pause.onclick = () => this.setPaused(true);
+    right.append(this.money, pause, menu);
     top.append(lvl, right);
 
     const row = h('div', 'order-row');
@@ -3416,27 +3423,38 @@ export class Hud implements GestureHandlers {
     }).catch(() => { close(); this.toast('Export impossible sur ce navigateur', 'warn'); });
   }
 
-  /** Écran de retour : ce que l'usine a produit pendant l'absence. */
-  showAway(r: OfflineReport): void {
-    const dur = (sec: number) => {
-      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
-      return h ? `${h} h${m ? ` ${String(m).padStart(2, '0')}` : ''}` : `${Math.max(1, m)} min`;
-    };
-    const gained = Object.entries(r.gained).sort((a, b) => item(b[0]).tier - item(a[0]).tier || b[1] - a[1]);
-    const capped = r.away > r.counted + 60;
-    this.closeSheet();
-    this.root.querySelector('.celebrate')?.remove();
-    const box = h('div', 'celebrate away');
-    const list = gained.length
-      ? `<div class="chips gained">${gained.map(([id, n]) => `<span class="chip"><img src="${this.itemIcons.get(id)}" alt="">+${fmt(n)} ${esc(n > 1 ? item(id).plural : item(id).name.toLowerCase())}</span>`).join('')}</div>`
-      : '<p>Rien n’a été livré. Relie une chaîne au Noyau, au Laboratoire ou au Comptoir pour qu’elle travaille pendant ton absence.</p>';
-    box.innerHTML = `<h2>Pendant ton absence</h2><p>${dur(r.away)}${capped ? ` · ${dur(r.counted)} comptées` : ''}</p>${gained.length ? '<p>Livré par tes tapis :</p>' : ''}${list}
-      <p class="muted-small">Quand le jeu est fermé, l’usine tourne au ralenti (10 %, ${RULES.offlineMaxSeconds / 3600} h au plus).</p>`;
-    const btn = h('button', 'btn primary', 'Reprendre');
-    btn.style.width = '100%';
-    btn.onclick = () => box.remove();
-    box.append(btn);
-    this.root.append(box);
+  // ---------- Pause ----------
+
+  /** En pause : le jeu ne tourne plus (rien ne se passe non plus quand le jeu est fermé). */
+  paused = false;
+  private pauseEl: HTMLElement | null = null;
+
+  /**
+   * Pause : une grosse bordure qui clignote et une grande icône au milieu. Toucher n'importe où relance.
+   * (Aussi d'office quand on quitte la fenêtre.)
+   */
+  setPaused(on: boolean): void {
+    if (on === this.paused) return;
+    this.paused = on;
+    if (on) {
+      this.cancelGestures();
+      const el = h('div', 'pause-screen', `<div class="pause-mid"><span class="pause-ico">${PAUSE_ICON}</span><b>Pause</b><small>Touche n’importe où pour reprendre</small></div>`);
+      // Le toucher qui relance ne doit rien faire d'autre (ni sur la carte, ni sur un bouton).
+      const resume = (e: Event) => { e.preventDefault(); e.stopPropagation(); this.setPaused(false); };
+      el.addEventListener('pointerdown', resume);
+      el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+      document.body.append(el);
+      this.pauseEl = el;
+      this.cb.onPause();
+    } else {
+      this.pauseEl?.remove();
+      this.pauseEl = null;
+    }
+  }
+
+  /** Un tracé ou un glisser en cours est abandonné (la pause arrive au milieu). */
+  private cancelGestures(): void {
+    if (this.dragAt || this.tracer || this.cableTracer) this.toolEnd(true);
   }
 
   toast(text: string, tone: 'info' | 'warn' | 'good' = 'info'): void {

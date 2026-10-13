@@ -72,7 +72,7 @@ async function boot(): Promise<void> {
 
   await waitForFont();
   (window as unknown as { __gameStarted?: boolean }).__gameStarted = true;
-  const { game, slot, fresh, savedAt } = await chooseGame(loading);
+  const { game, slot, fresh } = await chooseGame(loading);
   loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Démarrage du rendu…</small>';
   await setLastSlot(slot);
 
@@ -102,6 +102,7 @@ async function boot(): Promise<void> {
       await save();
       try { sessionStorage.setItem(RESUME, String(slot)); } catch { /* rien */ }
     },
+    onPause() { save(); },
   });
   new Gestures(app.canvas, renderer.camera, hud);
 
@@ -109,6 +110,8 @@ async function boot(): Promise<void> {
   app.ticker.add((ticker) => {
     frames++;
     const dt = Math.min(ticker.deltaMS / 1000, 0.25);
+    // En pause, plus rien ne bouge (la carte reste dessinée).
+    if (hud.paused) { renderer.render(0); hud.update(0); return; }
     acc += dt;
     let steps = 0;
     while (acc >= STEP && steps < 12) { game.tick(STEP); acc -= STEP; steps++; }
@@ -119,12 +122,7 @@ async function boot(): Promise<void> {
     if (saveTimer > RULES.autosaveSeconds) { saveTimer = 0; save(); }
   });
 
-  // Absence : l'usine a tourné au ralenti, on montre ce qu'elle a produit.
-  let hiddenAt = 0;
-  const comeBack = (awayMs: number) => {
-    const report = game.catchUp(awayMs);
-    if (report) { hud.showAway(report); save(); }
-  };
+  // Quand le jeu n'est pas à l'écran, il ne se passe rien : on quitte la fenêtre, le jeu se met en pause.
   // Écran noir au retour : iOS a pu reprendre le contexte graphique pendant l'absence.
   // On sauvegarde et on relance directement la partie (sans passer par le menu).
   let reloading = false;
@@ -141,14 +139,14 @@ async function boot(): Promise<void> {
   app.canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); contextLost = true; save(); });
   app.canvas.addEventListener('webglcontextrestored', () => { relaunch(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { hiddenAt = Date.now(); save(); return; }
+    if (document.hidden) { hud.setPaused(true); save(); return; }
     if (contextLost || gl?.isContextLost?.()) { relaunch(); return; }
-    if (hiddenAt) { comeBack(Date.now() - hiddenAt); hiddenAt = 0; }
     // Si plus aucune image n'est dessinée après le retour, on relance aussi.
     const f0 = frames;
     setTimeout(() => { if (!document.hidden && frames === f0) relaunch(); }, 2500);
   });
   window.addEventListener('pagehide', () => { save(); });
+  window.addEventListener('blur', () => { if (!leaving) hud.setPaused(true); });
   loading.remove();
   requestPersistence();
 
@@ -164,7 +162,6 @@ async function boot(): Promise<void> {
     await save();
   } else {
     hud.tips.start();
-    comeBack(Date.now() - savedAt);
   }
 }
 

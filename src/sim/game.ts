@@ -57,15 +57,6 @@ export type GameEvent =
   | { type: 'achievement'; id: string }
   | { type: 'look' };
 
-/** Ce qui s'est passé pendant l'absence du joueur. */
-export interface OfflineReport {
-  /** Durée réelle de l'absence, en secondes. */
-  away: number;
-  /** Durée prise en compte (plafonnée). */
-  counted: number;
-  gained: Record<string, number>;
-}
-
 /** Conseils de début de partie : ceux déjà vus, et s'ils sont coupés pour cette partie. */
 export interface TipState { done: string[]; off: boolean }
 
@@ -411,7 +402,6 @@ export class Game {
   /** Pièces gagnées au total (les remboursements ne comptent pas). */
   earned = 0;
   /** Pendant le calcul de la production hors ligne : objets livrés, par type. */
-  private offlineGains: Record<string, number> | null = null;
   private listeners: ((e: GameEvent) => void)[] = [];
   private lastRobotCell = '';
   readonly noyau: Machine;
@@ -533,12 +523,11 @@ export class Game {
   receive(m: Machine, item: string, n: number): number {
     const k = Math.min(n, this.accepts(m, item));
     if (k <= 0) return 0;
-    if (this.offlineGains) this.offlineGains[item] = (this.offlineGains[item] ?? 0) + k;
     this.delivered += k;
     if (m.type === 'noyau') {
       this.palierDone[item] = (this.palierDone[item] ?? 0) + k;
       this.emit({ type: 'order' });
-      if (!this.offlineGains) this.checkPalier();
+      this.checkPalier();
     } else if (m.type === 'laboratoire') {
       this.lab[item] = (this.lab[item] ?? 0) + k;
       this.emit({ type: 'lab' });
@@ -552,7 +541,7 @@ export class Game {
         l.done += add;
       }
       this.emit({ type: 'order' });
-      if (!this.offlineGains && this.order && orderComplete(this.order)) this.completeOrder();
+      if (this.order && orderComplete(this.order)) this.completeOrder();
     }
     this.emit({ type: 'deliver', item, at: m.type });
     return k;
@@ -919,36 +908,6 @@ export class Game {
     this.factory.speedMult = speed;
     this.factory.chestSlots = slots;
     this.factory.setElectric([...this.unlocks].flatMap((id) => { const e = NODE[id]?.effect; return e?.kind === 'electric' ? [e.id] : []; }));
-  }
-
-  // ---------- Absence ----------
-
-  /**
-   * L'usine a continué de tourner pendant l'absence, au ralenti (10 %) et sur 8 h au plus.
-   * On rejoue la simulation de l'usine en accéléré. Les livraisons comptent, mais les paliers
-   * et les commandes ne se valident qu'au retour.
-   */
-  catchUp(awayMs: number, budgetMs = 2500): OfflineReport | null {
-    const away = awayMs / 1000;
-    if (!(away >= 60)) return null;
-    const counted = Math.min(away, RULES.offlineMaxSeconds);
-    const target = counted * RULES.offlineRate;
-    const step = 0.2;
-    const start = Date.now();
-    const gained: Record<string, number> = {};
-    this.offlineGains = gained;
-    try {
-      for (let t = 0; t < target; t += step) {
-        this.factory.tick(step);
-        if (Date.now() - start > budgetMs) break;
-      }
-    } finally {
-      this.offlineGains = null;
-    }
-    this.checkPalier();
-    if (this.order && orderComplete(this.order)) this.completeOrder();
-    this.emit({ type: 'order' });
-    return { away, counted, gained };
   }
 
   // ---------- Construction ----------

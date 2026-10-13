@@ -399,22 +399,6 @@ test('séparateur : à débloquer dans l’arbre', () => {
   const t = trace(g, [[-4.5, -8.5], [-4.5, -6.5]]);
   assert(!g.placeBelts(t.result(), { from: t.splitFrom!, dir: t.splitDir! }), 'devrait être refusé sans le déblocage');
 });
-test('absence : 10 % de production, 8 h au plus, livrée au Noyau', () => {
-  const g = new Game('TEST-13');
-  buildIronLine(g);
-  run(g, 150);
-  // Une usine qui tourne seule : on donne aux machines du charbon pour toute l'absence.
-  for (const m of g.factory.machines.values()) if (m.built) { m.fuel = 10; m.burn = 1e6; }
-  run(g, 50);
-  const before = g.palierDone.lingot_fer ?? 0;
-  const r = g.catchUp(24 * 3600 * 1000, 20000)!;
-  assert(r.counted === 8 * 3600, `durée comptée ${r.counted}`);
-  const got = r.gained.lingot_fer ?? 0;
-  assert(got > 50, `lingots livrés : ${got}`);
-  assert(g.palier === 2 || (g.palierDone.lingot_fer ?? 0) === before + got, 'livraisons incohérentes');
-  assert((g.palierDone.lingot_fer ?? 0) <= 150, 'le Noyau a pris plus que sa mission');
-  assert(g.catchUp(30 * 1000) === null, 'une absence de 30 s ne compte pas');
-});
 test('supprimer rembourse', () => {
   const g = new Game('TEST-9');
   const m0 = g.money;
