@@ -175,6 +175,8 @@ export class Hud implements GestureHandlers {
   private beltMode: 'tapis' | 'sep' | 'tri' | 'lift' = 'tapis';
   /** Fenêtre d'une boîte : le côté choisi (0–3, 4 : l'autre étage). */
   private nodeSel: number | null = null;
+  /** Où le doigt s'est posé avec un outil (pour reconnaître un simple toucher). */
+  private downAt: { x: number; y: number; moved: boolean } | null = null;
   private bubble!: HTMLElement;
   private popover!: HTMLElement;
   private toasts!: HTMLElement;
@@ -749,7 +751,7 @@ export class Hud implements GestureHandlers {
 
   /** Ce que fait le mode choisi dans le menu du tapis. */
   private beltModeHint(): void {
-    const msg = { tapis: '', sep: 'Touche un tapis : un séparateur s’y pose. Trace ensuite des tapis qui en partent (jusqu’à 4 sorties).', tri: 'Touche un tapis : un filtre s’y pose, puis choisis ce qui part par chaque sortie.', lift: 'Touche un tapis : à partir de là, il passe à l’autre étage.' }[this.beltMode];
+    const msg = { tapis: '', sep: 'Touche un tapis : un séparateur s’y pose. Puis glisse depuis lui pour tracer ses sorties (jusqu’à 4).', tri: 'Touche un tapis : un filtre s’y pose. Glisse depuis lui pour tracer ses sorties, touche-le pour choisir ce qui part où.', lift: 'Touche un tapis : à partir de là, il passe à l’autre étage.' }[this.beltMode];
     if (msg) this.toast(msg, 'info');
   }
 
@@ -793,8 +795,6 @@ export class Hud implements GestureHandlers {
 
   toolActive(): boolean {
     // Avec la palette ouverte, la carte se déplace normalement : les machines se posent en glissant leur carte.
-    // Menu du tapis en mode séparateur, filtre ou ascenseur : la carte se déplace, un toucher pose.
-    if (this.tool === 'tapis' && this.beltMode !== 'tapis') return false;
     return this.tool !== 'none' && this.tool !== 'machine' && !this.r.introRunning;
   }
 
@@ -952,6 +952,7 @@ export class Hud implements GestureHandlers {
   toolStart(sx: number, sy: number): void {
     this.closePopover();
     this.dragAt = { x: sx, y: sy };
+    this.downAt = { x: sx, y: sy, moved: false };
     if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'tuyau') this.updateLoupe(sx, sy);
     const w = this.worldAt(sx, sy);
     if (this.tool === 'cable' || this.tool === 'tuyau') {
@@ -1094,6 +1095,7 @@ export class Hud implements GestureHandlers {
   }
 
   toolMove(sx: number, sy: number): void {
+    if (this.downAt && Math.hypot(sx - this.downAt.x, sy - this.downAt.y) > 12) this.downAt.moved = true;
     this.dragAt = { x: sx, y: sy };
     const w = this.worldAt(sx, sy);
     if (this.tool === 'tapis' || this.tool === 'gomme' || this.tool === 'cable' || this.tool === 'tuyau') this.updateLoupe(sx, sy);
@@ -1158,6 +1160,22 @@ export class Hud implements GestureHandlers {
     this.dragAt = null;
     this.bubble.classList.add('hidden');
     const pv = this.r.preview;
+    // Outil Tapis, un simple toucher sur un tapis : poser la boîte (ou l'ascenseur) du menu, ou ouvrir la boîte touchée.
+    const down = this.downAt;
+    this.downAt = null;
+    if (!cancelled && this.tool === 'tapis' && down && !down.moved) {
+      const w = this.worldAt(down.x, down.y);
+      const cx = Math.floor(w.x), cy = Math.floor(w.y), f = this.game.view;
+      const tb = this.upperFaded ? f.beltAt(cx, cy) : f.beltAt(cx, cy, 1) ?? f.beltAt(cx, cy);
+      if (tb && (this.beltMode !== 'tapis' || (tb.node && !f.nodeIsLink(tb)))) {
+        this.tracer = null;
+        this.updateLevelBtn();
+        this.r.preview = null;
+        this.r.loupe = null;
+        if (this.beltMode !== 'tapis') this.beltAction(tb); else this.openNodeSheet(tb);
+        return;
+      }
+    }
     if (!cancelled) {
       if (this.tool === 'cable' && this.cableTracer) {
         this.game.placeCables(this.cableTracer.cells);
@@ -2596,6 +2614,7 @@ export class Hud implements GestureHandlers {
       const outs = f.nodeOutputs(b);
       const nIn = [0, 1, 2, 3].filter((d) => sides[d] === 'in').length;
       if (this.nodeSel === null) this.nodeSel = outs.find((o) => o.d !== b.dir)?.d ?? b.dir;
+      if (this.nodeSel === 4 && !g.levels2 && sides[4] === 'none') this.nodeSel = b.dir;
       const sel = this.nodeSel;
       const below = b.z ? 'dessous' : 'dessus';
       const NAME = ['Droite →', '↓ Bas', '← Gauche', '↑ Haut', b.z ? '⤓ Dessous' : '⤒ Dessus'];
@@ -2636,7 +2655,9 @@ export class Hud implements GestureHandlers {
       const cross = h('div', 'ns-cross');
       const center = h('div', 'ns-center', `${tri ? BELT_ICONS.tri : BELT_ICONS.sep}<small>${tri ? 'Filtre' : 'Séparateur'}</small>`);
       const tag = h('div', 'ns-tag', `<span>${b.z ? '2ᵉ étage' : '1ᵉʳ étage'}</span>`);
-      cross.append(h('div', ''), tile(3), tag, tile(2), center, tile(0), h('div', ''), tile(1), tile(4));
+      // L'autre étage : seulement avec les ascenseurs (ou s'il y a déjà un tapis là).
+      const vert = g.levels2 || sides[4] !== 'none';
+      cross.append(h('div', ''), tile(3), tag, tile(2), center, tile(0), h('div', ''), tile(1), vert ? tile(4) : h('div', ''));
       sheet.append(cross);
       // Le réglage du côté choisi.
       const st = sides[sel] ?? 'none';
@@ -2659,7 +2680,7 @@ export class Hud implements GestureHandlers {
       if (st === 'in') hint('Un tapis arrive par ici : ses objets entrent dans la boîte. Une boîte prend autant d’entrées que tu veux.');
       else if (st === 'none') hint(sel === 4
         ? `Pas de tapis au ${below} de cette case. Fais-y passer un tapis de l’autre étage : la boîte pourra lui envoyer des objets.`
-        : 'Rien de ce côté. Avec l’outil Tapis, trace un tapis qui part de la boîte (ou colle une machine) : il devient une sortie.');
+        : 'Rien de ce côté. Avec l’outil Tapis, glisse depuis la boîte vers ce côté (ou colle une machine) : ce tapis devient une sortie.');
       else {
         if (st === 'main') hint('Tout droit : la sortie principale, toujours ouverte.');
         else seg([
