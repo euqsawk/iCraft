@@ -1208,19 +1208,19 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .chest-pick small { font-size: 11.5px; font-weight: 700; color: var(--ink2); }
 .chest-pick .btn { flex: none; min-height: 40px; padding: 0 12px; }
 
-/* ---------- Le bouton d'étage (en bas à gauche) : « Étage 2 » ou « Étage 1 seul » ; pendant un tracé, l'étage du tapis ---------- */
-.level-btn {
-  position: absolute; left: 10px; bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px 6px 6px; border-radius: 17px; background: #fff; box-shadow: 0 4px 0 var(--shadow); touch-action: none; text-align: left;
+/* ---------- Le bouton d'étage, en bas à gauche : 1 (le 1ᵉʳ étage seul) ou 2 (les deux) ; pendant un tracé, l'étage du tapis ---------- */
+.level-switch {
+  position: absolute; left: 10px; bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 4px;
+  padding: 5px; border-radius: 18px; background: #fff; box-shadow: 0 4px 0 var(--shadow); touch-action: none;
 }
-.level-btn.raised { bottom: calc(var(--bottom) + 160px); }
-.level-btn .lb-ico { width: 36px; height: 36px; border-radius: 12px; background: #EEF3F0; color: var(--ink); display: flex; align-items: center; justify-content: center; flex: none; }
-.level-btn .lb-ico svg { width: 22px; height: 22px; }
-.level-btn.on .lb-ico { background: var(--ink); color: #fff; }
-.level-btn.tracing .lb-ico { box-shadow: 0 0 0 3px var(--coral); }
-.level-btn .lb-t { display: flex; flex-direction: column; line-height: 1.15; }
-.level-btn .lb-t b { font-size: 13.5px; font-weight: 900; color: var(--ink); }
-.level-btn .lb-t small { font-size: 11px; font-weight: 800; color: var(--ink2); }
+.level-switch.raised { bottom: calc(var(--bottom) + 160px); }
+.level-switch .ls-ico { display: flex; padding: 0 3px 0 5px; color: var(--ink2); }
+.level-switch .ls-ico svg { width: 20px; height: 20px; }
+.level-switch button { width: 42px; height: 40px; border-radius: 13px; background: #F0F5F2; font-size: 15px; font-weight: 900; color: var(--ink2); }
+.level-switch button.on { background: var(--ink); color: #fff; }
+.level-switch.up button.on { box-shadow: 0 3px 0 var(--coral); }
+.level-switch.locked button[data-l="1"] { opacity: .45; }
+.level-switch.locked button[data-l="1"].on { opacity: 1; }
 
 /* ---------- La fenêtre d'une boîte (séparateur, filtre) : la boussole ---------- */
 .node-sheet .ns-kind { margin: 4px 0 12px; }

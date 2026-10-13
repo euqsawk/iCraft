@@ -170,7 +170,7 @@ export class Hud implements GestureHandlers {
    * Pendant un tracé, il fait passer le tapis à l'autre étage (un ascenseur là où il change).
    */
   private upperFaded = false;
-  private levelBtn!: HTMLButtonElement;
+  private levelBtn!: HTMLElement;
   /** Le menu du tapis : tracer, ou poser d'un toucher un séparateur, un filtre, un ascenseur. */
   private beltMode: 'tapis' | 'sep' | 'tri' | 'lift' = 'tapis';
   /** Fenêtre d'une boîte : le côté choisi (0–3, 4 : l'autre étage). */
@@ -292,8 +292,12 @@ export class Hud implements GestureHandlers {
 
     this.toolOpts = h('div', 'tool-opts hidden');
     // Le bouton d'étage : se touche aussi pendant un tracé (avec un autre doigt).
-    this.levelBtn = h('button', 'level-btn hidden') as HTMLButtonElement;
-    this.levelBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.pressLevel(); });
+    // 1 : seulement le 1ᵉʳ étage (le haut pâlit) ; 2 : les deux étages (par défaut). Pendant un tracé : l'étage du tapis.
+    this.levelBtn = h('div', 'level-switch hidden',
+      `<span class="ls-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 3 21 8l-9 5-9-5z"/><path d="m3 12.5 9 5 9-5" opacity=".55"/><path d="m3 17 9 5 9-5" opacity=".3"/></svg></span><button data-l="0" aria-label="1ᵉʳ étage seul">1</button><button data-l="1" aria-label="Les deux étages">2</button>`);
+    this.levelBtn.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.pressLevel(b.dataset.l === '1' ? 1 : 0); });
+    });
     this.bubble = h('div', 'bubble hidden');
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
@@ -646,41 +650,38 @@ export class Hud implements GestureHandlers {
     this.setTool(same ? 'none' : t === 'cable' && !this.game.isUnlocked('generateur') ? 'tuyau' : t);
   }
 
-  /** Le bouton d'étage : pendant un tracé, le tapis change d'étage ; sinon, on montre ou pâlit l'étage 2. */
-  private pressLevel(): void {
+  /** Le bouton d'étage : pendant un tracé, l'étage du tapis ; sinon, 1 pâlit l'étage 2, 2 montre les deux. */
+  private pressLevel(l: 0 | 1): void {
     if (this.tracer) {
-      if (!this.game.levels2) { this.toast('Ascenseurs : à débloquer dans l’arbre (Logistique, comme les ponts)', 'info'); return; }
-      this.tracer.setLevel(this.tracer.level ? 0 : 1);
+      if (l && !this.game.levels2) { this.toast('Ascenseurs : à débloquer dans l’arbre (Logistique, comme les ponts)', 'info'); return; }
+      this.tracer.setLevel(l);
       if (this.dragAt) this.toolMove(this.dragAt.x, this.dragAt.y);
       this.updateLevelBtn();
       return;
     }
-    this.upperFaded = !this.upperFaded;
-    this.r.setUpperFaded(this.upperFaded);
-    if (this.upperFaded) this.toast('Étage 1 seul : le haut pâlit, tu touches ce qui passe dessous', 'info');
+    if (!this.game.levels2 && ![...this.game.view.belts.values()].some((x) => x.z)) {
+      this.toast('Le 2ᵉ étage des tapis : débloque les Ascenseurs dans l’arbre (Logistique, comme les ponts)', 'info');
+      return;
+    }
+    const faded = l === 0;
+    if (faded === this.upperFaded) return;
+    this.upperFaded = faded;
+    this.r.setUpperFaded(faded);
+    this.toast(faded ? '1ᵉʳ étage seul : le haut pâlit, tu touches ce qui passe dessous' : 'Les deux étages', 'info');
     this.updateLevelBtn();
   }
 
-  /** Le bouton d'étage : toujours là dès que les ascenseurs sont débloqués (ou qu'un tapis est en hauteur). */
+  /** Le bouton d'étage : l'étage montré (ou celui du tracé). */
   private updateLevelBtn(): void {
     const b = this.levelBtn;
     if (!b) return;
-    const show = this.game.levels2 || [...this.game.view.belts.values()].some((x) => x.z);
-    b.classList.toggle('hidden', !show);
-    if (!show) {
-      if (this.upperFaded) { this.upperFaded = false; this.r.setUpperFaded(false); }
-      return;
-    }
+    // Toujours là ; sans les ascenseurs, le 2 dit qu'il faut les débloquer.
+    b.classList.remove('hidden');
+    b.classList.toggle('locked', !this.game.levels2);
     const t = this.tracer;
-    const on = t ? t.level === 1 : !this.upperFaded;
-    const title = t ? `Tracé : étage ${t.level + 1}` : this.upperFaded ? 'Étage 1 seul' : 'Étage 2';
-    const sub = t ? 'touche pour changer' : this.upperFaded ? 'le haut pâlit' : 'on voit les 2 étages';
-    const sig = `${on}|${title}|${sub}|${!!t}`;
-    if (b.dataset.sig === sig) return;
-    b.dataset.sig = sig;
-    b.classList.toggle('on', on);
-    b.classList.toggle('tracing', !!t);
-    b.innerHTML = `<span class="lb-ico"><svg viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3 L19 7.5 L11 12 L3 7.5 Z"${on ? '' : ' opacity=".35"'}/><path d="M3 11.5 L11 16 L19 11.5"/></svg></span><span class="lb-t"><b>${title}</b><small>${sub}</small></span>`;
+    const l = t ? t.level : this.upperFaded ? 0 : 1;
+    b.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.classList.toggle('on', x.dataset.l === String(l)));
+    b.classList.toggle('up', !!t && l === 1);
   }
 
   /** Les options d'un outil, au-dessus de la barre : Câble / Tuyau, Gomme / Zone. */
