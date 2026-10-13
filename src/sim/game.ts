@@ -745,6 +745,8 @@ export class Game {
 
   /** Une machine est-elle débloquée ? (Celles hors de l'arbre le sont toujours.) */
   hasMachine(id: string): boolean {
+    // Séparateur, filtre, ascenseur : le déblocage « Séparateur, filtre et ascenseur ».
+    if (id === 'boite_sep' || id === 'boite_tri' || id === 'ascenseur') return this.unlocks.has('separateur');
     const node = nodeForMachine(id);
     return !node || this.unlocks.has(node.id);
   }
@@ -954,6 +956,7 @@ export class Game {
   placeMachine(type: string, x: number, y: number, rot: Rot = 0): Machine | null {
     const def = machineDef(type);
     if (def.kind === 'meter') { this.placeMeter(x, y); return null; }
+    if (def.kind === 'box' || def.kind === 'lift') { this.placeBox(type, x, y, 0); return null; }
     if (def.gift) {
       this.emit({ type: 'toast', text: `${def.name} : le Noyau te l’offre bientôt`, tone: 'info' });
       return null;
@@ -1023,6 +1026,8 @@ export class Game {
         const b = this.view.beltAt(c.x, c.y, c.z ?? 0);
         if (b) {
           this.view.setBeltDir(b, c.dir);
+          // Une boîte (ou un ascenseur) posée seule : le premier tapis tracé depuis elle donne son sens.
+          if ((b.node || b.lift) && !this.view.backFed(b) && !this.view.feederOf(b)) b.inDir = c.dir;
           // Le bout d'un tapis existant peut devenir un pont (vers un tapis voisin à enjamber).
           if (c.jump) b.jump = Math.min(c.jump, RULES.bridgeSpan);
         }
@@ -1505,6 +1510,36 @@ export class Game {
     if (!b.node && !this.spend(RULES.nodeCost)) return false;
     this.view.setNode(b, kind);
     this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /**
+   * Pose un séparateur, un filtre ou un ascenseur (depuis la palette) : sur le tapis de la case (à l'étage z),
+   * ou par terre, sur une case de tapis neuve qui ne porte que lui. L'ascenseur posé sur un tapis fait passer
+   * la suite à l'autre étage ; posé seul, le tapis qu'on trace depuis lui part au 2ᵉ étage.
+   */
+  placeBox(type: string, x: number, y: number, z: 0 | 1): boolean {
+    const f = this.view;
+    const lift = machineDef(type).kind === 'lift';
+    const warn = (text: string) => { this.emit({ type: 'toast', text, tone: 'warn' }); return false; };
+    if (!this.isUnlocked('separateur')) return warn('À débloquer dans l’arbre : « Séparateur, filtre et ascenseur » (Logistique)');
+    if (lift) {
+      const b = f.beltAt(x, y) ?? f.beltAt(x, y, 1);
+      if (b) return this.liftFrom(b);
+      z = 0;
+    }
+    const check = f.checkMachine(type, x, y, undefined, false, 0, z);
+    if (!check.ok) return warn(check.reason ?? 'Impossible ici');
+    const kind: NodeKind = type === 'boite_tri' ? 'tri' : 'sep';
+    const b = f.beltAt(x, y, z);
+    if (b) return this.placeNode(b, kind);
+    if (!this.spend(RULES.beltCost + (lift ? 0 : RULES.nodeCost))) return false;
+    const now = !!this.inAtelier || Game.instantBuild;
+    const nb = f.addBelt(x, y, 0, 0, now, z);
+    if (lift) nb.lift = 1; else f.setNode(nb, kind);
+    if (!now) this.pending.push({ kind: 'belt', k: f.beltKey(nb) });
+    this.emit({ type: 'factory' });
+    this.emit({ type: 'toast', text: lift ? 'Ascenseur posé : trace un tapis depuis lui, il part au 2ᵉ étage' : `${kind === 'tri' ? 'Filtre' : 'Séparateur'} posé : trace des tapis qui en partent ou qui y arrivent`, tone: 'good' });
     return true;
   }
 

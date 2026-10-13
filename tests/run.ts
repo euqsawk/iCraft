@@ -833,6 +833,48 @@ test('séparateur posé d’un toucher, avec plusieurs entrées ; ascenseur sur 
   run(g, 60);
   assert(total(eD) === 15, `le coffre du bas reçoit par le 2ᵉ étage : ${total(eD)}`);
 });
+test('palette : séparateur et filtre posés par terre ou sur un tapis, au 1er ou au 2e étage ; ascenseur seul', () => {
+  const g = new Game('TEST-S6'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  assert(!g.hasMachine('boite_sep') && !g.placeBox('boite_sep', 0, 9, 0), 'à débloquer');
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(g.hasMachine('boite_sep') && g.hasMachine('boite_tri') && g.hasMachine('ascenseur'), 'dans la palette');
+  // Par terre : une case qui ne porte que la boîte. On trace ensuite une entrée et trois sorties autour.
+  const m0 = g.money;
+  assert(g.placeBox('boite_tri', 0, 9, 0), 'filtre posé par terre');
+  const fb = g.factory.beltAt(0, 9)!;
+  assert(fb.node === 'tri' && g.money === m0 - RULES.beltCost - RULES.nodeCost, 'payé : une case et la boîte');
+  const src = g.placeMachine('coffre', -6, 9)!, eR = g.placeMachine('coffre', 5, 9)!, eL = g.placeMachine('coffre', 0, 4)!, eD = g.placeMachine('coffre', 0, 14)!;
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.factory.markBuilt();
+  // Une sortie vers le haut (depuis la boîte seule : elle prend ce sens), puis vers la droite et vers le bas.
+  for (const [ex, ey] of [[0.5, 4.5], [5.5, 9.5], [0.5, 14.5]] as [number, number][]) {
+    const t = trace(g, [[0.5, 9.5], [ex, ey]]);
+    assert(t.valid && g.placeBelts(t.result(), t.splitFrom && t.splitDir !== null ? { from: t.splitFrom, dir: t.splitDir, jump: t.splitJump } : undefined), `sortie vers ${ex},${ey}`);
+  }
+  // Une entrée depuis la gauche.
+  assert(g.placeBelts(trace(g, [[-5.5, 9.5], [-0.5, 9.5], [0.5, 9.5]]).result()), 'entrée');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  assert(g.factory.nodeOutputs(fb).length === 3, `trois sorties : ${JSON.stringify(g.factory.nodeSides(fb))}`);
+  g.setNodeRule(fb, 3, ['fer']);
+  g.setNodeRule(fb, 0, ['cuivre']);
+  g.factory.putInStorage(src, 'fer', 10); g.factory.putInStorage(src, 'cuivre', 10); g.factory.putInStorage(src, 'charbon', 10);
+  run(g, 60);
+  assert(eL.inBuf.fer === 10 && eR.inBuf.cuivre === 10 && eD.inBuf.charbon === 10, `tri : ${JSON.stringify([eL.inBuf, eR.inBuf, eD.inBuf])}`);
+  // Sur un tapis, au 2e étage : sur le tapis du haut s'il y en a un, sinon par terre en hauteur.
+  assert(g.placeBox('boite_sep', 3, 9, 0) && g.factory.beltAt(3, 9)!.node === 'sep', 'sur le tapis');
+  assert(g.placeBox('boite_sep', 8, 3, 1) && g.factory.beltAt(8, 3, 1)?.node === 'sep' && !g.factory.beltAt(8, 3), 'au 2e étage');
+  // Ascenseur seul : le tapis tracé depuis lui part au 2e étage.
+  assert(g.placeBox('ascenseur', 10, 12, 0) && g.factory.beltAt(10, 12)!.lift === 1, 'ascenseur posé');
+  for (const b of g.factory.belts.values()) b.built = true;
+  const t = trace(g, [[10.5, 12.5], [14.5, 12.5]]);
+  assert(t.level === 1 && t.result().slice(1).every((c) => c.z === 1) && g.placeBelts(t.result()), 'le tapis part en haut');
+  assert(g.factory.liftOf(g.factory.beltAt(10, 12)!).to === g.factory.beltAt(11, 12, 1), 'un ascenseur');
+  const s2 = JSON.parse(JSON.stringify(g.serialize()));
+  const g2 = new Game(s2.seed, s2);
+  assert(g2.factory.beltAt(10, 12)!.lift === 1 && g2.factory.beltAt(8, 3, 1)?.node === 'sep', 'sauvegardé');
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');

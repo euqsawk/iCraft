@@ -63,7 +63,7 @@ export class BeltTracer {
       if (this.freeEnd(b)) {
         this.extend = b;
         this.cells = [{ x: sx, y: sy, z: b.z ?? 0 }];
-      } else if (b.built && !b.jump && factory.canBranch(b)) {
+      } else if ((b.built || b.node) && !b.jump && factory.canBranch(b)) {
         this.splitFrom = b;
       } else {
         this.blocked = true;
@@ -79,6 +79,8 @@ export class BeltTracer {
     // On part d'un tapis existant : le tracé reste à son étage (jusqu'au bouton d'étage).
     const from = this.extend ?? this.splitFrom;
     if (from) this.level = (from.z ?? 0) as 0 | 1;
+    // Un ascenseur posé seul : le tapis qui en part va à l'autre étage.
+    if (this.extend?.lift && !factory.next(this.extend)) this.level = this.extend.z ? 0 : 1;
   }
 
   /** Un bout de tapis libre (qui ne donne dans rien) se prolonge ; s'il donne dans une machine, on part en dérivation. */
@@ -198,7 +200,7 @@ export class BeltTracer {
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.8) return;
       const d: Dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
       this.intoMachine = null;
-      if (d === sb.dir || d === opposite(sb.inDir) || this.factory.nodeOutputs(sb).some((o) => o.d === d)) return;
+      if (d === sb.dir || (d === opposite(sb.inDir) && this.factory.backFed(sb)) || this.factory.nodeOutputs(sb).some((o) => o.d === d)) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
       if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
       const sz = (sb.z ?? 0) as 0 | 1;

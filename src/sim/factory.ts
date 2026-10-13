@@ -29,6 +29,8 @@ export interface Belt {
   y: number;
   /** En hauteur (étage 2) : passe au-dessus des tapis du sol ; un ascenseur le relie au sol à ses bouts. */
   z?: 1;
+  /** Ascenseur posé seul : le tapis qui en part va à l'autre étage. */
+  lift?: 1;
   /** Sens de sortie. */
   dir: Dir;
   /** Sens d'entrée (d'où viennent les objets). */
@@ -586,14 +588,20 @@ export class Factory {
     const outs = this.nodeOuts.get(b) ?? [];
     const res: Record<number, 'main' | 'in' | 'out' | 'off' | 'none'> = {};
     for (let d = 0; d < 4; d++) {
-      if (d === b.dir) { res[d] = 'main'; continue; }
+      if (d === b.dir && this.nextOf.get(b)) { res[d] = 'main'; continue; }
       if (outs.some((o) => o.d === d)) { res[d] = 'out'; continue; }
-      if (d === opposite(b.inDir) || this.feedsInto(b, d)) { res[d] = 'in'; continue; }
+      if ((d === opposite(b.inDir) && this.backFed(b)) || this.feedsInto(b, d)) { res[d] = 'in'; continue; }
       res[d] = this.sideTarget(b, d, true) ? 'off' : 'none';
     }
     const other = this.beltAt(b.x, b.y, b.z ? 0 : 1);
     res[4] = !other ? 'none' : outs.some((o) => o.d === 4) ? 'out' : 'off';
     return res;
+  }
+
+  /** Quelque chose arrive par l'arrière de la case (un tapis, une machine) : ce côté ne peut pas être une sortie. */
+  backFed(b: Belt): boolean {
+    const d = opposite(b.inDir);
+    return !!this.machineAt(b.x + DX[d], b.y + DY[d]) || this.feedsInto(b, d) || !!this.feederOf(b);
   }
 
   /** Un tapis voisin, de ce côté, qui donne dans cette case. */
@@ -663,8 +671,21 @@ export class Factory {
 
   // ---------- Construction ----------
 
-  checkMachine(type: string, x: number, y: number, ignore?: Machine, overBelts = false, rot: Rot = 0): PlaceCheck {
+  checkMachine(type: string, x: number, y: number, ignore?: Machine, overBelts = false, rot: Rot = 0, z: 0 | 1 = 0): PlaceCheck {
     const def = machineDef(type);
+    // Séparateur, filtre, ascenseur : sur un tapis, ou par terre (une case de tapis avec la boîte).
+    if (def.kind === 'box' || def.kind === 'lift') {
+      if (!this.inBounds(x, y)) return { ok: false, reason: 'Hors de l’atelier' };
+      const lz = def.kind === 'lift' ? 0 : z;
+      const b = this.beltAt(x, y, lz) ?? (def.kind === 'lift' ? this.beltAt(x, y, 1) : undefined);
+      if (b) {
+        if (b.jump) return { ok: false, reason: 'Pas sur un pont' };
+        if (def.kind === 'lift' && b.node) return { ok: false, reason: 'Pas sur un séparateur ou un filtre' };
+        return { ok: true, belts: 1 };
+      }
+      if (!this.isFree(x, y, lz)) return { ok: false, reason: this.machineAt(x, y) ? 'Place occupée' : 'Place occupée' };
+      return { ok: true };
+    }
     const station = isStationType(type);
     const size = rotDims(def.w, def.h, station ? rot : 0);
     // Un compteur se pose sur un tapis, sans rien remplacer.
@@ -1471,7 +1492,7 @@ export class Factory {
       const main = this.nextOf.get(b) ?? null;
       if (main) outs.push({ d: b.dir, next: main });
       for (const d of [(b.dir + 1) % 4, (b.dir + 3) % 4, (b.dir + 2) % 4]) {
-        if (outs.length >= 4 || d === opposite(b.inDir)) continue;
+        if (outs.length >= 4 || (d === opposite(b.inDir) && this.backFed(b))) continue;
         const n = this.sideTarget(b, d);
         if (n) outs.push({ d, next: n });
       }
@@ -2351,7 +2372,7 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })), ...(l.track ? { track: { sig: l.track.sig, gap: l.track.gap, legs: l.track.legs.map((f) => [...f]) } } : {}) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), ...(b.off ? { f: b.off } : {}), ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), ...(b.off ? { f: b.off } : {}), ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift ? 1 : 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -2377,7 +2398,7 @@ export class Factory {
     for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) oldPicks.set(k, v.filter((t) => typeof t === 'string'));
     // Anciens séparateurs (une ou deux dérivations) : des boîtes dont seules ces sorties restent ouvertes (vu plus bas).
     const oldSplits: { b: Belt; outs: number[] }[] = [];
-    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick, lvl, filter2, z, node] of s.belts) {
+    for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick, lvl, filter2, z, node, lift] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1, z ? 1 : 0);
       if (typeof lvl === 'number' && lvl > 1) b.lvl = Math.min(5, Math.floor(lvl));
       const s1 = split !== undefined && split >= 0 ? split : -1, s2 = s1 >= 0 && split2 !== undefined && split2 >= 0 ? split2 : -1;
@@ -2401,6 +2422,7 @@ export class Factory {
         oldSplits.push({ b, outs: s2 >= 0 ? [s1, s2] : [s1] });
       }
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
+      if (lift) b.lift = 1;
       if (meter) this.addMeter(b);
       // Parties d'avant : le trieur était rangé sur le tapis.
       if (Array.isArray(pick)) oldPicks.set(key(x, y), pick.filter((t) => typeof t === 'string'));
@@ -2547,7 +2569,7 @@ export interface FactorySave {
   drills1?: 1;
   /** Foreuses redevenues 2 × 2 (sans groupes). */
   drills2?: 1;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?, number?, (0 | { n: NodeKind; r?: Record<number, string[]>; f?: number[]; v?: 1; j?: Record<number, number> })?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?, number?, (0 | { n: NodeKind; r?: Record<number, string[]>; f?: number[]; v?: 1; j?: Record<number, number> })?, number?][];
   /** Tapis à niveaux (sans ce drapeau : une partie d'avant, où la vitesse était la même pour tous). */
   levels?: 1;
   machines: {

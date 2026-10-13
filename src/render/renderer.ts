@@ -803,6 +803,8 @@ export class GameRenderer {
     this.cabins = [];
     for (const b of f.belts.values()) {
       const { to } = f.liftOf(b);
+      // Un ascenseur posé seul (rien ne part encore de lui) : la cabine entière, en attente.
+      if (!to && b.lift) { this.liftIcon(g, b.x, b.y, !b.z, b.built ? 1 : 0.5); continue; }
       if (!to) continue;
       const up = !b.z; // du sol vers le haut
       const top = up ? to : b;

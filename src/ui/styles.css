@@ -781,11 +781,6 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .topt.on { background: var(--ink); color: #fff; }
 .topt.locked { opacity: .5; }
 .topt-hint { padding: 0 6px; font-size: 11px; font-weight: 800; color: var(--ink2); }
-/* Le menu du tapis : quatre grands boutons sur toute la largeur. */
-.tool-opts.wide { left: 10px; right: 10px; transform: none; gap: 6px; }
-.tool-opts.wide .topt { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 3px; padding: 8px 2px; font-size: 11.5px; font-weight: 900; position: relative; }
-.tool-opts.wide .topt svg { width: 22px; height: 22px; }
-.tool-opts.wide .topt svg.lock { position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; }
 .stop-row .seg { display: flex; gap: 4px; }
 .stop-row .seg .btn { padding: 6px 10px; font-size: 12px; }
 
@@ -1213,7 +1208,6 @@ textarea, input { -webkit-user-select: text; user-select: text; }
   position: absolute; left: 10px; bottom: calc(var(--bottom) + 84px); display: flex; align-items: center; gap: 4px;
   padding: 5px; border-radius: 18px; background: #fff; box-shadow: 0 4px 0 var(--shadow); touch-action: none;
 }
-.level-switch.raised { bottom: calc(var(--bottom) + 160px); }
 .level-switch .ls-ico { display: flex; padding: 0 3px 0 5px; color: var(--ink2); }
 .level-switch .ls-ico svg { width: 20px; height: 20px; }
 .level-switch button { width: 42px; height: 40px; border-radius: 13px; background: #F0F5F2; font-size: 15px; font-weight: 900; color: var(--ink2); }

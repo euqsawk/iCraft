@@ -10,7 +10,7 @@ export interface Recipe {
   time: number;
 }
 
-export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'base' | 'freight';
+export type MachineKind = 'drill' | 'crafter' | 'core' | 'storage' | 'lab' | 'missions' | 'generator' | 'meter' | 'atelier' | 'port_in' | 'port_out' | 'solar' | 'battery' | 'lamp' | 'pump' | 'reactor' | 'rocket' | 'tree' | 'base' | 'freight' | 'box' | 'lift';
 
 export interface MachineDef {
   id: string;
@@ -161,6 +161,19 @@ export const MACHINES: Record<string, MachineDef> = {
   compteur: {
     id: 'compteur', name: 'Compteur', kind: 'meter', coal: false, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true,
     hint: 'Se pose sur un tapis : son débit, sur les 20 dernières secondes',
+  },
+  // Le menu « Tapis » de la palette : des boîtes (sur un tapis ou par terre, au 1er ou au 2e étage) et l'ascenseur.
+  boite_sep: {
+    id: 'boite_sep', name: 'Séparateur', kind: 'box', coal: false, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true,
+    hint: 'Sur un tapis ou par terre : jusqu’à 4 sorties, les objets partent chacun leur tour',
+  },
+  boite_tri: {
+    id: 'boite_tri', name: 'Filtre', kind: 'box', coal: false, w: 1, h: 1, cost: 10, unlock: 1, recipes: [], buildable: true,
+    hint: 'Sur un tapis ou par terre : chaque sortie prend les objets qu’on lui choisit',
+  },
+  ascenseur: {
+    id: 'ascenseur', name: 'Ascenseur', kind: 'lift', coal: false, w: 1, h: 1, cost: 1, unlock: 1, recipes: [], buildable: true,
+    hint: 'Sur un tapis : la suite passe à l’autre étage. Par terre : le tapis qui en part monte au 2ᵉ étage',
   },
   grand_coffre: {
     id: 'grand_coffre', name: 'Grand coffre', kind: 'storage', coal: false, w: 2, h: 2, cost: 50, unlock: 1, recipes: [], buildable: true,

@@ -171,8 +171,9 @@ export class Hud implements GestureHandlers {
    */
   private upperFaded = false;
   private levelBtn!: HTMLElement;
-  /** Le menu du tapis : tracer, ou poser d'un toucher un séparateur, un filtre, un ascenseur. */
-  private beltMode: 'tapis' | 'sep' | 'tri' | 'lift' = 'tapis';
+  /** Pendant qu'on glisse un séparateur ou un filtre depuis la palette : l'étage où il se posera. */
+  private placeLevel: 0 | 1 = 0;
+  private draggingBox = false;
   /** Fenêtre d'une boîte : le côté choisi (0–3, 4 : l'autre étage). */
   private nodeSel: number | null = null;
   /** Où le doigt s'est posé avec un outil (pour reconnaître un simple toucher). */
@@ -302,6 +303,7 @@ export class Hud implements GestureHandlers {
     this.popover = h('div', 'popover hidden');
     this.toasts = h('div', 'toasts');
     this.root.append(top, row, this.freightPill, this.palette, this.toolOpts, this.levelBtn, toolbar, this.bubble, this.popover, this.toasts);
+    window.addEventListener('resize', () => this.placeLevelSwitch());
     this.updateLevelBtn();
     this.tree = new TreeScreen(this.root, this.game, this.itemIcons, () => { this.renderPalette(); this.refreshLevel(); this.renderToolOpts(); });
     // On ne reconstruit pas une feuille pendant qu'un doigt appuie dessus (le bouton serait perdu).
@@ -448,6 +450,7 @@ export class Hud implements GestureHandlers {
 
   /** Catégorie de la palette où range une machine. */
   private static paletteCat(m: MachineDef): string {
+    if (m.kind === 'box' || m.kind === 'lift') return 'tapis';
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
@@ -476,7 +479,7 @@ export class Hud implements GestureHandlers {
       && (inside ? !OUTSIDE_ONLY.includes(m.id) && (m.id !== 'atelier' || this.game.nesting) : m.kind !== 'port_in' && m.kind !== 'port_out'));
     if (this.machineType && !list.some((m) => m.id === this.machineType)) this.machineType = list[0]?.id ?? null;
     // À partir de 10 machines, un sous-menu : des catégories, puis les machines de la catégorie choisie.
-    const CATS: [string, string][] = [['modules', 'Modules'], ['extraction', 'Extraction'], ['fabrication', 'Fabrication'], ['electricite', 'Électricité'], ['stockage', 'Stockage'], ['transport', 'Transport'], ['outils', 'Outils']];
+    const CATS: [string, string][] = [['modules', 'Modules'], ['tapis', 'Tapis'], ['extraction', 'Extraction'], ['fabrication', 'Fabrication'], ['electricite', 'Électricité'], ['stockage', 'Stockage'], ['transport', 'Transport'], ['outils', 'Outils']];
     let shown = list;
     if (list.length >= 10) {
       const present = CATS.filter(([id]) => list.some((m) => Hud.paletteCat(m) === id));
@@ -533,6 +536,7 @@ export class Hud implements GestureHandlers {
     if (cats) cats.scrollLeft = catScroll;
     if (this.paletteTab === this.shownTab) row.scrollLeft = rowScroll;
     this.shownTab = this.paletteTab;
+    this.updateLevelBtn();
   }
 
   // ---------- Glisser une machine depuis la palette ----------
@@ -566,6 +570,10 @@ export class Hud implements GestureHandlers {
           this.palette.querySelectorAll('.mcard').forEach((c) => c.classList.toggle('selected', c === card));
           this.palette.classList.add('dragging');
           this.root.classList.add('dragging-machine');
+          // Séparateur ou filtre : l'interrupteur d'étage apparaît pour choisir où le poser.
+          this.draggingBox = machineDef(type).kind === 'box';
+          this.placeLevel = 0;
+          this.updateLevelBtn();
           trash = h('div', 'drop-trash', `${ICONS.trash}<span>Lâche ici pour annuler</span>`);
           this.root.append(trash);
           // Gare ou dépôt : un bouton pour tourner (avec un autre doigt pendant qu'on glisse).
@@ -600,6 +608,9 @@ export class Hud implements GestureHandlers {
       this.dragAt = null;
       this.palette.classList.remove('dragging');
       this.root.classList.remove('dragging-machine');
+      const boxZ = this.placeLevel;
+      this.draggingBox = false;
+      this.updateLevelBtn();
       const cancel = overTrash(ev);
       trash?.remove();
       rot?.remove();
@@ -607,7 +618,9 @@ export class Hud implements GestureHandlers {
       setTimeout(() => { this.dragEnded = false; }, 350);
       const pv = this.r.preview;
       if (ev.type === 'pointerup' && pv?.kind === 'place' && pv.ok && !cancel) {
+        const kind = machineDef(type).kind;
         if (this.placingPlan) this.game.placePlan(this.placingPlan.save, this.placingPlan.size, pv.x, pv.y);
+        else if (kind === 'box' || kind === 'lift') this.game.placeBox(type, pv.x, pv.y, boxZ);
         else this.game.placeMachine(type, pv.x, pv.y, (pv.rot ?? 0) as Rot);
       }
       this.placingPlan = null;
@@ -652,6 +665,12 @@ export class Hud implements GestureHandlers {
 
   /** Le bouton d'étage : pendant un tracé, l'étage du tapis ; sinon, 1 pâlit l'étage 2, 2 montre les deux. */
   private pressLevel(l: 0 | 1): void {
+    if (this.draggingBox) {
+      this.placeLevel = l;
+      this.updateLevelBtn();
+      if (this.lastPlaceAt) this.updatePlacement(this.lastPlaceAt.x, this.lastPlaceAt.y);
+      return;
+    }
     if (this.tracer) {
       if (l && !this.game.levels2) { this.toast('Ascenseur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)', 'info'); return; }
       this.tracer.setLevel(l);
@@ -667,19 +686,38 @@ export class Hud implements GestureHandlers {
     this.updateLevelBtn();
   }
 
-  /** Le bouton d'étage : l'étage montré (ou celui du tracé). */
+  /** L'interrupteur d'étage se pose juste au-dessus de ce qui est ouvert en bas (barre, options, palette, corbeille). */
+  private placeLevelSwitch(): void {
+    requestAnimationFrame(() => {
+      const b = this.levelBtn;
+      if (b.classList.contains('hidden')) return;
+      const dragging = this.root.classList.contains('dragging-machine');
+      const els: (Element | null)[] = [this.root.querySelector('.drop-trash'), this.root.querySelector('.move-banner')];
+      if (!dragging) els.push(this.root.querySelector('.toolbar'), this.palette, this.toolOpts);
+      let top = window.innerHeight;
+      for (const el of els) {
+        if (!el || el.classList.contains('hidden')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.height > 0) top = Math.min(top, r.top);
+      }
+      b.style.bottom = `${Math.max(10, window.innerHeight - top + 10)}px`;
+    });
+  }
+
+  /** Le bouton d'étage : l'étage montré (ou celui du tracé, ou celui où se posera la boîte qu'on glisse). */
   private updateLevelBtn(): void {
     const b = this.levelBtn;
     if (!b) return;
-    // Seulement une fois débloqué (ou s'il y a déjà un tapis en hauteur).
-    const show = this.game.levels2 || [...this.game.view.belts.values()].some((x) => x.z);
+    // Seulement une fois débloqué (ou s'il y a déjà un tapis en hauteur) ; dans le menu des machines, seulement
+    // pendant qu'on glisse un séparateur ou un filtre.
+    const open = this.game.levels2 || [...this.game.view.belts.values()].some((x) => x.z);
+    if (!open && this.upperFaded) { this.upperFaded = false; this.r.setUpperFaded(false); }
+    const show = open && (this.tool !== 'machine' || this.draggingBox);
     b.classList.toggle('hidden', !show);
-    if (!show) {
-      if (this.upperFaded) { this.upperFaded = false; this.r.setUpperFaded(false); }
-      return;
-    }
+    if (!show) return;
+    this.placeLevelSwitch();
     const t = this.tracer;
-    const l = t ? t.level : this.upperFaded ? 0 : 1;
+    const l = this.draggingBox ? this.placeLevel : t ? t.level : this.upperFaded ? 0 : 1;
     b.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.classList.toggle('on', x.dataset.l === String(l)));
     b.classList.toggle('up', !!t && l === 1);
   }
@@ -690,18 +728,6 @@ export class Hud implements GestureHandlers {
     box.innerHTML = '';
     const g = this.game;
     let opts: { label: string; icon: string; on: boolean; locked: boolean; pick: () => void; why: string }[] = [];
-    if (this.tool === 'tapis') {
-      const mode = (m: typeof this.beltMode) => () => { this.beltMode = m; this.renderToolOpts(); this.beltModeHint(); };
-      opts = [
-        { label: 'Tapis', icon: ICONS.tapis, on: this.beltMode === 'tapis', locked: false, pick: mode('tapis'), why: '' },
-        { label: 'Séparateur', icon: BELT_ICONS.sep, on: this.beltMode === 'sep', locked: !g.isUnlocked('separateur'), pick: mode('sep'), why: 'Séparateur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)' },
-        { label: 'Filtre', icon: BELT_ICONS.tri, on: this.beltMode === 'tri', locked: !g.isUnlocked('separateur'), pick: mode('tri'), why: 'Filtre : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)' },
-        { label: 'Ascenseur', icon: BELT_ICONS.lift, on: this.beltMode === 'lift', locked: !g.levels2, pick: mode('lift'), why: 'Ascenseur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)' },
-      ];
-      if (opts.slice(1).every((o) => o.locked)) opts = [];
-    }
-    box.classList.toggle('wide', this.tool === 'tapis');
-    this.levelBtn.classList.toggle('raised', this.tool === 'tapis' && opts.length > 0);
     if (this.tool === 'cable' || this.tool === 'tuyau') {
       opts = [
         { label: 'Câble', icon: ICONS.cable, on: this.tool === 'cable', locked: !g.isUnlocked('generateur'), pick: () => this.setTool('cable'), why: 'Câbles : débloque le Générateur (Énergie, palier 4)' },
@@ -720,6 +746,7 @@ export class Hud implements GestureHandlers {
       b.onclick = () => { if (o.locked) { this.toast(o.why, 'info'); return; } o.pick(); };
       box.append(b);
     }
+    this.updateLevelBtn();
   }
 
   /**
@@ -750,26 +777,8 @@ export class Hud implements GestureHandlers {
     this.root.append(banner);
   }
 
-  /** Ce que fait le mode choisi dans le menu du tapis. */
-  private beltModeHint(): void {
-    const msg = { tapis: '', sep: 'Touche un tapis : un séparateur s’y pose. Puis glisse depuis lui pour tracer ses sorties (jusqu’à 4).', tri: 'Touche un tapis : un filtre s’y pose. Glisse depuis lui pour tracer ses sorties, touche-le pour choisir ce qui part où.', lift: 'Touche un tapis : à partir de là, il passe à l’autre étage.' }[this.beltMode];
-    if (msg) this.toast(msg, 'info');
-  }
-
-  /** Le menu du tapis, d'un toucher sur un tapis : séparateur, filtre ou ascenseur. */
-  private beltAction(b: Belt): void {
-    const g = this.game;
-    if (this.beltMode === 'lift') { g.liftFrom(b); return; }
-    const kind = this.beltMode === 'tri' ? 'tri' : 'sep';
-    const had = b.node;
-    if (had !== kind && !g.placeNode(b, kind)) return;
-    if (!had) this.toast(kind === 'tri' ? `Filtre posé · ${RULES.nodeCost} ${'pièces'}` : `Séparateur posé · ${RULES.nodeCost} pièces : trace des tapis qui en partent`, 'good');
-    if (kind === 'tri' || had) this.openNodeSheet(b);
-  }
-
   private setTool(t: Tool): void {
     this.clearZone();
-    if (t !== 'tapis') this.beltMode = 'tapis';
     if (t !== 'move') this.copying = null;
     if (t !== 'move') {
       this.r.movingId = null;
@@ -830,11 +839,6 @@ export class Hud implements GestureHandlers {
     const prev = this.r.selection;
     const again = prev?.kind === 'belt' && prev.x === cx && prev.y === cy && prev.z === 1;
     const b = this.upperFaded ? f.beltAt(cx, cy) : (!again && f.beltAt(cx, cy, 1)) || f.beltAt(cx, cy) || f.beltAt(cx, cy, 1);
-    if (this.tool === 'tapis' && this.beltMode !== 'tapis') {
-      const tb = this.upperFaded ? f.beltAt(cx, cy) : f.beltAt(cx, cy, 1) ?? f.beltAt(cx, cy);
-      if (tb) this.beltAction(tb); else this.toast('Touche un tapis', 'info');
-      return;
-    }
     if (b?.node && !f.nodeIsLink(b)) { this.closePopover(); this.openNodeSheet(b); return; }
     if (b) { this.select({ kind: 'belt', x: cx, y: cy, ...(b.z ? { z: 1 as const } : {}) }); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
@@ -877,7 +881,7 @@ export class Hud implements GestureHandlers {
     const def = machineDef(type);
     const rot = isStationType(type) ? this.placeRot : 0;
     const size = rotDims(def.w, def.h, rot);
-    const check = this.game.view.checkMachine(type, p.x, p.y, this.copying ? undefined : this.moving ?? undefined, true, rot);
+    const check = this.game.view.checkMachine(type, p.x, p.y, this.copying ? undefined : this.moving ?? undefined, true, rot, this.draggingBox ? this.placeLevel : 0);
     this.r.preview = { kind: 'place', type, x: p.x, y: p.y, ok: check.ok, ore: check.ore, rot };
     // Guides d'alignement avec les machines voisines.
     const cx = (p.x + size.w / 2) * CELL, cy = (p.y + size.h / 2) * CELL;
@@ -890,7 +894,7 @@ export class Hud implements GestureHandlers {
     }
     this.r.guides = guides;
     const s = this.r.camera.worldToScreen(cx, p.y * CELL);
-    const onBelt = check.ok && check.belts ? ' · sur le tapis' : '';
+    const onBelt = (check.ok && check.belts ? ' · sur le tapis' : '') + (this.draggingBox && this.placeLevel ? ' · 2ᵉ étage' : '');
     // Une foreuse sur un filon : ce qu'elle va extraire, en direct.
     if (def.kind === 'drill' && check.ok && check.ore) {
       const rate = (check.rate ?? 0).toFixed(2).replace('.', ',');
@@ -1161,19 +1165,19 @@ export class Hud implements GestureHandlers {
     this.dragAt = null;
     this.bubble.classList.add('hidden');
     const pv = this.r.preview;
-    // Outil Tapis, un simple toucher sur un tapis : poser la boîte (ou l'ascenseur) du menu, ou ouvrir la boîte touchée.
+    // Outil Tapis, un simple toucher sur une boîte : sa fenêtre.
     const down = this.downAt;
     this.downAt = null;
     if (!cancelled && this.tool === 'tapis' && down && !down.moved) {
       const w = this.worldAt(down.x, down.y);
       const cx = Math.floor(w.x), cy = Math.floor(w.y), f = this.game.view;
       const tb = this.upperFaded ? f.beltAt(cx, cy) : f.beltAt(cx, cy, 1) ?? f.beltAt(cx, cy);
-      if (tb && (this.beltMode !== 'tapis' || (tb.node && !f.nodeIsLink(tb)))) {
+      if (tb?.node && !f.nodeIsLink(tb)) {
         this.tracer = null;
         this.updateLevelBtn();
         this.r.preview = null;
         this.r.loupe = null;
-        if (this.beltMode !== 'tapis') this.beltAction(tb); else this.openNodeSheet(tb);
+        this.openNodeSheet(tb);
         return;
       }
     }
