@@ -170,6 +170,10 @@ export class Hud implements GestureHandlers {
    * Pendant un tracé, il fait passer le tapis à l'autre étage (un ascenseur là où il change).
    */
   private upperFaded = false;
+  /** Outil Tapis : l'étage où se posent les tapis (1 en le prenant ; 2 si on touche 2, avant ou pendant le tracé). */
+  private beltLevel: 0 | 1 = 0;
+  /** Le haut est-il pâli en ce moment (vue choisie, ou étage de l'outil Tapis) ? */
+  private fadedNow = false;
   private levelBtn!: HTMLElement;
   /** Pendant qu'on glisse un séparateur ou un filtre depuis la palette : l'étage où il se posera. */
   private placeLevel: 0 | 1 = 0;
@@ -671,10 +675,13 @@ export class Hud implements GestureHandlers {
       if (this.lastPlaceAt) this.updatePlacement(this.lastPlaceAt.x, this.lastPlaceAt.y);
       return;
     }
-    if (this.tracer) {
-      if (l && !this.game.levels2) { this.toast('Ascenseur : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)', 'info'); return; }
-      this.tracer.setLevel(l);
-      if (this.dragAt) this.toolMove(this.dragAt.x, this.dragAt.y);
+    if (this.tracer || this.tool === 'tapis') {
+      if (l && !this.game.levels2) { this.toast('2ᵉ étage : débloque « Séparateur, filtre et ascenseur » dans l’arbre (Logistique)', 'info'); return; }
+      this.beltLevel = l;
+      if (this.tracer) {
+        this.tracer.setLevel(l);
+        if (this.dragAt) this.toolMove(this.dragAt.x, this.dragAt.y);
+      }
       this.updateLevelBtn();
       return;
     }
@@ -715,10 +722,12 @@ export class Hud implements GestureHandlers {
     const show = open && (this.tool !== 'machine' || this.draggingBox);
     b.classList.toggle('hidden', !show);
     const t = this.tracer;
-    const l = this.draggingBox ? this.placeLevel : t ? t.level : this.upperFaded ? 0 : 1;
+    const building = !!t || this.draggingBox || this.tool === 'tapis';
+    const l = this.draggingBox ? this.placeLevel : t ? t.level : this.tool === 'tapis' ? this.beltLevel : this.upperFaded ? 0 : 1;
     // Pendant un tracé (ou le glisser d'une boîte), la vue suit l'étage où l'on pose : au 1ᵉʳ, le haut pâlit.
     // Ensuite, elle revient à ce qu'on avait choisi.
-    this.r.setUpperFaded(open && (t || this.draggingBox) ? l === 0 : this.upperFaded);
+    this.fadedNow = open && (building ? l === 0 : this.upperFaded);
+    this.r.setUpperFaded(this.fadedNow);
     if (!show) return;
     this.placeLevelSwitch();
     b.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.classList.toggle('on', x.dataset.l === String(l)));
@@ -782,6 +791,8 @@ export class Hud implements GestureHandlers {
 
   private setTool(t: Tool): void {
     this.clearZone();
+    // En prenant l'outil Tapis, on pose au 1ᵉʳ étage (2 se choisit sur l'interrupteur).
+    if (t === 'tapis' && this.tool !== 'tapis') this.beltLevel = 0;
     if (t !== 'move') this.copying = null;
     if (t !== 'move') {
       this.r.movingId = null;
@@ -841,7 +852,7 @@ export class Hud implements GestureHandlers {
     // Avec « Étage 1 seul », seulement ceux du dessous.
     const prev = this.r.selection;
     const again = prev?.kind === 'belt' && prev.x === cx && prev.y === cy && prev.z === 1;
-    const b = this.upperFaded ? f.beltAt(cx, cy) : (!again && f.beltAt(cx, cy, 1)) || f.beltAt(cx, cy) || f.beltAt(cx, cy, 1);
+    const b = this.fadedNow ? f.beltAt(cx, cy) : (!again && f.beltAt(cx, cy, 1)) || f.beltAt(cx, cy) || f.beltAt(cx, cy, 1);
     if (b?.node && !f.nodeIsLink(b)) { this.closePopover(); this.openNodeSheet(b); return; }
     if (b) { this.select({ kind: 'belt', x: cx, y: cy, ...(b.z ? { z: 1 as const } : {}) }); return; }
     if (!this.popover.classList.contains('hidden')) { this.closePopover(); return; }
@@ -967,9 +978,8 @@ export class Hud implements GestureHandlers {
       this.cableTracer = new CableTracer(this.game.world, w.x, w.y);
       this.r.preview = { kind: this.tool === 'tuyau' ? 'pipe' : 'cable', tracer: this.cableTracer };
     } else if (this.tool === 'tapis') {
-      // Là où il y a un tapis en hauteur (et qu'on le voit), on part de lui ; sinon, au 1ᵉʳ étage.
-      const up = !this.upperFaded && !!this.game.view.beltAt(Math.floor(w.x), Math.floor(w.y), 1);
-      this.tracer = new BeltTracer(this.game.view, w.x, w.y, up ? 1 : 0);
+      // À l'étage choisi sur l'interrupteur (le bout d'un tapis existant garde le sien).
+      this.tracer = new BeltTracer(this.game.view, w.x, w.y, this.game.levels2 ? this.beltLevel : 0);
       this.tracer.bridges = this.game.isUnlocked('pont');
       this.updateLevelBtn();
       this.r.preview = { kind: 'trace', tracer: this.tracer };
@@ -1174,7 +1184,7 @@ export class Hud implements GestureHandlers {
     if (!cancelled && this.tool === 'tapis' && down && !down.moved) {
       const w = this.worldAt(down.x, down.y);
       const cx = Math.floor(w.x), cy = Math.floor(w.y), f = this.game.view;
-      const tb = this.upperFaded ? f.beltAt(cx, cy) : f.beltAt(cx, cy, 1) ?? f.beltAt(cx, cy);
+      const tb = this.fadedNow ? f.beltAt(cx, cy) : f.beltAt(cx, cy, 1) ?? f.beltAt(cx, cy);
       if (tb?.node && !f.nodeIsLink(tb)) {
         this.tracer = null;
         this.updateLevelBtn();
