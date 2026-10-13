@@ -184,7 +184,7 @@ export class GameRenderer {
   private overlay = new Graphics();
   private chunks = new Map<string, ChunkView>();
   private machineViews = new Map<number, MachineView>();
-  private noyauView: { root: Container; ring: Graphics; badge: Graphics; progress: number; pulse: number } | null = null;
+  private noyauView: { root: Container; ring: Graphics; badge: Graphics; progress: number; pulse: number; reactor?: NoyauReactor } | null = null;
   private noyauLabel: Text | null = null;
   private itemTextures = new Map<string, Texture>();
   private itemPool: Sprite[] = [];
@@ -589,8 +589,14 @@ export class GameRenderer {
         if (!t || d === undefined) continue;
         const x = (b.x + 0.5) * CELL + DX[d] * 7, y = (b.y + 0.5) * CELL + DY[d] * 7;
         const badge = new Graphics().circle(x, y, 7.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
-        const sp = new Sprite(this.itemTextures.get(t)!);
-        sp.anchor.set(0.5); sp.scale.set(0.5); sp.position.set(x, y);
+        // Tri par destination : la petite image du bâtiment (Noyau, Laboratoire, Comptoir, quai du train).
+        const dest = ({ '@noyau': 'noyau', '@labo': 'laboratoire', '@comptoir': 'comptoir', '@train': 'depot' } as Record<string, string>)[t];
+        const tex = dest ? buildingTexture(dest) : this.itemTextures.get(t);
+        if (!tex) continue;
+        const sp = new Sprite(tex);
+        sp.anchor.set(0.5);
+        if (dest) sp.width = sp.height = 11; else sp.scale.set(0.5);
+        sp.position.set(x, y);
         this.filterLayer.addChild(badge, sp);
       }
     }
@@ -1504,18 +1510,17 @@ export class GameRenderer {
     const body = new Graphics();
     const S = m.w * CELL;
     const badge = new Graphics();
+    let reactor: NoyauReactor | undefined;
     const tex = buildingTexture('noyau');
     if (tex) {
-      // Le dessin choisi (le cœur corail et ses quatre bras) posé sur un socle, comme les autres bâtiments.
-      // Socle d'abord, puis l'anneau de progression (le trait autour), puis le dessin ; le nom au-dessus.
+      // Le Noyau, réacteur à anneaux : un cœur lumineux et deux anneaux en orbite, posé sur un socle.
+      // Socle d'abord, puis l'anneau de progression (le trait autour), puis le réacteur ; le nom au-dessus.
       drawMachineBody(body, S - 2, S - 2, 22, PALETTE.white, false);
       this.noyauShadow = { w: S - 2, h: S - 2, r: 22 };
-      const sp = new Sprite(tex);
-      sp.anchor.set(0.5);
-      sp.width = sp.height = S - 22;
+      reactor = makeNoyauReactor(S);
       const label = this.makeLabel('Noyau');
       label.position.set(0, -S / 2 - 2);
-      root.addChild(body, ring, sp, label, badge);
+      root.addChild(body, ring, reactor.root, label, badge);
       this.noyauLabel = label;
     } else {
       body.roundRect(-S / 2 + 12, -S / 2 + 16, S - 24, S - 24, 16).fill(0xd8644d);
@@ -1525,7 +1530,7 @@ export class GameRenderer {
     root.position.set((m.x + m.w / 2) * CELL, (m.y + m.h / 2) * CELL);
     root.zIndex = zOf(m);
     this.machineLayer.addChild(root);
-    this.noyauView = { root, ring, badge, progress: -1, pulse: 0 };
+    this.noyauView = { root, ring, badge, progress: -1, pulse: 0, reactor };
   }
 
   private updateMachines(dt: number): void {
@@ -1630,7 +1635,8 @@ export class GameRenderer {
       const nm = [...this.game.view.machines.values()].find((x) => x.type === 'noyau');
       if (this.noyauLabel && nm) this.noyauLabel.visible = this.camera.zoom > 0.6 && !this.labelBlocked(nm, this.noyauLabel.width);
       nv.pulse = Math.max(0, nv.pulse - dt * 3);
-      nv.root.scale.set(1 + nv.pulse * 0.04);
+      nv.root.scale.set(1 + nv.pulse * 0.02);
+      if (nv.reactor && nv.root.visible) animateNoyauReactor(nv.reactor, dt, this.time, nv.pulse);
     }
     // Grand coffre : ses quatre objets les plus nombreux, en petit, à la place du dessin du coffre.
     // Petit coffre : l'objet qu'il garde ; s'il en garde de plusieurs sortes, une icône « mélange ».
@@ -2685,3 +2691,68 @@ function offsetPath(pts: { x: number; y: number }[], o: number): { x: number; y:
     return k < 1e-6 ? { x: p.x + n1.x * o, y: p.y + n1.y * o } : { x: p.x + (n1.x + n2.x) * o / k, y: p.y + (n1.y + n2.y) * o / k };
   });
 }
+
+/** Le Noyau dessiné en réacteur à anneaux, animé : le cœur respire, deux anneaux tournent, une lune sur chacun. */
+interface NoyauReactor {
+  root: Container;
+  glow: Graphics;
+  core: Container;
+  dot: Graphics;
+  rings: { box: Container; backBox: Container; moon: Graphics; tilt: number; speed: number; a: number; rx: number; ry: number }[];
+  spin: number;
+}
+
+function makeNoyauReactor(S: number): NoyauReactor {
+  const INK = PALETTE.ink;
+  const root = new Container();
+  const k = S / 96;
+  const glow = new Graphics().circle(0, 0, 22 * k).fill({ color: PALETTE.yellowLight, alpha: 0.9 });
+  const core = new Container();
+  const ball = new Graphics().circle(0, 0, 13.5 * k).fill(PALETTE.coral).stroke({ width: 3 * k, color: INK });
+  const dot = new Graphics().circle(0, 0, 5.5 * k).fill(PALETTE.yellow);
+  const shine = new Graphics().circle(-5 * k, -5 * k, 2.4 * k).fill({ color: 0xffffff, alpha: 0.85 });
+  core.addChild(ball, dot, shine);
+  const rings: NoyauReactor['rings'] = [];
+  const backs = new Container(), fronts = new Container();
+  for (const [tilt, speed, a, color] of [[-0.44, 1.25, 0, PALETTE.yellow], [0.61, -0.95, 2.2, PALETTE.coral]] as [number, number, number, number][]) {
+    const rx = 28 * k, ry = 9.5 * k;
+    const box = new Container(), boxF = new Container();
+    box.rotation = tilt; boxF.rotation = tilt;
+    const back = new Graphics(), front = new Graphics();
+    // La moitié arrière de l'anneau passe derrière le cœur, la moitié avant devant.
+    back.ellipse(0, 0, rx, ry).stroke({ width: 3 * k, color: INK });
+    front.moveTo(-rx, 0);
+    for (let i = 0; i <= 24; i++) { const t = Math.PI * (i / 24); front.lineTo(-Math.cos(t) * rx, Math.sin(t) * ry); }
+    front.stroke({ width: 3 * k, color: INK, cap: 'round' });
+    const moon = new Graphics().circle(0, 0, 3.6 * k).fill(color).stroke({ width: 2 * k, color: INK });
+    box.addChild(back); boxF.addChild(front);
+    backs.addChild(box); fronts.addChild(boxF);
+    rings.push({ box: boxF, backBox: box, moon, tilt, speed, a, rx, ry });
+  }
+  root.addChild(glow, backs, core, fronts);
+  return { root, glow, core, dot, rings, spin: 0 };
+}
+
+function animateNoyauReactor(r: NoyauReactor, dt: number, time: number, pulse: number): void {
+  // À chaque livraison, il s'emballe un instant (les anneaux accélèrent, le cœur brille).
+  const boost = 1 + pulse * 3;
+  r.spin += dt * boost;
+  const breathe = 1 + Math.sin(time * 2.2) * 0.06 + pulse * 0.12;
+  r.glow.scale.set(breathe * 1.05);
+  r.glow.alpha = 0.75 + Math.sin(time * 2.2) * 0.12 + pulse * 0.25;
+  r.core.scale.set(1 + Math.sin(time * 2.2 + 0.6) * 0.03 + pulse * 0.08);
+  r.dot.scale.set(1 + Math.sin(time * 4.4) * 0.12);
+  for (const g of r.rings) {
+    const back = g.backBox;
+    const tilt = g.tilt + Math.sin(time * 0.5 + g.a) * 0.12;
+    g.box.rotation = tilt; back.rotation = tilt;
+    const th = g.a + r.spin * g.speed;
+    const x = Math.cos(th) * g.rx, y = Math.sin(th) * g.ry;
+    g.moon.position.set(x, y);
+    // Devant ou derrière le cœur, selon où elle est sur l'anneau.
+    const front = Math.sin(th) > 0;
+    const want = front ? g.box : back;
+    if (g.moon.parent !== want) want.addChild(g.moon);
+  }
+}
+

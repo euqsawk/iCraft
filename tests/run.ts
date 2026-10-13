@@ -663,6 +663,25 @@ test('anciennes parties : foreuses 2 × 2 gardées telles quelles ; petites fore
   assert(g.factory.legacyRefund === 0, `rien à rembourser : ${g.factory.legacyRefund}`);
   assert(g.factory.serialize().drills2 === 1, 'nouvelle sauvegarde marquée');
 });
+test('trieur « pour le Noyau » : il n’envoie que ce qui manque, en comptant ce qui est déjà en route', () => {
+  const g = new Game('TEST-DN');
+  g.money = 1e5; g.world.reveal(0, 6, 20);
+  for (const id of ['separateur', 'tri']) g.unlocks.add(id);
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  // Il ne manque que 3 lingots de fer au Noyau (le reste de sa mission est fait).
+  g.palierDone = { lingot_fer: 147, lingot_cuivre: 80, plaque_fer: 40 };
+  const src = g.placeMachine('coffre', -7, 6)!, end = g.placeMachine('coffre', 8, 6)!;
+  assert(g.placeBelts(trace(g, [[-6.5, 6.5], [7.5, 6.5]]).result()), 'tapis');
+  const t = trace(g, [[1.5, 6.5], [1.5, 4.5]]);
+  assert(t.splitFrom && g.placeBelts(t.result(), { from: t.splitFrom, dir: t.splitDir!, jump: t.splitJump }), 'dérivation vers le Noyau');
+  const sb = g.factory.beltAt(1, 6)!;
+  assert(g.setBeltFilter(sb, '@noyau'), 'tri pour le Noyau');
+  g.factory.putInStorage(src, 'lingot_fer', 20);
+  g.factory.putInStorage(src, 'charbon', 5);
+  run(g, 60);
+  assert(g.palier === 2, `le Noyau a eu ses 3 lingots : palier ${g.palier}`);
+  assert((end.inBuf.lingot_fer ?? 0) === 17 && (end.inBuf.charbon ?? 0) === 5, `le reste continue : ${JSON.stringify(end.inBuf)}`);
+});
 test('séparateur à 3 sorties : un tiers de chaque côté ; trieur à 2 objets', () => {
   const setup = (tri: boolean) => {
     const g = new Game('TEST-S3'); g.money = 1e5; g.world.reveal(0, 9, 20);

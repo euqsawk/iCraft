@@ -82,7 +82,7 @@ export const NODE_SVG: Record<string, string> = {
 };
 
 /** Le Noyau. */
-export const NOYAU_SVG = "<path d=\"M11 32 H18 M53 32 H46 M32 11 V18 M32 53 V46\" stroke-width=\"13\"/><path d=\"M11 32 H18 M53 32 H46 M32 11 V18 M32 53 V46\" stroke=\"#E3ECE7\" stroke-width=\"6.5\"/><rect x=\"15\" y=\"15\" width=\"34\" height=\"34\" rx=\"7\" fill=\"#F47C64\"/><circle cx=\"32\" cy=\"32\" r=\"7\" fill=\"#FFC857\"/>";
+export const NOYAU_SVG = "<circle cx=\"32\" cy=\"32\" r=\"21\" fill=\"#FFE3A3\"/><ellipse cx=\"32\" cy=\"32\" rx=\"27\" ry=\"9\" fill=\"none\" stroke=\"#2E3A4B\" stroke-width=\"3\" transform=\"rotate(-25 32 32)\"/><circle cx=\"32\" cy=\"32\" r=\"13\" fill=\"#F47C64\" stroke=\"#2E3A4B\" stroke-width=\"3\"/><circle cx=\"32\" cy=\"32\" r=\"5.5\" fill=\"#FFC857\"/><ellipse cx=\"32\" cy=\"32\" rx=\"27\" ry=\"9\" fill=\"none\" stroke=\"#2E3A4B\" stroke-width=\"3\" transform=\"rotate(35 32 32)\"/><circle cx=\"55\" cy=\"21\" r=\"3.6\" fill=\"#FFC857\" stroke=\"#2E3A4B\" stroke-width=\"2\"/><circle cx=\"12\" cy=\"49\" r=\"3\" fill=\"#F47C64\" stroke=\"#2E3A4B\" stroke-width=\"2\"/>";
 
 /** Les outils de la barre (au trait, la barre les colore). */
 export const TOOL_SVG: Record<string, string> = {

@@ -423,6 +423,9 @@ export class Game {
     this.factory.onDeliver = (m, item) => this.receive(m, item, 1);
     this.factory.onRocket = (m) => { this.rockets++; this.emit({ type: 'rocket', id: m.id, n: this.rockets }); };
     this.factory.buildingAccepts = (m, item) => this.accepts(m, item) > 0;
+    // Les trieurs « pour le Noyau », « pour le Laboratoire »… n'envoient que ce qui manque.
+    this.factory.destNeeds = (dest) => dest === 'noyau' ? this.noyauNeeds() : dest === 'labo' ? this.labNeeds()
+      : dest === 'comptoir' ? this.comptoirNeeds() : dest === 'train' ? this.freightMissing() : {};
     if (save) {
       this.load(save);
       this.noyau = [...this.factory.machines.values()].find((m) => m.type === 'noyau') ?? this.factory.addMachine('noyau', 0, 0, true);

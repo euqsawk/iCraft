@@ -1387,12 +1387,64 @@ export class Factory {
     return this.splitOf.get(b) ?? null;
   }
 
+  /**
+   * Ce qu'il manque encore à une destination de tri (« @noyau », « @labo », « @comptoir », « @train ») :
+   * branché par la partie. Un trieur réglé sur une destination n'envoie que ce qui manque.
+   */
+  destNeeds: ((dest: string) => Record<string, number>) | null = null;
+  private transit: Map<string, Map<string, number>> | null = null;
+  private needCache: Map<string, Record<string, number>> | null = null;
+
+  /**
+   * Ce qui est déjà en route vers une destination : les objets partis dans la dérivation d'un trieur réglé
+   * sur elle (sur la case du trieur, puis sur les tapis qui suivent jusqu'au bâtiment).
+   */
+  private inTransit(dest: string): Map<string, number> {
+    if (!this.transit) this.transit = new Map();
+    let m = this.transit.get(dest);
+    if (m) return m;
+    m = new Map();
+    const tag = `@${dest}`;
+    const add = (t: string) => m!.set(t, (m!.get(t) ?? 0) + 1);
+    for (const b of this.belts.values()) {
+      for (const [f, o, link] of [[b.filter, 1, this.splitOf.get(b)], [b.filter2, 2, this.split2Of.get(b)]] as const) {
+        if (f !== tag) continue;
+        for (const it of b.items) if (it.o === o) add(it.t);
+        // Les tapis de la dérivation, jusqu'au bâtiment (ou au bout).
+        const seen = new Set<Belt>();
+        let nx = link;
+        while (nx && nx.kind === 'belt' && !seen.has(nx.belt) && seen.size < 400) {
+          seen.add(nx.belt);
+          for (const it of nx.belt.items) add(it.t);
+          nx = this.nextOf.get(nx.belt) ?? null;
+        }
+      }
+    }
+    this.transit.set(dest, m);
+    return m;
+  }
+
+  /** Un trieur réglé sur une destination : cet objet lui manque-t-il encore (compte tenu de ce qui est en route) ? */
+  private wantedBy(filter: string, t: string): boolean {
+    const dest = filter.slice(1);
+    if (!this.needCache) this.needCache = new Map();
+    let needs = this.needCache.get(dest);
+    if (!needs) { needs = this.destNeeds?.(dest) ?? {}; this.needCache.set(dest, needs); }
+    const need = needs[t] ?? 0;
+    if (need <= 0) return false;
+    const tr = this.inTransit(dest);
+    if ((tr.get(t) ?? 0) >= need) return false;
+    tr.set(t, (tr.get(t) ?? 0) + 1); // il part : il compte tout de suite comme « en route »
+    return true;
+  }
+
   /** Un objet entre dans une case : sur un séparateur, il prend une sortie sur deux. */
   private enter(b: Belt, it: BeltItem): void {
     if (b.split === undefined) { delete it.o; return; }
     if (b.filter || b.filter2) {
-      if (b.filter && it.t === b.filter) it.o = 1;
-      else if (b.split2 !== undefined && b.filter2 && it.t === b.filter2) it.o = 2;
+      const match = (f: string | undefined) => !!f && (f.startsWith('@') ? this.wantedBy(f, it.t) : it.t === f);
+      if (match(b.filter)) it.o = 1;
+      else if (b.split2 !== undefined && match(b.filter2)) it.o = 2;
       else delete it.o;
       return;
     }
@@ -1611,6 +1663,8 @@ export class Factory {
   tick(dt: number): void {
     this.clock += dt;
     this.refresh();
+    this.transit = null;
+    this.needCache = null;
     const base = RULES.beltSpeed * this.speedMult * dt;
     const gap = RULES.beltGap;
 
