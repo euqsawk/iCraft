@@ -142,7 +142,12 @@ export class GameRenderer {
   /** Feux et barrières des croisements (redessinés à chaque image). */
   private lightG = new Graphics();
   private routeSig = '';
-  private vehicleViews = new Map<string, { root: Container; parts: Container[]; cargo: Sprite; kind: string }>();
+  private vehicleViews = new Map<string, { root: Container; parts: Container[]; cargo: Sprite; kind: string; dark?: boolean }>();
+  /** Camions et trains, cachés là où ils passent sous terre (masque inversé : l'intérieur des tunnels). */
+  private vehicleLayer = new Container();
+  private tunnelMaskG = new Graphics();
+  /** Le cadre de béton des tunnels, par-dessus les véhicules (ils passent dessous en entrant). */
+  private portalG = new Graphics();
   /** Mode électricité (outil Câble) : la surface pâlit, on voit les câbles sous les blocs et les machines alimentées. */
   electric = false;
   /** Câbles visibles hors du mode électricité (gomme) ; sinon ils restent cachés. */
@@ -270,7 +275,9 @@ export class GameRenderer {
     const dotTex = this.makeDotTexture();
     this.dots = new TilingSprite({ texture: dotTex, width: 100, height: 100 });
     this.dots.alpha = 0.5;
-    this.worldLayer.addChild(this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeG, this.bridgeItemLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.actorLayer.addChild(this.vehicleLayer, this.portalG);
+    this.vehicleLayer.setMask({ mask: this.tunnelMaskG, inverse: true });
+    this.worldLayer.addChild(this.tunnelMaskG, this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeG, this.bridgeItemLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.upperLayer.addChild(this.upperG, this.upperItemLayer, this.filterLayer);
     this.coverLayer.alpha = 0.5;
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
@@ -930,6 +937,8 @@ export class GameRenderer {
   private drawRoutes(): void {
     const g = this.routeG, f = this.game.view;
     g.clear();
+    const top = this.portalG, mask = this.tunnelMaskG;
+    top.clear(); mask.clear();
     const legs: { kind: string; leg: LegRoute }[] = [];
     for (const l of f.lines.values()) for (const leg of f.routes.get(l.id)?.legs ?? []) legs.push({ kind: l.kind, leg });
     const line = (pts: { x: number; y: number }[], o = 0) => { const q = o ? offsetPath(pts, o) : pts; g.moveTo(q[0].x, q[0].y); for (const p of q.slice(1)) g.lineTo(p.x, p.y); };
@@ -978,7 +987,12 @@ export class GameRenderer {
           dashedPolyline(g, offsetPath(pts, o), 6, 6);
           g.stroke({ width: 2, color: PALETTE.ink, alpha: 0.28 });
         }
-        for (const [s, inward] of [[a, 1], [b, -1]] as const) this.drawPortal(g, leg, s, inward, kind);
+        for (const [s, inward] of [[a, 1], [b, -1]] as const) this.drawPortal(g, top, leg, s, inward, kind);
+        // Le masque : l'intérieur du tunnel, d'une bouche à l'autre (les véhicules y disparaissent peu à peu).
+        if (pts.length >= 2) {
+          const R = W / 2 + 8, l = offsetPath(pts, R), r = offsetPath(pts, -R).reverse();
+          mask.poly([...l, ...r].flatMap((q) => [q.x, q.y])).fill(0xffffff);
+        }
       }
     }
     // Croisements : carrefour (asphalte uni), passage à niveau (rails sur la route), croisement de rails.
@@ -1009,20 +1023,21 @@ export class GameRenderer {
   }
 
   /** Entrée d'un tunnel : la voie descend sous un cadre de béton, la bouche sombre vers l'extérieur. */
-  private drawPortal(g: Graphics, leg: LegRoute, s: number, inward: number, kind: string): void {
+  private drawPortal(g: Graphics, top: Graphics, leg: LegRoute, s: number, inward: number, kind: string): void {
     const p = pointAt(leg, Math.min(leg.len - 0.01, Math.max(0.01, s)));
     const ca = Math.cos(p.a) * inward, sa = Math.sin(p.a) * inward;
     const cx = p.x * CELL, cy = p.y * CELL;
     // u : vers l'intérieur du tunnel ; v : en travers.
     const P = (u: number, v: number) => ({ x: cx + ca * u - sa * v, y: cy + sa * u + ca * v });
-    const quad = (u0: number, u1: number, v0: number, v1: number) => { const a = P(u0, v0), b = P(u1, v0), c = P(u1, v1), d = P(u0, v1); g.poly([a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y]); };
+    const quadOn = (gg: Graphics, u0: number, u1: number, v0: number, v1: number) => { const a = P(u0, v0), b = P(u1, v0), c = P(u1, v1), d = P(u0, v1); gg.poly([a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y]); return gg; };
+    const quad = (u0: number, u1: number, v0: number, v1: number) => quadOn(g, u0, u1, v0, v1);
     // La rampe qui descend (de plus en plus sombre).
     for (let i = 0; i < 4; i++) { quad(-CELL * 1.6 + i * CELL * 0.4, -CELL * 1.6 + (i + 1) * CELL * 0.4, -CELL + 3, CELL - 3); g.fill({ color: 0x2e3a4b, alpha: 0.06 + i * 0.07 }); }
-    // La bouche et le cadre.
+    // La bouche (au sol), puis le cadre, par-dessus les véhicules qui passent dessous.
     quad(-2, 8, -CELL + 2, CELL - 2); g.fill(0x26303f);
-    quad(-6, 0, -CELL - 3, CELL + 3); g.fill(kind === 'train' ? 0x8a99ad : 0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
-    quad(0, 10, -CELL - 3, -CELL + 2); g.fill(0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
-    quad(0, 10, CELL - 2, CELL + 3); g.fill(0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
+    quadOn(top, -6, 0, -CELL - 3, CELL + 3).fill(kind === 'train' ? 0x8a99ad : 0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
+    quadOn(top, 0, 10, -CELL - 3, -CELL + 2).fill(0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
+    quadOn(top, 0, 10, CELL - 2, CELL + 3).fill(0xc7d3df).stroke({ width: 2, color: PALETTE.ink });
   }
 
   /** Les feux des croisements, à droite de chaque voie avant le croisement (rouge, orange ou vert). */
@@ -1095,7 +1110,7 @@ export class GameRenderer {
     cargo.anchor.set(0.5);
     cargo.scale.set(0.75 * VEHICLE_SCALE);
     root.addChild(cargo);
-    this.actorLayer.addChildAt(root, 0);
+    this.vehicleLayer.addChild(root);
     return { root, parts, cargo, kind };
   }
 
@@ -1127,13 +1142,13 @@ export class GameRenderer {
           const p = pointAt(leg, s);
           part.position.set(p.x * CELL, p.y * CELL);
           part.rotation = p.a;
-          // Dans un tunnel, on ne le voit plus.
-          part.visible = !inTunnel(leg, s);
+          // Sous terre, le masque des tunnels le cache peu à peu ; ses phares s'éteignent dès que l'avant entre.
+          if (i === 0) view.dark = inTunnel(leg, Math.min(leg.len, s + 0.6));
         });
         const nC = f.cargoCount(v);
         const main = Object.entries(v.cargo).sort((x, y) => y[1] - x[1])[0]?.[0];
         const carrier = view.parts[view.parts.length > 1 ? 1 : 0];
-        view.cargo.visible = nC > 0 && !!main && carrier.visible;
+        view.cargo.visible = nC > 0 && !!main;
         if (main) view.cargo.texture = this.itemTextures.get(main)!;
         view.cargo.position.set(carrier.x, carrier.y);
         view.root.visible = this.inView(view.parts[0].x, view.parts[0].y, CELL * 3);
@@ -2543,7 +2558,7 @@ export class GameRenderer {
     glow(rx, ry, CELL * 6, 0xfff2d6, 1);
     // Camions et trains : deux gros phares devant, et un faisceau qui éclaire la route.
     for (const vv of this.vehicleViews.values()) {
-      if (!vv.root.visible) continue;
+      if (!vv.root.visible || vv.dark) continue;
       const lead = vv.parts[0];
       const ca = Math.cos(lead.rotation), sa = Math.sin(lead.rotation);
       const big = vv.kind === 'train' ? 1.35 : 1;
