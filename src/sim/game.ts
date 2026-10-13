@@ -1385,7 +1385,8 @@ export class Game {
 
   /** Relie deux machines collées : la production de la première passe directement dans la seconde. */
   linkMachines(from: Machine, to: Machine): boolean {
-    if (from === to || !this.view.touching(from, to)) return false;
+    // Collées, ou séparées seulement par des tapis : un pont direct par-dessus.
+    if (from === to || (!this.view.touching(from, to) && !this.view.bridgeBetween(from, to))) return false;
     if (!from.links?.includes(to.id)) from.links = [...(from.links ?? []), to.id];
     this.view.markBuilt();
     this.emit({ type: 'factory' });

@@ -1979,6 +1979,8 @@ export class Factory {
     for (const id of m.links!) {
       const to = this.machines.get(id);
       if (!to || !to.built) continue;
+      // Plus collées ni reliées par un pont (déplacées, tapis retiré) : la liaison ne passe plus.
+      if (!this.touching(m, to) && !this.bridgeBetween(m, to)) continue;
       const t = Object.keys(buf).find((k) => buf[k] > 0 && this.canAccept(to, k));
       if (!t) continue;
       buf[t]--;
@@ -1990,6 +1992,39 @@ export class Factory {
   }
 
   /** Les deux machines se touchent-elles par un côté ? */
+  /**
+   * Un pont direct entre deux machines : elles se font face, séparées seulement par des tapis
+   * (1 à 4 cases, en ligne droite). Renvoie la ligne du pont (le milieu de leur bord commun), ou null.
+   */
+  bridgeBetween(a: Machine, b: Machine): { d: Dir; gap: number; lane: number } | null {
+    const ox0 = Math.max(a.x, b.x), ox1 = Math.min(a.x + a.w, b.x + b.w);
+    const oy0 = Math.max(a.y, b.y), oy1 = Math.min(a.y + a.h, b.y + b.h);
+    let d: Dir, gap: number, lanes: number[];
+    if (ox1 > ox0 && (b.y >= a.y + a.h || a.y >= b.y + b.h)) {
+      d = b.y >= a.y + a.h ? 1 : 3;
+      gap = d === 1 ? b.y - (a.y + a.h) : a.y - (b.y + b.h);
+      lanes = [...Array(ox1 - ox0).keys()].map((i) => ox0 + i);
+    } else if (oy1 > oy0 && (b.x >= a.x + a.w || a.x >= b.x + b.w)) {
+      d = b.x >= a.x + a.w ? 0 : 2;
+      gap = d === 0 ? b.x - (a.x + a.w) : a.x - (b.x + b.w);
+      lanes = [...Array(oy1 - oy0).keys()].map((i) => oy0 + i);
+    } else return null;
+    if (gap < 1 || gap > RULES.bridgeSpan) return null;
+    // Une ligne où toutes les cases entre elles sont des tapis (au plus près du milieu de leur bord commun).
+    const mid = (lanes[0] + lanes[lanes.length - 1]) / 2;
+    lanes.sort((p, q) => Math.abs(p - mid) - Math.abs(q - mid));
+    for (const lane of lanes) {
+      let ok = true;
+      for (let k = 1; k <= gap && ok; k++) {
+        const x = d === 0 ? a.x + a.w - 1 + k : d === 2 ? a.x - k : lane;
+        const y = d === 1 ? a.y + a.h - 1 + k : d === 3 ? a.y - k : lane;
+        ok = !!this.beltAt(x, y) && !this.machineAt(x, y);
+      }
+      if (ok) return { d, gap, lane };
+    }
+    return null;
+  }
+
   touching(a: Machine, b: Machine): boolean {
     const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
     const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);

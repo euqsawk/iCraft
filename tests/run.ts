@@ -624,6 +624,22 @@ test('monter un coffre de niveau : 2 puis 3 fois plus de place, rendu à la supp
   g.removeMachine(c);
   assert(g.money - m1 === MACHINES.coffre.cost * (1 + 2 + 4), `rendu ${g.money - m1}`);
 });
+test('pont direct entre deux machines par-dessus un tapis (MACHINE > TAPIS > MACHINE)', () => {
+  const g = new Game('TEST-PM');
+  g.money = 10000; g.world.reveal(8, 8, 20);
+  const a = g.placeMachine('coffre', 6, 8)!, b = g.placeMachine('coffre', 8, 8)!;
+  assert(g.placeBelts(trace(g, [[7.5, 5.5], [7.5, 11.5]]).result()), 'un tapis passe entre les deux');
+  for (const m of g.factory.machines.values()) m.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const t = new BeltTracer(g.factory, 6.5, 8.5); t.move(8.5, 8.5);
+  assert(t.linkMachine === b, 'le doigt qui passe par-dessus le tapis propose le pont');
+  assert(g.linkMachines(a, b), 'pont posé');
+  g.factory.putInStorage(a, 'vis', 4);
+  run(g, 10);
+  assert((b.inBuf.vis ?? 0) === 4, `les vis passent par le pont : ${JSON.stringify(b.inBuf)}`);
+  const far = g.placeMachine('coffre', 12, 8)!;
+  assert(!g.linkMachines(a, far), 'pas de pont s’il n’y a pas que des tapis entre elles');
+});
 test('vider un tapis : tout ce qu’il transporte disparaît', () => {
   const g = new Game('TEST-VT');
   g.money = 10000; g.world.reveal(6, 6, 20);

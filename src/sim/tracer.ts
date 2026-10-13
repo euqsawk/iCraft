@@ -193,6 +193,16 @@ export class BeltTracer {
       const lb = this.factory.beltAt(x, y);
       if (lb && lb.jump) { this.blocked = true; return; }
       if (lb) {
+        // Le doigt passe par-dessus le tapis jusqu'à une autre machine : un pont direct entre les deux.
+        if (cx !== x || cy !== y) {
+          const d = this.startDir as Dir;
+          for (let k = 1; k <= RULES.bridgeSpan; k++) {
+            const tx = x + DX[d] * k, ty = y + DY[d] * k;
+            const tm = this.factory.machineAt(tx, ty);
+            if (tm && tm !== m) { if (this.factory.bridgeBetween(m, tm)) { this.linkMachine = tm; this.blocked = true; return; } break; }
+            if (!this.factory.beltAt(tx, ty)) break;
+          }
+        }
         const toMachine = opposite(this.startDir as Dir);
         const intoMachine = lb.dir === toMachine;
         const fromMachine = opposite(lb.inDir) === toMachine;

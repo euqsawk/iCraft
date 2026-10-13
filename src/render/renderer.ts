@@ -9,7 +9,7 @@ import { machineDef } from '../data/machines.ts';
 import { span, type Belt, type Machine } from '../sim/factory.ts';
 import type { Game } from '../sim/game.ts';
 import { clock } from '../sim/freight.ts';
-import { DX, DY, key, unkey } from '../sim/geom.ts';
+import { DX, DY, key, unkey, type Dir } from '../sim/geom.ts';
 import type { CableTracer } from '../sim/cables.ts';
 import type { BeltTracer } from '../sim/tracer.ts';
 import { chunkKey, patchRadius, type Patch } from '../world/world.ts';
@@ -584,18 +584,35 @@ export class GameRenderer {
     this.pickLayer.removeChildren().forEach((c) => c.destroy());
     for (const b of this.game.view.belts.values()) {
       if (b.split === undefined) continue;
-      // Une pastille par dérivation triée : l'objet qui y part.
+      const fv = this.game.view;
+      // Un tapis qui nourrit une machine par le côté n'est pas un vrai séparateur : pas de boîte.
+      if (fv.machineAt(b.x + DX[b.split], b.y + DY[b.split])) continue;
+      // La boîte du séparateur : un carré par-dessus les objets (ils y entrent, puis ressortent tout droit ou sur le côté),
+      // avec une petite encoche de chaque côté où ça sort.
+      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL, hs = 10;
+      const box = new Graphics();
+      box.roundRect(cx - hs, cy - hs + 3, hs * 2, hs * 2, 6).fill({ color: PALETTE.ink, alpha: 0.2 });
+      box.roundRect(cx - hs, cy - hs, hs * 2, hs * 2, 6).fill(b.built ? PALETTE.white : { color: PALETTE.white, alpha: 0.6 }).stroke({ width: 2, color: PALETTE.ink, alpha: b.built ? 1 : 0.5 });
+      for (const d of [b.dir, b.split, b.split2].filter((x): x is Dir => x !== undefined)) {
+        const ax = DX[d], ay = DY[d], px = -ay, py = ax;
+        const ex = cx + ax * hs, ey = cy + ay * hs;
+        box.moveTo(ex - ax * 4 + px * 3.5, ey - ay * 4 + py * 3.5).lineTo(ex - ax * 1, ey - ay * 1).lineTo(ex - ax * 4 - px * 3.5, ey - ay * 4 - py * 3.5)
+          .stroke({ width: 2, color: PALETTE.ink, cap: 'round', join: 'round' });
+      }
+      this.filterLayer.addChild(box);
+      // Une pastille par dérivation triée : l'objet (ou le bâtiment) qui y part, sur la boîte, du côté de la dérivation.
       for (const [t, d] of [[b.filter, b.split], [b.filter2, b.split2]] as [string | undefined, number | undefined][]) {
         if (!t || d === undefined) continue;
-        const x = (b.x + 0.5) * CELL + DX[d] * 7, y = (b.y + 0.5) * CELL + DY[d] * 7;
-        const badge = new Graphics().circle(x, y, 7.5).fill(0xffffff).stroke({ width: 1.6, color: PALETTE.ink });
+        const two = !!b.filter && !!b.filter2;
+        const x = cx + (two ? DX[d] * 4 : 0), y = cy + (two ? DY[d] * 4 : 0);
+        const badge = new Graphics().circle(x, y, 6.5).fill(0xffffff).stroke({ width: 1.4, color: PALETTE.ink });
         // Tri par destination : la petite image du bâtiment (Noyau, Laboratoire, Comptoir, quai du train).
         const dest = ({ '@noyau': 'noyau', '@labo': 'laboratoire', '@comptoir': 'comptoir', '@train': 'depot' } as Record<string, string>)[t];
         const tex = dest ? buildingTexture(dest) : this.itemTextures.get(t);
         if (!tex) continue;
         const sp = new Sprite(tex);
         sp.anchor.set(0.5);
-        if (dest) sp.width = sp.height = 11; else sp.scale.set(0.5);
+        if (dest) sp.width = sp.height = 10; else sp.scale.set(0.42);
         sp.position.set(x, y);
         this.filterLayer.addChild(badge, sp);
       }
@@ -682,14 +699,7 @@ export class GameRenderer {
         }
         if (any) g.stroke({ width: lv === 1 ? 2 : 2.4, color: BELT_LEVEL_COLORS[lv - 1], cap: 'round', join: 'round' });
       }
-      // Séparateurs : un losange blanc cerclé (comme sur la maquette).
-      for (const b of list) {
-        if (b.split === undefined) continue;
-        // Un tapis qui nourrit une machine par le côté n'est pas un vrai séparateur : pas de losange.
-        if (f.machineAt(b.x + DX[b.split], b.y + DY[b.split])) continue;
-        const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
-        g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
-      }
+      // Séparateurs : une petite boîte carrée posée par-dessus (dessinée avec les pastilles de tri, au-dessus des objets).
     }
     this.drawBridges(built);
     this.drawMeters();
@@ -1179,11 +1189,6 @@ export class GameRenderer {
       }
     }
     g.stroke({ width: 2, color: PALETTE.roller, cap: 'round', join: 'round' });
-    // Le losange du séparateur reste visible au départ de son pont.
-    for (const b of splitters) {
-      const cx = (b.x + 0.5) * CELL, cy = (b.y + 0.5) * CELL;
-      g.poly([cx, cy - 9, cx + 9, cy, cx, cy + 9, cx - 9, cy]).fill(PALETTE.white).stroke({ width: 2, color: PALETTE.ink, join: 'round' });
-    }
   }
 
   /** Le milieu du bord commun entre deux machines collées, et le sens de a vers b. */
@@ -1215,7 +1220,28 @@ export class GameRenderer {
     for (const a of f.machines.values()) {
       for (const id of a.links ?? []) {
         const b = f.machines.get(id);
-        if (!b || !f.touching(a, b)) continue;
+        if (!b) continue;
+        if (!f.touching(a, b)) {
+          // Séparées par des tapis : un petit pont par-dessus, d'un bord à l'autre, chevrons verts dans le sens.
+          const br = f.bridgeBetween(a, b);
+          if (!br) continue;
+          const d = br.d, ax = DX[d], ay = DY[d];
+          const c = (br.lane + 0.5) * CELL;
+          const x0 = d === 0 ? (a.x + a.w) * CELL : d === 2 ? a.x * CELL : c;
+          const y0 = d === 1 ? (a.y + a.h) * CELL : d === 3 ? a.y * CELL : c;
+          const len = br.gap * CELL, x1 = x0 + ax * len, y1 = y0 + ay * len;
+          const ghost = !a.built || !b.built, al = ghost ? 0.5 : 1;
+          const px = -ay, py = ax;
+          g.moveTo(x0, y0 + 4).lineTo(x1, y1 + 4).stroke({ width: 15, color: PALETTE.shadow, alpha: al, cap: 'butt' });
+          g.moveTo(x0, y0).lineTo(x1, y1).stroke({ width: 15, color: PALETTE.white, alpha: al, cap: 'butt' });
+          for (const s of [-1, 1]) g.moveTo(x0 + px * 6 * s, y0 + py * 6 * s).lineTo(x1 + px * 6 * s, y1 + py * 6 * s).stroke({ width: 1.6, color: 0xc9d8d0, alpha: al });
+          for (let k = 0; k < br.gap; k++) {
+            const cx = x0 + ax * (k + 0.5) * CELL, cy = y0 + ay * (k + 0.5) * CELL;
+            g.moveTo(cx - ax * 2.5 + px * 4, cy - ay * 2.5 + py * 4).lineTo(cx + ax * 2, cy + ay * 2).lineTo(cx - ax * 2.5 - px * 4, cy - ay * 2.5 - py * 4)
+              .stroke({ width: 2.4, color: PALETTE.green, alpha: ghost ? 0.4 : 1, cap: 'round', join: 'round' });
+          }
+          continue;
+        }
         const { x: ex, y: ey, d } = this.linkEdge(a, b);
         const ax = DX[d], ay = DY[d], px = -ay, py = ax;
         const ghost = !a.built || !b.built;
