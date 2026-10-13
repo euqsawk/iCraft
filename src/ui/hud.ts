@@ -3430,7 +3430,7 @@ export class Hud implements GestureHandlers {
   private pauseEl: HTMLElement | null = null;
 
   /**
-   * Pause : une grosse bordure qui clignote et une grande icône au milieu. Toucher n'importe où relance.
+   * Pause : une grande icône au milieu. Toucher n'importe où relance.
    * (Aussi d'office quand on quitte la fenêtre.)
    */
   setPaused(on: boolean): void {

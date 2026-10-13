@@ -1247,16 +1247,11 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .ns-hint { margin: 0; font-size: 12px; font-weight: 700; color: var(--ink2); }
 .node-sheet > .row { margin-top: 12px; }
 
-/* ---------- Pause : bouton à côté de l'argent, et l'écran de pause (bordure qui clignote, grande icône) ---------- */
+/* ---------- Pause : bouton à côté de l'argent, et l'écran de pause (grande icône au milieu) ---------- */
 .pause-btn svg { width: 20px; height: 20px; }
 .pause-screen {
   position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center; justify-content: center;
   background: rgba(46, 58, 75, .22); touch-action: none; cursor: pointer;
-  box-shadow: inset 0 0 0 14px var(--coral); animation: pause-blink 1.1s ease-in-out infinite;
-}
-@keyframes pause-blink {
-  0%, 100% { box-shadow: inset 0 0 0 14px var(--coral); }
-  50% { box-shadow: inset 0 0 0 14px rgba(244, 124, 100, .15); }
 }
 .pause-mid { display: flex; flex-direction: column; align-items: center; gap: 10px; font-family: var(--font); color: var(--ink); pointer-events: none; }
 .pause-ico {
@@ -1268,4 +1263,4 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 @keyframes pause-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
 .pause-mid b { font-size: 30px; font-weight: 900; padding: 4px 18px; border-radius: 14px; background: #fff; box-shadow: 0 4px 0 var(--shadow); }
 .pause-mid small { font-size: 14px; font-weight: 800; padding: 6px 12px; border-radius: 12px; background: rgba(255, 255, 255, .92); }
-@media (prefers-reduced-motion: reduce) { .pause-screen, .pause-ico { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .pause-ico { animation: none; } }
