@@ -714,10 +714,13 @@ export class Hud implements GestureHandlers {
     if (!open && this.upperFaded) { this.upperFaded = false; this.r.setUpperFaded(false); }
     const show = open && (this.tool !== 'machine' || this.draggingBox);
     b.classList.toggle('hidden', !show);
-    if (!show) return;
-    this.placeLevelSwitch();
     const t = this.tracer;
     const l = this.draggingBox ? this.placeLevel : t ? t.level : this.upperFaded ? 0 : 1;
+    // Pendant un tracé (ou le glisser d'une boîte), la vue suit l'étage où l'on pose : au 1ᵉʳ, le haut pâlit.
+    // Ensuite, elle revient à ce qu'on avait choisi.
+    this.r.setUpperFaded(open && (t || this.draggingBox) ? l === 0 : this.upperFaded);
+    if (!show) return;
+    this.placeLevelSwitch();
     b.querySelectorAll<HTMLButtonElement>('button').forEach((x) => x.classList.toggle('on', x.dataset.l === String(l)));
     b.classList.toggle('up', !!t && l === 1);
   }
