@@ -130,6 +130,8 @@ export const RULES = {
   /** Niveaux de machines (fours, presses…) : vitesse, et prix (× le prix de la machine) pour monter à ce niveau. */
   machineLevelSpeed: [1, 1.5, 2],
   machineLevelCost: [0, 1, 2],
+  /** Coffres, grands coffres, entrepôts : 3 niveaux (2 puis 3 fois plus de place), au double puis au quadruple de leur prix. */
+  chestLevelCost: [0, 2, 4],
   /** Niveau le plus haut sans rien débloquer (tapis, foreuses, machines) : chaque niveau est dans l'arbre. */
   beltBaseMax: 1,
   drillBaseMax: 1,

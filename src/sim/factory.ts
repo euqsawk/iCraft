@@ -1517,8 +1517,10 @@ export class Factory {
   /** Cases occupées d'un coffre (piles de 10). */
   /** Nombre de cases d'un coffre (30 pour un grand coffre). */
   slotsOf(m: Machine): number {
-    if (m.type === 'entrepot') return RULES.warehouseSlots;
-    return m.type === 'grand_coffre' || m.type === 'depot' || m.type === 'gare' ? RULES.bigChestSlots : this.chestSlots;
+    // Un coffre, un grand coffre ou un entrepôt monte de niveau : 2 puis 3 fois plus de place.
+    const lv = m.type === 'depot' || m.type === 'gare' ? 1 : Math.max(1, Math.min(3, m.lvl ?? 1));
+    if (m.type === 'entrepot') return RULES.warehouseSlots * lv;
+    return (m.type === 'grand_coffre' || m.type === 'depot' || m.type === 'gare' ? RULES.bigChestSlots : this.chestSlots) * lv;
   }
 
   storageSlots(m: Machine, buf: Record<string, number> = m.inBuf): number {

@@ -845,9 +845,29 @@ export class Game {
     return true;
   }
 
-  /** Ce qu'on a payé pour les niveaux d'une foreuse ou d'une machine. */
+  /** Un coffre, un grand coffre ou un entrepôt peut monter jusqu'au niveau 3 (plus de place). */
+  chestUpgrade(m: Machine): { from: number; to: number; price: number } | null {
+    if (!['coffre', 'grand_coffre', 'entrepot'].includes(m.type)) return null;
+    const from = m.lvl ?? 1;
+    if (from >= 3) return null;
+    return { from, to: from + 1, price: machineDef(m.type).cost * RULES.chestLevelCost[from] };
+  }
+
+  upgradeChest(m: Machine): boolean {
+    const up = this.chestUpgrade(m);
+    if (!up) return false;
+    if (this.money < up.price) { this.emit({ type: 'toast', text: `Il faut ${up.price} pièces`, tone: 'warn' }); return false; }
+    this.money -= up.price;
+    m.lvl = up.to;
+    this.emit({ type: 'money' });
+    this.emit({ type: 'factory' });
+    return true;
+  }
+
+  /** Ce qu'on a payé pour les niveaux d'une foreuse, d'une machine ou d'un coffre. */
   levelPaid(m: Machine): number {
     const def = machineDef(m.type);
+    if (['coffre', 'grand_coffre', 'entrepot'].includes(m.type)) return Game.levelValue(RULES.chestLevelCost.map((k) => k * def.cost), m.lvl);
     if (def.kind === 'crafter') return Game.levelValue(RULES.machineLevelCost.map((k) => k * def.cost), m.lvl);
     return def.kind === 'drill' ? Game.levelValue(RULES.drillLevelCost, m.lvl) : 0;
   }

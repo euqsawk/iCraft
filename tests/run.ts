@@ -610,6 +610,20 @@ test('jeter un objet d’un coffre', () => {
   g.factory.putInStorage(c, 'vis', 23); g.factory.putInStorage(c, 'charbon', 4);
   assert(g.discardFromChest(c, 'vis') === 23 && !c.inBuf.vis && c.inBuf.charbon === 4, 'les vis sont jetées, le charbon reste');
 });
+test('monter un coffre de niveau : 2 puis 3 fois plus de place, rendu à la suppression', () => {
+  const g = new Game('TEST-CL');
+  g.money = 1000; g.world.reveal(6, 6, 20);
+  const c = g.placeMachine('coffre', 8, 8)!;
+  const cap = g.factory.slotsOf(c);
+  const up = g.chestUpgrade(c)!;
+  assert(up.to === 2 && up.price === MACHINES.coffre.cost * 2, `prix ${up.price}`);
+  const m0 = g.money;
+  assert(g.upgradeChest(c) && g.factory.slotsOf(c) === cap * 2 && g.money === m0 - up.price, 'niveau 2');
+  assert(g.upgradeChest(c) && g.factory.slotsOf(c) === cap * 3 && !g.chestUpgrade(c), 'niveau 3, le dernier');
+  const m1 = g.money;
+  g.removeMachine(c);
+  assert(g.money - m1 === MACHINES.coffre.cost * (1 + 2 + 4), `rendu ${g.money - m1}`);
+});
 test('vider un tapis : tout ce qu’il transporte disparaît', () => {
   const g = new Game('TEST-VT');
   g.money = 10000; g.world.reveal(6, 6, 20);

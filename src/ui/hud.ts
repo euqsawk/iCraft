@@ -2288,7 +2288,7 @@ export class Hud implements GestureHandlers {
       sheet.classList.add('mach-sheet');
       this.r.selection = { kind: 'machine', id: chest.id };
       const name = machineDef(chest.type).name;
-      sheet.append(this.pillHead(name, total ? `${fmt(total)} / ${cap}` : 'Vide', total >= cap ? 'warn' : total ? 'ok' : 'idle', close));
+      sheet.append(this.pillHead((chest.lvl ?? 1) > 1 ? `${name} · niv. ${chest.lvl}` : name, total ? `${fmt(total)} / ${cap}` : 'Vide', total >= cap ? 'warn' : total ? 'ok' : 'idle', close));
       const tabs = h('div', 'mtabs');
       const kinds = Object.values(chest.inBuf).filter((n) => n > 0).length;
       const list: ['inv' | 'io', string][] = [['inv', `Contenu${total ? ` <small>${fmt(total)}</small>` : ''}`], ['io', 'Entrées et sorties']];
@@ -2335,6 +2335,18 @@ export class Hud implements GestureHandlers {
         body.append(this.machineDiagram(chest));
       }
       sheet.append(body);
+      // Monter de niveau : plus de place (jusqu'au niveau 3).
+      const up = g.chestUpgrade(chest);
+      const lvl = chest.lvl ?? 1;
+      if (up) {
+        const nextCap = cap / lvl * up.to;
+        const ub = h('button', 'btn primary', `<span class="lv-dot l${up.to}"></span>Niveau ${up.to} · ${nextCap} objets · ${ICONS.coinSm}${fmt(up.price)}`);
+        if (g.money < up.price) ub.setAttribute('disabled', '');
+        ub.onclick = () => { if (g.upgradeChest(chest)) { this.toast(`${name} au niveau ${up.to} : ${nextCap} objets`, 'good'); this.refreshSheet(); } };
+        sheet.append(ub);
+      } else if (['coffre', 'grand_coffre', 'entrepot'].includes(chest.type)) {
+        sheet.append(h('p', 'muted small', `Niveau 3 : le plus grand (${cap} objets).`));
+      }
       const acts = h('div', 'row');
       const mv = h('button', 'btn', `${ICONS.move}Déplacer`);
       mv.onclick = () => { close(); this.startMove(chest); };
@@ -2769,7 +2781,7 @@ export class Hud implements GestureHandlers {
 
   private closeSheet(): void {
     this.closeModal();
-    if (this.sheetKind === 'machine' && this.popover.classList.contains('hidden')) this.r.selection = null;
+    if ((this.sheetKind === 'machine' || this.sheetKind === 'chest') && this.popover.classList.contains('hidden')) this.r.selection = null;
     this.overlay?.remove();
     this.overlay = null;
     this.sheetBuild = null;
