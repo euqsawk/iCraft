@@ -698,6 +698,16 @@ export class GameRenderer {
     // pas de bout arrondi qui laisserait un vide contre ses coins arrondis.
     const f = this.game.view;
     const under = (b: Belt, d: number) => (d === (b.inDir + 2) % 4 ? (f.backMachine(b) ? CELL / 2 : 0) : f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
+    // Les bouts de tapis libres s'arrêtent au milieu de leur case : le bout de devant quand il ne donne dans rien,
+    // le bout de derrière quand rien ne l'alimente (ni tapis, ni boîte, ni machine).
+    const fed = new Set<Belt>();
+    for (const b of f.belts.values()) {
+      const n = f.next(b);
+      if (n?.kind === 'belt') fed.add(n.belt);
+      if (b.node) for (const o of f.nodeOutputs(b)) if (o.next?.kind === 'belt') fed.add(o.next.belt);
+    }
+    const openEnd = (b: Belt) => !b.jump && !f.next(b);
+    const openStart = (b: Belt) => !fed.has(b) && !f.backMachine(b);
     const line = (g: Graphics, list: Belt[], dy: number) => {
       for (const b of list) {
         const p = this.beltPath(b);
@@ -705,7 +715,9 @@ export class GameRenderer {
         const e0 = under(b, back), e2 = under(b, b.dir);
         // Pont : seule la rampe (jusqu'au milieu de la case) est au sol ; le tablier est dessiné à part, plus haut.
         if (b.jump) { g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy); continue; }
-        g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy).lineTo(p[2].x + DX[b.dir] * e2, p[2].y + DY[b.dir] * e2 + dy);
+        const s0 = openStart(b) ? p[1] : { x: p[0].x + DX[back] * e0, y: p[0].y + DY[back] * e0 };
+        const s2 = openEnd(b) ? p[1] : { x: p[2].x + DX[b.dir] * e2, y: p[2].y + DY[b.dir] * e2 };
+        g.moveTo(s0.x, s0.y + dy).lineTo(p[1].x, p[1].y + dy).lineTo(s2.x, s2.y + dy);
         // Les sorties de côté d'une boîte : un bout de tapis jusqu'au bord (les ponts sont dessinés à part).
         if (b.node) for (const o of f.nodeOutputs(b)) {
           if (o.d >= 4 || o.d === b.dir || b.jumps?.[o.d]) continue;
@@ -777,8 +789,9 @@ export class GameRenderer {
       for (const b of upper) {
         const n = f.next(b), fd = f.feederOf(b);
         const back = ((b.inDir + 2) % 4) as Dir;
-        if (!(n?.kind === 'belt' && n.belt.z) && !f.machineAt(b.x + DX[b.dir], b.y + DY[b.dir])) cap((b.x + 0.5 + DX[b.dir] / 2) * CELL, (b.y + 0.5 + DY[b.dir] / 2) * CELL, b.dir);
-        if (!fd?.z && !f.backMachine(b)) cap((b.x + 0.5 + DX[back] / 2) * CELL, (b.y + 0.5 + DY[back] / 2) * CELL, back);
+        const he = openEnd(b) ? 0 : 0.5, hs = openStart(b) ? 0 : 0.5;
+        if (!(n?.kind === 'belt' && n.belt.z) && !f.machineAt(b.x + DX[b.dir], b.y + DY[b.dir])) cap((b.x + 0.5 + DX[b.dir] * he) * CELL, (b.y + 0.5 + DY[b.dir] * he) * CELL, b.dir);
+        if (!fd?.z && !f.backMachine(b)) cap((b.x + 0.5 + DX[back] * hs) * CELL, (b.y + 0.5 + DY[back] * hs) * CELL, back);
       }
       line(ug, upper, 0);
       ug.stroke({ width: 19, color: 0x9fb0ba, cap: 'round', join: 'round' });

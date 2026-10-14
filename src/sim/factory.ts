@@ -1926,7 +1926,7 @@ export class Factory {
         } else if (nxt?.kind === 'machine' && nxt.machine.built) {
           limit = 1;
         } else {
-          limit = 0.75; // bout de tapis : l'objet attend au milieu de la case
+          limit = 0.5; // bout de tapis : l'objet attend au milieu de la case (le tapis s'arrête là)
         }
         if (it.p < limit) it.p = Math.min(it.p + sp, limit);
 

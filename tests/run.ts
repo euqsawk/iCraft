@@ -1618,7 +1618,7 @@ test('niveaux de tapis : chaque niveau dans l’arbre ; on paie chaque case ; il
     b0.items = [{ t: 'charbon', p: 0 }];
     let t = 0;
     const end = g.factory.beltAt(3, 9)!;
-    while (!(end.items[0]?.p >= 0.74) && t < 30) { g.factory.tick(1 / 30); t += 1 / 30; }
+    while (!(end.items[0]?.p >= 0.49) && t < 30) { g.factory.tick(1 / 30); t += 1 / 30; }
     return t;
   };
   const t1 = cross();

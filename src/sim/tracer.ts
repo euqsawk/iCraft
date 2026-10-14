@@ -70,7 +70,8 @@ export class BeltTracer {
       } else {
         this.blocked = true;
       }
-    } else if (o && this.freeEnd(o)) {
+    } else if (o && !o.node && this.freeEnd(o)) {
+      // (Une boîte de l'autre étage ne se prolonge pas : on trace par-dessus, ou par-dessous.)
       this.extend = o;
       this.cells = [{ x: sx, y: sy, z: o.z ?? 0 }];
     } else if (this.usable(sx, sy, level)) {
