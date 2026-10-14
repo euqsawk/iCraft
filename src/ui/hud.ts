@@ -1466,7 +1466,7 @@ export class Hud implements GestureHandlers {
           html += `<div class="card"><div class="rc-head"><img src="${this.machineIcons.get(m.id)}" alt=""><b>${esc(m.name)}</b>${elec}</div><div class="recipes">${rows.map((r) => {
             const ins = Object.entries(r.in).map(([k, v]) => it(k, v)).join('<span class="arrow">+</span>');
             const outs = Object.entries(r.out).map(([k, v]) => it(k, v)).join('');
-            return `<div class="recipe">${ins}<span class="arrow">→</span>${outs}<small class="rc-time">${String(r.time).replace('.', ',')} s</small></div>`;
+            return `<div class="recipe">${ins}<span class="arrow">→</span>${outs}<small class="rc-time">${secs(r.time)}</small></div>`;
           }).join('')}</div></div>`;
         }
         if (!shown && !raws.length) html += '<div class="card"><p class="muted">Rien ne correspond.</p></div>';
