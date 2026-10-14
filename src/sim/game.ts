@@ -1129,7 +1129,7 @@ export class Game {
       return true;
     }
     // Un pont passe au-dessus : on retire d'abord le pont, le tapis du dessous reste.
-    const over = this.view.bridgeOver(x, y);
+    const over = this.groundOnly ? null : this.view.bridgeOver(x, y);
     if (over) {
       if (over.split) {
         // La sortie en pont d'une boîte : on retire le pont (la sortie se coupe).

@@ -258,6 +258,8 @@ export class GameRenderer {
   private lowFilterLayer = new Container();
   /** L'étage 2 (tapis, objets, boîtes), qu'on pâlit pour ne voir que le 1ᵉʳ étage. */
   private upperLayer = new Container();
+  /** Les ponts (tablier et objets dessus) : pâlis aussi avec « 1ᵉʳ étage seul ». */
+  private bridgeLayer = new Container();
   /** Les boîtes du sol sous un tapis en hauteur : par-dessus lui, à demi effacées (nettes avec « Étage 1 seul »). */
   private coverLayer = new Container();
   /** Les trieurs, par-dessus les machines (leur pastille déborde du tapis). */
@@ -279,8 +281,9 @@ export class GameRenderer {
     this.dots.alpha = 0.5;
     this.actorLayer.addChild(this.vehicleLayer, this.portalG);
     this.vehicleLayer.setMask({ mask: this.tunnelMaskG, inverse: true });
-    this.worldLayer.addChild(this.tunnelMaskG, this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeG, this.bridgeItemLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.liftFrameG, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.tunnelMaskG, this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.liftFrameG, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.upperLayer.addChild(this.upperG, this.upperItemLayer, this.filterLayer);
+    this.bridgeLayer.addChild(this.bridgeG, this.bridgeItemLayer);
     this.coverLayer.alpha = 0.5;
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
     this.glowLayer.blendMode = 'add';
@@ -609,6 +612,7 @@ export class GameRenderer {
   /** Ne montrer que le 1ᵉʳ étage : l'étage 2 est pâli (on voit ce qui passe dessous). */
   setUpperFaded(on: boolean): void {
     this.upperLayer.alpha = on ? 0.12 : 1;
+    this.bridgeLayer.alpha = on ? 0.12 : 1;
     this.coverLayer.alpha = on ? 1 : 0.5;
   }
 
