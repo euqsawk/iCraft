@@ -67,13 +67,13 @@ async function boot(): Promise<void> {
   document.getElementById('boot-static')?.remove();
   const loading = document.createElement('div');
   loading.className = 'loading';
-  loading.innerHTML = '<div class="cube"></div>Usine fractale';
+  loading.innerHTML = '<div class="cube"></div>Bolty';
   document.body.append(loading);
 
   await waitForFont();
   (window as unknown as { __gameStarted?: boolean }).__gameStarted = true;
   const { game, slot, fresh } = await chooseGame(loading);
-  loading.innerHTML = '<div class="cube"></div>Usine fractale<small style="font-weight:700;font-size:12px;color:#4A5868">Démarrage du rendu…</small>';
+  loading.innerHTML = '<div class="cube"></div>Bolty<small style="font-weight:700;font-size:12px;color:#4A5868">Démarrage du rendu…</small>';
   await setLastSlot(slot);
 
   const app = new Application();

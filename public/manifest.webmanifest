@@ -1,6 +1,6 @@
 {
-  "name": "Usine fractale",
-  "short_name": "Usine",
+  "name": "Bolty",
+  "short_name": "Bolty",
   "description": "Un jeu d'usine en 2D : trace tes tapis au doigt, replie tes chaînes en ateliers.",
   "lang": "fr",
   "start_url": "./",

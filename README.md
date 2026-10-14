@@ -1,4 +1,4 @@
-# Usine fractale
+# Bolty
 
 Un jeu d'usine en 2D pour téléphone, joué dans le navigateur. On trace ses tapis au doigt, on pose ses machines sur une grille invisible, et un petit robot jaune explore la carte pour trouver les filons.
 

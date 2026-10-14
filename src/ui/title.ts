@@ -57,7 +57,7 @@ export async function exportPanel(save: GameSave, onClose: () => void): Promise<
   row.append(copy);
   if (typeof navigator.share === 'function') {
     const share = h('button', 'btn', 'Partager');
-    share.onclick = async () => { try { await navigator.share({ title: 'Usine fractale', text: code }); } catch { /* annulé */ } };
+    share.onclick = async () => { try { await navigator.share({ title: 'Bolty', text: code }); } catch { /* annulé */ } };
     row.append(share);
   }
   const close = h('button', 'btn', 'Fermer');
@@ -224,7 +224,7 @@ export function showTitle(): Promise<TitleChoice> {
       const count = slots.filter(Boolean).length;
       screen.innerHTML = `
         <div class="title-hero">
-          <div class="title-logo"><span class="logo-cube"></span><h1>Usine<br>fractale</h1></div>
+          <div class="title-logo"><svg class="logo-nut" viewBox="0 0 64 64" aria-hidden="true"><polygon points="54.5,45 32,58 9.5,45 9.5,19 32,6 54.5,19" transform="translate(0 4)" fill="#2E3A4B" opacity=".18"/><polygon points="54.5,45 32,58 9.5,45 9.5,19 32,6 54.5,19" fill="#FFC857" stroke="#2E3A4B" stroke-width="4" stroke-linejoin="round"/><circle cx="32" cy="32" r="10.5" fill="#DCEBE3" stroke="#2E3A4B" stroke-width="4"/></svg><h1>Bolty</h1></div>
           <div class="title-stage">
             ${robotSvg(look, { spin: true, cls: 'robot-svg hero' })}
           </div>

@@ -429,6 +429,8 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .title-hero { display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 12px; }
 .title-logo { display: flex; align-items: center; gap: 14px; }
 .title-logo h1 { margin: 0; font-size: 38px; line-height: .95; font-weight: 900; letter-spacing: -.5px; }
+.logo-nut { width: 50px; height: 50px; animation: roll 3s ease-in-out infinite; }
+.title-logo h1 { font-size: 46px; }
 .logo-cube { width: 46px; height: 46px; border-radius: 12px; background: var(--yellow); box-shadow: 0 5px 0 var(--coin-edge); transform: rotate(-8deg); animation: roll 3s ease-in-out infinite; }
 .title-stage, .intro-stage { position: relative; display: flex; align-items: center; justify-content: center; height: 210px; width: 100%; }
 .orbit { position: absolute; left: 50%; top: 50%; width: 0; height: 0; animation: orbit 5.5s linear infinite; }

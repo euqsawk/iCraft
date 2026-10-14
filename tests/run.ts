@@ -2154,10 +2154,10 @@ test('apparence, conseils et temps de jeu sont sauvegardés ; une ancienne parti
   assert(g2.played >= 1, `temps de jeu ${g2.played}`);
   delete s.look; delete s.tips; s.v = 4;
   const g3 = new Game(s.seed, s);
-  assert(g3.look.name === 'Boulon' && g3.tips.off, 'ancienne partie');
+  assert(g3.look.name === 'Bolty' && g3.tips.off, 'ancienne partie');
   s.look = { color: 'violet-fluo', accessory: 'canon', skin: 'chat', name: '' };
   const g4 = new Game(s.seed, s);
-  assert(g4.look.color === 'jaune' && g4.look.skin === 'origine' && g4.look.name === 'Boulon', 'apparence invalide nettoyée');
+  assert(g4.look.color === 'jaune' && g4.look.skin === 'origine' && g4.look.name === 'Bolty', 'apparence invalide nettoyée');
 });
 test('succès et skins : paliers Fortune, skin gagné puis porté, anciens succès repris', () => {
   const g = new Game('TEST-SKIN');

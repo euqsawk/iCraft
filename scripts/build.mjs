@@ -54,11 +54,11 @@ function writeInline() {
   const js = fs.readFileSync(path.join(dist, 'app.js'), 'utf8').replace(/<\/script/g, '<\\/script');
   const guard = fs.readFileSync(path.join(root, 'src/boot-guard.js'), 'utf8');
   const out = [
-    '<title>Usine fractale</title>',
+    '<title>Bolty</title>',
     `<script>\n${guard}\n</script>`,
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap">',
     `<style>\n${css}\n</style>`,
-    '<div id="boot-static" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font:800 16px -apple-system,system-ui,sans-serif;color:#2E3A4B;text-align:center;padding:24px">Usine fractale<small id="boot-step" style="font-weight:700;font-size:12px;color:#4A5868">Chargement de la page… (étape 1)</small></div>',
+    '<div id="boot-static" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font:800 16px -apple-system,system-ui,sans-serif;color:#2E3A4B;text-align:center;padding:24px">Bolty<small id="boot-step" style="font-weight:700;font-size:12px;color:#4A5868">Chargement de la page… (étape 1)</small></div>',
     '<div id="game"></div>',
     '<div id="hud"></div>',
     `<script type="module">\n${js}\n</script>`,

@@ -9,7 +9,7 @@ export const RARITY_NAME: Record<Rarity, string> = { depart: 'Départ', commun: 
 export interface Skin { id: string; name: string; rarity: Rarity }
 
 export const SKINS: Skin[] = [
-  { id: 'origine', name: 'Boulon d’origine', rarity: 'depart' },
+  { id: 'origine', name: 'Bolty d’origine', rarity: 'depart' },
   // Succès uniques
   { id: 'nuit', name: 'Veilleur de nuit', rarity: 'commun' },
   { id: 'tournesol', name: 'Le tournesol', rarity: 'commun' },

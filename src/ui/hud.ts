@@ -3391,7 +3391,7 @@ export class Hud implements GestureHandlers {
     const g = this.game;
     this.openSheet((sheet, close) => {
       const head = h('div', 'sheet-head');
-      head.innerHTML = `<div><h2>Usine fractale</h2><p>${esc(g.look.name)} · version ${esc(__VERSION__)}</p></div>`;
+      head.innerHTML = `<div><h2>Bolty</h2><p>${esc(g.look.name)} · version ${esc(__VERSION__)}</p></div>`;
       const x = h('button', 'round', ICONS.close);
       x.setAttribute('aria-label', 'Fermer');
       x.onclick = close;

@@ -12,7 +12,7 @@ export const ROBOT_COLORS: RobotColor[] = [
 
 /** Couleur (celle du Boulon d'origine), skin porté (gagné avec un succès) et nom. */
 export interface RobotLook { color: string; skin: string; name: string }
-export const DEFAULT_LOOK: RobotLook = { color: 'jaune', skin: 'origine', name: 'Boulon' };
+export const DEFAULT_LOOK: RobotLook = { color: 'jaune', skin: 'origine', name: 'Bolty' };
 export const ROBOT_NAMES = ['Boulon', 'Pixel', 'Rivet', 'Clé', 'Volt', 'Bricole', 'Tournevis', 'Écrou'];
 
 export function robotColor(look: RobotLook): RobotColor {
