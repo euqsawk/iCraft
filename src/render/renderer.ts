@@ -1448,31 +1448,22 @@ export class GameRenderer {
       if (!s) { s = new Sprite(); s.anchor.set(0.5); layer.addChild(s); pool.push(s); }
       return s;
     };
-    // Monte-charge : chaque objet traverse la cabine (il s'arrête et monte s'il a de la place, sinon il glisse en montant),
-    // la plateforme suit celui qui est au milieu, puis revient attendre le suivant.
+    // Monte-charge : chaque objet traverse la cabine en entier (il entre, la plateforme le monte, il ressort),
+    // un à la fois ; la plateforme revient chercher le suivant pendant que le précédent ressort.
     const pg = this.liftPlatG;
     pg.clear();
     let usedL = 0;
-    const f0 = this.game.view;
     const cabinSet = new Set<Belt>();
     for (const c of this.cabins) {
       cabinSet.add(c.belt);
       const belt = c.belt, cx = (c.x + 0.5) * CELL, cy = (c.y + 0.5) * CELL;
       if (cx < b.x0 - CELL || cx > b.x1 + CELL || cy < b.y0 - CELL || cy > b.y1 + CELL) continue;
       const from = c.up ? 0 : 1, to = c.up ? 1 : 0;
-      // Les objets voisins (sur la case d'avant et celle d'après), pour savoir s'il y a la place de s'arrêter.
       const items = belt.built ? [...belt.items].sort((x, y) => x.p - y.p) : [];
-      const nx = f0.next(belt), feed = f0.feederOf(belt);
-      const aheadP = nx?.kind === 'belt' && nx.belt.items.length ? 1 + Math.min(...nx.belt.items.map((i) => i.p)) : Infinity;
-      const behindP = feed && feed.items.length ? Math.max(...feed.items.map((i) => i.p)) - 1 : -Infinity;
-      const moves = items.map((it, i) => {
+      const moves = items.map((it) => {
         const p = Math.min(it.p, 1);
-        const ahead = i + 1 < items.length ? items[i + 1].p : aheadP, behind = i > 0 ? items[i - 1].p : behindP;
-        const room = Math.min(ahead - p, p - behind);
-        const k = Math.max(0, Math.min(1, (room - 0.5) / 0.5));
         const stop = GameRenderer.cabinMotion(p, c.up);
-        const glide = { q: p, h: mix(from, to, (p - 0.3) / 0.4) };
-        return { it, p, q: glide.q + (stop.q - glide.q) * k, h: glide.h + (stop.h - glide.h) * k };
+        return { it, p, q: stop.q, h: stop.h };
       });
       // La plateforme : à la hauteur de l'objet qui monte, puis elle revient (en bas pour monter, en haut pour descendre).
       let h = from;

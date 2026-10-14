@@ -140,6 +140,8 @@ export const RULES = {
   machineBaseMax: 1,
   /** Écart minimal entre deux objets sur un tapis, en cases. */
   beltGap: 0.5,
+  /** Monte-charge : durée d'une traversée de cabine (au niveau 1 du tapis ; plus courte aux niveaux suivants). */
+  liftTime: 0.9,
   robotSpeed: 4.5,
   /** Construction par le robot : portée (cases) et temps (s) d'une case de tapis, d'une machine (plus 0,12 s par case). */
   buildRange: 3,

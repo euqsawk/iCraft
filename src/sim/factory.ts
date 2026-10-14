@@ -266,6 +266,8 @@ export class Factory {
   private nextOf = new Map<Belt, Next>();
   /** Les sorties de chaque boîte (séparateur, filtre), dans l'ordre : tout droit d'abord. */
   private nodeOuts = new Map<Belt, NodeOut[]>();
+  /** Les cases de cabine (la case du haut d'un monte-charge) : un objet à la fois, le temps que la plateforme monte. */
+  readonly cabins = new Set<Belt>();
   private outputs = new Map<Machine, Belt[]>();
   /** Groupes de foreuses 1 × 1 collées par un côté (construites) : chaque foreuse → son groupe. */
   private drillGroups = new Map<Machine, Machine[]>();
@@ -1485,6 +1487,13 @@ export class Factory {
       }
     }
 
+    // Monte-charge : la case du haut de chaque changement d'étage.
+    this.cabins.clear();
+    for (const b of this.belts.values()) {
+      const n = this.nextOf.get(b);
+      if (n?.kind === 'belt' && (n.belt.z ?? 0) !== (b.z ?? 0)) this.cabins.add(b.z ? b : n.belt);
+    }
+
     // Les boîtes : tout droit, puis les côtés (droite, gauche, arrière), puis l'autre étage ; 4 sorties au plus.
     for (const b of this.belts.values()) {
       if (!b.node) continue;
@@ -1803,6 +1812,8 @@ export class Factory {
 
   /** Une case peut-elle recevoir un objet à la position p ? */
   private roomAt(b: Belt, p: number): boolean {
+    // Une cabine ne prend le suivant que quand le précédent ressort (la plateforme redescend le chercher).
+    if (this.cabins.has(b) && b.items.some((it) => it.p < 0.8)) return false;
     const gap = RULES.beltGap / span(b);
     for (const it of b.items) if (Math.abs(it.p - p) < gap - 1e-6) return false;
     return true;
@@ -1853,7 +1864,9 @@ export class Factory {
       // Chaque tapis va à la vitesse de son niveau.
       const speed = base * beltLevelSpeed(b);
       // Sur un pont, p couvre plusieurs cases : on avance moins vite en p, avec un écart plus petit en p.
-      const Lb = span(b), sp = speed / Lb, gp = gap / Lb;
+      const Lb = span(b), gp = gap / Lb;
+      // Dans une cabine, l'objet prend le temps de monter (ou descendre) : la traversée dure liftTime.
+      const sp = this.cabins.has(b) ? Math.min(speed / Lb, (dt * this.speedMult * Math.sqrt(beltLevelSpeed(b))) / RULES.liftTime) : speed / Lb;
       const main = this.nextOf.get(b) ?? null;
       const nodeOuts = b.node ? this.nodeOuts.get(b) ?? [] : null;
       // La sortie d'un objet : tout droit, ou celle que la boîte lui a donnée.

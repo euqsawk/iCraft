@@ -859,6 +859,26 @@ test('palette : séparateur et filtre posés par terre ou sur un tapis, au 1er o
   const g2 = new Game(s2.seed, s2);
   assert(g2.factory.beltAt(10, 12)!.lift === 1 && g2.factory.beltAt(8, 3, 1)?.node === 'sep', 'sauvegardé');
 });
+test('monte-charge : un objet à la fois dans la cabine, la traversée prend son temps, tout arrive', () => {
+  const g = new Game('TEST-LC'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const src = g.placeMachine('coffre', -6, 9)!, dst = g.placeMachine('coffre', 6, 9)!;
+  const cells: TraceCell[] = [];
+  for (let x = -5; x <= 5; x++) cells.push({ x, y: 9, dir: 0, inDir: 0, ...(x >= 0 ? { z: 1 as const } : {}) });
+  assert(g.placeBelts(cells), 'tapis qui monte');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const cab = g.factory.beltAt(0, 9, 1)!;
+  g.tick(0.01);
+  assert(g.factory.cabins.has(cab), 'la cabine est la case du haut');
+  g.factory.putInStorage(src, 'fer', 20);
+  let most = 0;
+  for (let t = 0; t < 60 * 10; t++) { g.tick(0.1); most = Math.max(most, cab.items.filter((i) => i.p < 0.75).length); }
+  assert(most <= 1, `un seul objet à la fois : ${most}`);
+  assert(dst.inBuf.fer === 20, `tout arrive : ${dst.inBuf.fer}`);
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');
