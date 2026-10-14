@@ -879,6 +879,22 @@ test('monte-charge : un objet à la fois dans la cabine, la traversée prend son
   assert(most <= 1, `un seul objet à la fois : ${most}`);
   assert(dst.inBuf.fer === 20, `tout arrive : ${dst.inBuf.fer}`);
 });
+test('une boîte posée à l’autre étage, à côté d’un tapis, ne se branche pas toute seule', () => {
+  const g = new Game('TEST-S7'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const m = g.placeMachine('coffre', -1, 9)!;
+  assert(g.placeBelts([5, 6, 7, 8, 9, 10, 11].map((y) => ({ x: 0, y, dir: 1, inDir: 1 })) as TraceCell[]), 'tapis');
+  for (const b of g.factory.belts.values()) b.built = true;
+  m.built = true; g.pending = []; g.factory.markBuilt();
+  const b = g.factory.beltAt(0, 9)!;
+  assert(g.linkBeltToMachine(b, 2) && g.factory.nodeIsLink(b), 'le tapis nourrit le coffre de côté');
+  // Un filtre seul au 2ᵉ étage, juste à droite, puis un ascenseur seul à gauche du tapis, au sol.
+  assert(g.placeBox('boite_tri', 1, 9, 1), 'filtre au 2ᵉ étage');
+  assert(g.placeBox('ascenseur', 1, 10, 0), 'ascenseur seul');
+  assert(g.factory.nodeIsLink(b) && g.factory.nodeOutputs(b).length === 2, `rien de nouveau : ${JSON.stringify(g.factory.nodeOutputs(b).map((o) => o.d))}`);
+  assert(g.factory.next(g.factory.beltAt(0, 10)!)?.kind === 'belt' && (g.factory.next(g.factory.beltAt(0, 10)!) as { belt: { x: number } }).belt.x === 0, 'le tapis continue tout droit');
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');

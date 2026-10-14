@@ -374,7 +374,9 @@ export class Factory {
    * (tout droit ou par le côté, comme à un même étage).
    */
   private liftAt(b: Belt, nx: number, ny: number): Belt | null {
-    return this.beltAt(nx, ny, b.z ? 0 : 1) ?? null;
+    const o = this.beltAt(nx, ny, b.z ? 0 : 1);
+    // Jamais vers une boîte ou un ascenseur posés : ce qui est à l'autre étage à côté ne s'y branche pas tout seul.
+    return o && !o.node && !o.lift ? o : null;
   }
 
   /** Le tapis de l'autre étage que celui-ci rejoint par un ascenseur (ou qui le rejoint), s'il y en a un. */
@@ -637,7 +639,7 @@ export class Factory {
     // Par un ascenseur : le tapis de l'autre étage juste derrière, qui n'a rien à son étage devant lui.
     const px = b.x - DX[b.inDir], py = b.y - DY[b.inDir];
     const o = this.beltAt(px, py, b.z ? 0 : 1);
-    if (o && o.dir === b.inDir && !o.jump && !this.beltAt(b.x, b.y, o.z ?? 0)) return o;
+    if (o && o.dir === b.inDir && !o.jump && !b.node && !b.lift && !this.beltAt(b.x, b.y, o.z ?? 0)) return o;
     return null;
   }
 
