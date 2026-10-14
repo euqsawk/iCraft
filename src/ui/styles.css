@@ -1244,6 +1244,7 @@ textarea, input { -webkit-user-select: text; user-select: text; }
 .ns-chip img { width: 24px; height: 24px; }
 .ns-chip i { font-style: normal; font-weight: 900; color: var(--ink2); }
 .ns-chip.add { width: 38px; padding: 0; justify-content: center; background: transparent; box-shadow: none; border: 2px dashed #B9CBC1; font-size: 18px; font-weight: 900; color: var(--ink2); }
+.ns-warn { margin: 10px 0 0; padding: 8px 12px; border-radius: 12px; background: #FDE7E1; color: #A2402F; font-size: 12px; font-weight: 800; }
 .ns-hint { margin: 0; font-size: 12px; font-weight: 700; color: var(--ink2); }
 .node-sheet > .row { margin-top: 12px; }
 

@@ -105,7 +105,7 @@ export const BRANCHES: Branch[] = [
   {
     // Les niveaux : chaque tapis, foreuse ou machine se paie ensuite à part pour monter.
     id: 'niveaux', label: 'Niveaux', angle: 90, color: '#D45D9A', nodes: [
-      n('tapis2', 'Tapis niveau 2', 'rapide', 2, -1.5, 1, { plaque_fer: 20 }, [], 'Tes tapis peuvent monter au niveau 2 (1,5 fois plus vite) : touche un tapis pour l’améliorer, case par case.', { kind: 'beltLevel', max: 2 }),
+      n('tapis2', 'Tapis niveau 2', 'rapide', 2, -1.5, 1, { plaque_fer: 20 }, [], 'Tes tapis peuvent monter au niveau 2 (2 fois plus vite) : touche un tapis pour l’améliorer, case par case.', { kind: 'beltLevel', max: 2 }),
       n('rapide', 'Tapis niveau 3', 'rapide', 3, -1.5, 2, { plaque_fer: 30, fil_cuivre: 30 }, ['tapis2'], 'Tes tapis peuvent monter au niveau 3 (deux fois plus vite qu’au départ).', { kind: 'beltLevel', max: 3 }),
       n('tapis4', 'Tapis niveau 4', 'express', 4, -1.5, 3, { engrenage: 40, vis: 60 }, ['rapide'], 'Tes tapis peuvent monter au niveau 4 (2,5 fois plus vite qu’au départ).', { kind: 'beltLevel', max: 4 }),
       n('express', 'Tapis niveau 5', 'express', 5, -1.5, 4, { engrenage: 80, acier: 40 }, ['tapis4'], 'Tes tapis peuvent monter au niveau 5 (trois fois plus vite qu’au départ).', { kind: 'beltLevel', max: 5 }),
@@ -113,8 +113,8 @@ export const BRANCHES: Branch[] = [
       n('foreuse3', 'Foreuses niveau 3', 'foreuse_niveau', 3, -0.5, 2, { plaque_fer: 60, vis: 20 }, ['foreuse2'], 'Tes foreuses peuvent monter au niveau 3 (deux fois plus de minerai qu’au niveau 1).', { kind: 'drillLevel', max: 3 }),
       n('foreuse4', 'Foreuses niveau 4', 'foreuse_niveau', 4, -0.5, 4, { engrenage: 60, acier: 60 }, ['foreuse3'], 'Tes foreuses peuvent monter au niveau 4 (trois fois plus de minerai qu’au niveau 1).', { kind: 'drillLevel', max: 4 }),
       n('forage', 'Foreuses niveau 5', 'foreuse_niveau', 5, 0, 6, { moteur: 20, acier: 100 }, ['foreuse4', 'machine3'], 'Tes foreuses peuvent monter au niveau 5 (quatre fois plus de minerai qu’au niveau 1).', { kind: 'drillLevel', max: 5 }),
-      n('machine2', 'Machines niveau 2', 'machine_niveau', 2, 0.5, 2, { plaque_fer: 60, fil_cuivre: 40 }, [], 'Fours, presses, assembleurs… peuvent monter au niveau 2 (1,5 fois plus vite) : touche une machine pour l’améliorer.', { kind: 'machineLevel', max: 2 }),
-      n('machine3', 'Machines niveau 3', 'machine_niveau', 3, 0.5, 4, { engrenage: 80, circuit: 30 }, ['machine2'], 'Les machines peuvent monter au niveau 3 (deux fois plus vite qu’au départ).', { kind: 'machineLevel', max: 3 }),
+      n('machine2', 'Machines niveau 2', 'machine_niveau', 2, 0.5, 2, { plaque_fer: 60, fil_cuivre: 40 }, [], 'Fours, presses, assembleurs… peuvent monter au niveau 2 (2 fois plus vite) : touche une machine pour l’améliorer.', { kind: 'machineLevel', max: 2 }),
+      n('machine3', 'Machines niveau 3', 'machine_niveau', 3, 0.5, 4, { engrenage: 80, circuit: 30 }, ['machine2'], 'Les machines peuvent monter au niveau 3 (trois fois plus vite qu’au départ).', { kind: 'machineLevel', max: 3 }),
     ],
   },
   {

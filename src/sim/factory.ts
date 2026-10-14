@@ -1653,7 +1653,8 @@ export class Factory {
         if (f) { want.push(o); if (f.startsWith('@')) tag = f; }
       }
       cands = want.length ? want : outs.filter((o) => !rules[o.d]?.length);
-      if (!cands.length) cands = [outs[0]];
+      // Aucune sortie ne le prend (pas de « reste ») : il attend dans le filtre.
+      if (!cands.length) { it.o = 0; return; }
     }
     b.toggle = ((b.toggle ?? 0) + 1) % cands.length;
     const o = cands[b.toggle];
@@ -1899,7 +1900,9 @@ export class Factory {
           if (nk === 0) { delete it.sx; delete it.sy; } else { it.sx = (it.sx ?? 0) * nk / k; it.sy = (it.sy ?? 0) * nk / k; }
         }
         // Dans une boîte, si la sortie de l'objet n'existe plus, il en prend une autre (tout droit d'abord).
-        if (nodeOuts && it.o !== undefined && !outOf(it.o)) {
+        // En attente dans un filtre (aucune sortie ne le voulait) : le premier regarde de nouveau.
+        if (i === 0 && nodeOuts && it.o === 0) this.enter(b, it);
+        if (nodeOuts && it.o !== undefined && it.o !== 0 && !outOf(it.o)) {
           const alt = nodeOuts[0];
           if (!alt || alt.d === b.dir) delete it.o; else it.o = alt.d + 1;
         }
@@ -2405,7 +2408,7 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })), ...(l.track ? { track: { sig: l.track.sig, gap: l.track.gap, legs: l.track.legs.map((f) => [...f]) } } : {}) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), o: b.open ?? [], ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift || b.lone || b.ins || b.noIn ? { ...(b.lift ? { l: 1 } : {}), ...(b.lone ? { s: 1 } : {}), ...(b.ins ? { i: b.ins } : {}), ...(b.noIn ? { n: 1 } : {}) } : 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o === 0 ? -1 : i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), o: b.open ?? [], ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift || b.lone || b.ins || b.noIn ? { ...(b.lift ? { l: 1 } : {}), ...(b.lone ? { s: 1 } : {}), ...(b.ins ? { i: b.ins } : {}), ...(b.noIn ? { n: 1 } : {}) } : 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -2439,7 +2442,7 @@ export class Factory {
       const s1 = split !== undefined && split >= 0 ? split : -1, s2 = s1 >= 0 && split2 !== undefined && split2 >= 0 ? split2 : -1;
       b.items = items.map(([t, p, o]) => {
         if (!o) return { t, p };
-        if (node && typeof node === 'object') return { t, p, o };
+        if (node && typeof node === 'object') return { t, p, o: o === -1 ? 0 : o };
         const d = o === 2 ? s2 : s1;
         return d >= 0 ? { t, p, o: d + 1 } : { t, p };
       });

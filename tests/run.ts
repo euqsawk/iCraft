@@ -952,6 +952,28 @@ test('un tapis tracé depuis la case vide à côté d’un coffre ne se branche 
   run(g, 10);
   assert(g.factory.beltAt(0, 10)!.items.length + [...g.factory.belts.values()].reduce((n, b) => n + b.items.length, 0) > 0, 'le coffre sort sur le tapis');
 });
+test('filtre sans « reste » : ce que personne ne veut attend dans le filtre (le Noyau plein ne reçoit plus rien)', () => {
+  const g = new Game('TEST-FR'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const src = g.placeMachine('coffre', -6, 9)!, dst = g.placeMachine('coffre', 6, 9)!;
+  assert(g.placeBelts([...Array(11)].map((_, i) => ({ x: -5 + i, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'tapis');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const fb = g.factory.beltAt(0, 9)!;
+  assert(g.placeBox('boite_tri', 0, 9, 0), 'filtre');
+  g.setNodeRule(fb, 0, ['fer']);
+  g.factory.putInStorage(src, 'fer', 3); g.factory.putInStorage(src, 'cuivre', 3);
+  run(g, 40);
+  assert(dst.inBuf.fer === 3 && !dst.inBuf.cuivre, `seul le fer passe : ${JSON.stringify(dst.inBuf)}`);
+  assert(fb.items.length > 0 && fb.items[0].t === 'cuivre' && fb.items[0].o === 0, 'le cuivre attend dans le filtre');
+  const s2 = JSON.parse(JSON.stringify(g.serialize()));
+  assert(new Game(s2.seed, s2).factory.beltAt(0, 9)!.items[0].o === 0, 'il attend encore après la sauvegarde');
+  g.setNodeRule(fb, 0, null);
+  run(g, 20);
+  assert(dst.inBuf.cuivre === 3, 'avec « le reste », il repart');
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');
