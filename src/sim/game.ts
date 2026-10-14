@@ -1373,6 +1373,8 @@ export class Game {
       for (let i = -reach; i <= reach; i++) {
         for (const p of this.world.patchesInChunk(ccx + i, ccy + j)) {
           if (p.type !== type) continue;
+          // Un lac peut déborder sur plusieurs morceaux de carte : une seule fois.
+          if (found.some((q) => q.x === p.cx && q.y === p.cy)) continue;
           found.push({ x: p.cx, y: p.cy, r: p.r, d: Math.max(0, Math.hypot(p.cx - r.x, p.cy - r.y) - p.r) });
         }
       }

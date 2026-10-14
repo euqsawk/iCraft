@@ -1604,15 +1604,16 @@ export class Hud implements GestureHandlers {
     const short = (id: string) => item(id).name.replace('Minerai de ', '').replace("Minerai d'", '').replace(/^./, (c) => c.toUpperCase());
     const btn = h('button', 'card scan-btn', `<span class="scan-ico">${RAW_IDS.slice(0, 3).map((id) => `<img src="${this.itemIcons.get(id)}" alt="">`).join('')}</span><span class="pl"><b>Scanner</b><small>Trouve les 3 filons les plus proches, même sous le brouillard</small></span><i>›</i>`);
     btn.onclick = () => {
-      const opts: PickOpt[] = RAW_IDS.map((id) => ({ id, label: short(id), icon: this.itemIcons.get(id) }));
+      const opts: PickOpt[] = [...RAW_IDS.filter((id) => id !== 'eau').map((id) => ({ id, label: short(id), icon: this.itemIcons.get(id) })), { id: 'eau', label: 'Eau (lacs)', sub: 'Pour la pompe à eau', icon: this.itemIcons.get('eau') }];
       this.openPicker('Scanner', 'Choisis une matière : des flèches montrent ses 3 filons les plus proches pendant 10 secondes.', opts, (id) => {
         if (!id) return;
         const found = g.scan(id, 3);
-        if (!found.length) { this.toast(`Aucun filon de ${item(id).name.toLowerCase()} à portée du scanner`, 'warn'); return; }
+        const lake = id === 'eau';
+        if (!found.length) { this.toast(lake ? 'Aucun lac à portée du scanner' : `Aucun filon de ${item(id).name.toLowerCase()} à portée du scanner`, 'warn'); return; }
         close();
         this.r.startScan(id, found);
         this.r.centerOnRobot();
-        this.toast(`Scanner : ${found.length} filon${found.length > 1 ? 's' : ''} de ${item(id).name.toLowerCase()} · le plus proche à ${Math.round(found[0].d)} cases`, 'good');
+        this.toast(lake ? `Scanner : ${found.length} lac${found.length > 1 ? 's' : ''} · le plus proche à ${Math.round(found[0].d)} cases` : `Scanner : ${found.length} filon${found.length > 1 ? 's' : ''} de ${item(id).name.toLowerCase()} · le plus proche à ${Math.round(found[0].d)} cases`, 'good');
       });
     };
     return btn;
