@@ -922,6 +922,18 @@ test('les boîtes ne se branchent jamais toutes seules : c’est au joueur de tr
   g.removeNode(fb);
   assert(!g.factory.beltAt(5, 8) && g.money === m0, 'retiré : la case part avec, tout est rendu');
 });
+test('gomme avec le 1er étage seul : le tapis du 2e étage reste', () => {
+  const g = new Game('TEST-GZ'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  assert(g.placeBelts([0, 1, 2].map((x) => ({ x, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'au sol');
+  assert(g.placeBelts([8, 9, 10].map((y) => ({ x: 1, y, dir: 1, inDir: 1, z: 1 as const })) as TraceCell[]), 'en hauteur');
+  g.groundOnly = true;
+  assert(g.removeAt(1, 9) && !!g.factory.beltAt(1, 9, 1) && !g.factory.beltAt(1, 9), 'le sol part, le haut reste');
+  assert(g.areaContents(0, 8, 2, 10).belts.every((b) => !b.z), 'la zone non plus');
+  g.groundOnly = false;
+  assert(g.removeAt(1, 9) && !g.factory.beltAt(1, 9, 1), 'avec les deux étages, le haut part');
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');

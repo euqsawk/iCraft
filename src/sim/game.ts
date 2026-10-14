@@ -1090,7 +1090,7 @@ export class Game {
       for (let x = ax; x <= bx; x++) {
         const m = f.machineAt(x, y);
         if (m) { const d = machineDef(m.type); if (d.buildable && !d.gift) machines.add(m); }
-        for (const z of [1, 0]) { const b = f.beltAt(x, y, z); if (b) belts.push(b); }
+        for (const z of this.groundOnly ? [0] : [1, 0]) { const b = f.beltAt(x, y, z); if (b) belts.push(b); }
         if (f.hasCable(x, y)) cables.push({ x, y });
       }
     }
@@ -1112,9 +1112,12 @@ export class Game {
     return n;
   }
 
+  /** Gomme avec « 1ᵉʳ étage seul » : elle ne touche pas aux tapis du 2ᵉ étage. */
+  groundOnly = false;
+
   removeAt(x: number, y: number): boolean {
-    // Un tapis en hauteur : il part en premier, celui du sol reste.
-    const up = this.view.beltAt(x, y, 1);
+    // Un tapis en hauteur : il part en premier, celui du sol reste (sauf si on ne montre que le 1ᵉʳ étage).
+    const up = this.groundOnly ? undefined : this.view.beltAt(x, y, 1);
     if (up) {
       this.earn(this.refundBelt(up));
       this.emit({ type: 'factory' });

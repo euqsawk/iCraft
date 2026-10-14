@@ -734,6 +734,7 @@ export class Hud implements GestureHandlers {
     // Pendant un tracé (ou le glisser d'une boîte), la vue suit l'étage où l'on pose : au 1ᵉʳ, le haut pâlit.
     // Ensuite, elle revient à ce qu'on avait choisi.
     this.fadedNow = open && (building ? l === 0 : this.upperFaded);
+    this.game.groundOnly = this.fadedNow;
     this.r.setUpperFaded(this.fadedNow);
     if (!show) return;
     this.placeLevelSwitch();
