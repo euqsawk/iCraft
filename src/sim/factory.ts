@@ -1636,6 +1636,22 @@ export class Factory {
     return (tr.get(t) ?? 0) < need;
   }
 
+  /**
+   * Un filtre prend-il cet objet ? Seulement si une de ses sorties le veut (ou prend « le reste ») : sinon l'objet
+   * attend sur son tapis, et le filtre reste libre pour ce qui arrive par ses autres entrées.
+   */
+  private nodeTakes(b: Belt, t: string): boolean {
+    if (b.node !== 'tri' || !b.rules) return true;
+    const outs = this.nodeOuts.get(b) ?? [];
+    if (!outs.length) return true;
+    for (const o of outs) {
+      const r = b.rules[o.d];
+      if (!r?.length) return true;
+      if (r.some((x) => (x.startsWith('@') ? this.wantedBy(x, t) : x === t))) return true;
+    }
+    return false;
+  }
+
   /** Il part vers cette destination : il compte tout de suite comme « en route ». */
   private sentTo(filter: string, t: string): void {
     const tr = this.inTransit(filter.slice(1));
@@ -1831,7 +1847,7 @@ export class Factory {
   private canTake(n: Next, item: string): boolean {
     if (!n) return false;
     if (n.kind === 'machine') return this.canAccept(n.machine, item);
-    if (!n.belt.built) return false;
+    if (!n.belt.built || !this.nodeTakes(n.belt, item)) return false;
     if (n.side) return this.roomAt(n.belt, 0.5);
     const items = n.belt.items;
     return items.length === 0 || items[items.length - 1].p >= RULES.beltGap / span(n.belt);
@@ -1945,7 +1961,7 @@ export class Factory {
           if (nxt.kind === 'belt' && nxt.belt.built) {
             const target = nxt.belt;
             const entry = nxt.side ? 0.5 : (it.p - 1) * Lb / span(target);
-            if (this.roomAt(target, entry)) {
+            if (this.roomAt(target, entry) && this.nodeTakes(target, it.t)) {
               items.shift(); i--;
               if (b.meter) this.meterHit(b, it.t);
               const moved: BeltItem = { t: it.t, p: entry };
@@ -2375,7 +2391,7 @@ export class Factory {
     for (let s = 0; s < outs.length; s++) {
       const b = outs[(m.rrOut + s) % outs.length];
       if (!b.built) continue;
-      const kinds = sends ? all.filter((k) => sends(b, k)) : all;
+      const kinds = (sends ? all.filter((k) => sends(b, k)) : all).filter((k) => this.nodeTakes(b, k));
       if (!kinds.length) continue;
       // Même bouchée, la sortie sait ce qu'elle attend de faire passer.
       if (kinds.length === 1 && !m.seenOut?.[key(b.x, b.y)]) (m.seenOut ??= {})[key(b.x, b.y)] = kinds[0];

@@ -2704,7 +2704,7 @@ export class Hud implements GestureHandlers {
       cross.append(h('div', ''), tile(3), tag, tile(2), center, tile(0), h('div', ''), tile(1), vert ? tile(4) : h('div', ''));
       sheet.append(cross);
       // Toutes les sorties choisissent leurs objets : le reste attend dans le filtre (et bloque le tapis).
-      if (tri && outs.length && !restOuts.length) sheet.append(h('p', 'ns-warn', 'Aucune sortie ne prend « le reste » : ce qui n’est choisi nulle part attend dans le filtre et bloque le tapis. Mets une sortie sur « Le reste ».'));
+      if (tri && outs.length && !restOuts.length) sheet.append(h('p', 'ns-warn', 'Aucune sortie ne prend « le reste » : le filtre ne prend que ce qu’une sortie veut ; le reste attend sur son tapis, avant le filtre (les autres entrées passent). Mets une sortie sur « Le reste » pour tout faire passer.'));
       // Le réglage du côté choisi.
       const st = sides[sel] ?? 'none';
       const open = st === 'main' || st === 'out';
