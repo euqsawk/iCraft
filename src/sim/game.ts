@@ -343,7 +343,7 @@ export class Game {
         if (inSel(x, y) || f.inside(m, x, y) || ((i < 0 || i >= m.w) && (j < 0 || j >= m.h))) continue;
         const b = f.beltAt(x, y);
         if (!b) continue;
-        if (f.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) === m || (b.feeds ?? []).some((d) => f.machineAt(b.x + DX[d], b.y + DY[d]) === m)) {
+        if (f.backMachine(b) === m || (b.feeds ?? []).some((d) => f.machineAt(b.x + DX[d], b.y + DY[d]) === m)) {
           const p = port('sortie', x, y);
           im.links = [...(im.links ?? []).filter((id) => id !== p.id), p.id];
         } else if (f.machineAt(b.x + DX[b.dir] * (1 + (b.jump ?? 0)), b.y + DY[b.dir] * (1 + (b.jump ?? 0))) === m || f.nodeOutputs(b).some((o) => o.next?.kind === 'machine' && o.next.machine === m)) {
@@ -993,6 +993,7 @@ export class Game {
       } else {
         const now = !!this.inAtelier || Game.instantBuild;
         const nb = this.view.addBelt(c.x, c.y, c.dir, c.inDir, now, c.z ?? 0);
+        if (c.noIn) nb.noIn = 1;
         if (c.jump) nb.jump = Math.min(c.jump, RULES.bridgeSpan);
         if (!now) this.pending.push({ kind: 'belt', k: this.view.beltKey(nb) });
         else if (!this.inAtelier && this.world.reveal(c.x, c.y, 2)) this.emit({ type: 'reveal' });

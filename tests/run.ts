@@ -583,7 +583,7 @@ test('foreuses 2 × 2 collées : elles ne se relient pas, chacune sort son miner
   run(g, 40);
   assert(a.built && b.built && g.factory.drillGroup(a).length === 1 && g.factory.drillGroup(b).length === 1, 'pas de groupe');
   const c = g.placeMachine('coffre', -18, -5)!;
-  assert(g.placeBelts(trace(g, [[-14.5, -4.5], [-17.5, -4.5]]).result()), 'une sortie pour la première seulement');
+  assert(g.placeBelts(trace(g, [[-13.5, -4.5], [-17.5, -4.5]]).result()), 'une sortie pour la première seulement');
   for (const m of [a, b]) { m.outBuf = {}; m.made = 0; m.fuel = 10; }
   c.inBuf = {};
   run(g, 60);
@@ -933,6 +933,19 @@ test('gomme avec le 1er étage seul : le tapis du 2e étage reste', () => {
   assert(g.areaContents(0, 8, 2, 10).belts.every((b) => !b.z), 'la zone non plus');
   g.groundOnly = false;
   assert(g.removeAt(1, 9) && !g.factory.beltAt(1, 9, 1), 'avec les deux étages, le haut part');
+});
+test('un tapis tracé depuis la case vide à côté d’un coffre ne se branche pas à lui', () => {
+  const g = new Game('TEST-NI'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  const c = g.placeMachine('coffre', 0, 5)!;
+  c.built = true; g.factory.markBuilt();
+  const t = trace(g, [[0.5, 6.5], [0.5, 10.5]]);
+  assert(t.valid && g.placeBelts(t.result()), 'tapis');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.factory.putInStorage(c, 'fer', 5);
+  run(g, 10);
+  assert(g.factory.beltAt(0, 6)!.items.length === 0, 'le tapis reste vide');
+  const s2 = JSON.parse(JSON.stringify(g.serialize()));
+  assert(new Game(s2.seed, s2).factory.beltAt(0, 6)!.noIn === 1, 'sauvegardé');
 });
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {

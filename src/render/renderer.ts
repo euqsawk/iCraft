@@ -697,7 +697,7 @@ export class GameRenderer {
     // Là où le tapis touche une machine, il file sous elle (la machine est dessinée par-dessus) :
     // pas de bout arrondi qui laisserait un vide contre ses coins arrondis.
     const f = this.game.view;
-    const under = (b: Belt, d: number) => (f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
+    const under = (b: Belt, d: number) => (d === (b.inDir + 2) % 4 ? (f.backMachine(b) ? CELL / 2 : 0) : f.machineAt(b.x + DX[d], b.y + DY[d]) ? CELL / 2 : 0);
     const line = (g: Graphics, list: Belt[], dy: number) => {
       for (const b of list) {
         const p = this.beltPath(b);
@@ -778,7 +778,7 @@ export class GameRenderer {
         const n = f.next(b), fd = f.feederOf(b);
         const back = ((b.inDir + 2) % 4) as Dir;
         if (!(n?.kind === 'belt' && n.belt.z) && !f.machineAt(b.x + DX[b.dir], b.y + DY[b.dir])) cap((b.x + 0.5 + DX[b.dir] / 2) * CELL, (b.y + 0.5 + DY[b.dir] / 2) * CELL, b.dir);
-        if (!fd?.z && !f.machineAt(b.x + DX[back], b.y + DY[back])) cap((b.x + 0.5 + DX[back] / 2) * CELL, (b.y + 0.5 + DY[back] / 2) * CELL, back);
+        if (!fd?.z && !f.backMachine(b)) cap((b.x + 0.5 + DX[back] / 2) * CELL, (b.y + 0.5 + DY[back] / 2) * CELL, back);
       }
       line(ug, upper, 0);
       ug.stroke({ width: 19, color: 0x9fb0ba, cap: 'round', join: 'round' });
@@ -1419,7 +1419,7 @@ export class GameRenderer {
       if (b.node) for (const o of f.nodeOutputs(b)) if (o.d < 4 && o.d !== b.dir && o.next?.kind === 'machine') port(b, o.d, true);
       // Sortie : le tapis part d'une machine.
       const back = (b.inDir + 2) % 4;
-      if (f.machineAt(b.x + DX[back], b.y + DY[back])) port(b, back, false);
+      if (f.backMachine(b)) port(b, back, false);
       // Liaison de côté : la machine voisine dépose sur ce tapis.
       for (const fd of b.feeds ?? []) if (fd !== back && f.machineAt(b.x + DX[fd], b.y + DY[fd])) port(b, fd, false);
     }

@@ -49,6 +49,8 @@ export interface Belt {
   open?: number[];
   /** Entrées acceptées (côtés), quand elles sont choisies : une boîte posée seule ne prend que ce qu'on y trace. */
   ins?: number[];
+  /** Tracé parti de cette case vide : la machine collée derrière ne la nourrit pas (il faut tracer depuis elle). */
+  noIn?: 1;
   /** Boîte ou ascenseur posé seul, sans sortie tout droit tant qu'on n'a pas tracé de tapis depuis lui. */
   lone?: 1;
   /** Sortie vers le tapis de l'autre étage, sur la même case (dessous au 2e étage, dessus au 1er). */
@@ -606,10 +608,16 @@ export class Factory {
     return res;
   }
 
+  /** La machine derrière la case, si elle y dépose (pas si le tapis a été tracé depuis la case vide d'à côté). */
+  backMachine(b: Belt): Machine | undefined {
+    if (b.noIn || (b.ins && !b.ins.includes(opposite(b.inDir)))) return undefined;
+    return this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
+  }
+
   /** Quelque chose arrive par l'arrière de la case (un tapis, une machine) : ce côté ne peut pas être une sortie. */
   backFed(b: Belt): boolean {
     const d = opposite(b.inDir);
-    return !!this.machineAt(b.x + DX[d], b.y + DY[d]) || this.feedsInto(b, d) || !!this.feederOf(b);
+    return !!this.backMachine(b) || this.feedsInto(b, d) || !!this.feederOf(b);
   }
 
   /** Un tapis voisin, de ce côté, qui donne dans cette case. */
@@ -1486,7 +1494,7 @@ export class Factory {
       this.nextOf.set(b, nxt);
       // Sortie de machine : la case d'où vient le tapis est dans une machine.
       // (Une boîte posée seule ne prend que les entrées qu'on y a tracées.)
-      const fm = b.ins && !b.ins.includes(opposite(b.inDir)) ? undefined : this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
+      const fm = this.backMachine(b);
       if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
       // Liaison de côté : la machine voisine dépose au milieu de la case.
       for (const fd of b.feeds ?? []) {
@@ -2360,7 +2368,7 @@ export class Factory {
       if (!kinds.length) continue;
       // Même bouchée, la sortie sait ce qu'elle attend de faire passer.
       if (kinds.length === 1 && !m.seenOut?.[key(b.x, b.y)]) (m.seenOut ??= {})[key(b.x, b.y)] = kinds[0];
-      const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]) !== m;
+      const side = (b.feeds ?? []).some((fd) => this.machineAt(b.x + DX[fd], b.y + DY[fd]) === m) && this.backMachine(b) !== m;
       if (side) {
         if (!this.roomAt(b, 0.5)) continue;
       } else {
@@ -2397,7 +2405,7 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })), ...(l.track ? { track: { sig: l.track.sig, gap: l.track.gap, legs: l.track.legs.map((f) => [...f]) } } : {}) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), o: b.open ?? [], ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift || b.lone || b.ins ? { ...(b.lift ? { l: 1 } : {}), ...(b.lone ? { s: 1 } : {}), ...(b.ins ? { i: b.ins } : {}) } : 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), o: b.open ?? [], ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift || b.lone || b.ins || b.noIn ? { ...(b.lift ? { l: 1 } : {}), ...(b.lone ? { s: 1 } : {}), ...(b.ins ? { i: b.ins } : {}), ...(b.noIn ? { n: 1 } : {}) } : 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -2454,6 +2462,7 @@ export class Factory {
       else if (lift && typeof lift === 'object') {
         if (lift.l) b.lift = 1;
         if (lift.s) b.lone = 1;
+        if (lift.n) b.noIn = 1;
         if (Array.isArray(lift.i)) b.ins = lift.i.filter((d) => d >= 0 && d < 4);
       }
       if (meter) this.addMeter(b);
@@ -2603,7 +2612,7 @@ export interface FactorySave {
   drills1?: 1;
   /** Foreuses redevenues 2 × 2 (sans groupes). */
   drills2?: 1;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?, number?, (0 | { n: NodeKind; r?: Record<number, string[]>; f?: number[]; v?: 1; j?: Record<number, number>; o?: number[] })?, (number | { l?: 1; s?: 1; i?: number[] })?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?, number?, (0 | { n: NodeKind; r?: Record<number, string[]>; f?: number[]; v?: 1; j?: Record<number, number>; o?: number[] })?, (number | { l?: 1; s?: 1; i?: number[]; n?: 1 })?][];
   /** Tapis à niveaux (sans ce drapeau : une partie d'avant, où la vitesse était la même pour tous). */
   levels?: 1;
   machines: {

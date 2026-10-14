@@ -707,7 +707,7 @@ export class Hud implements GestureHandlers {
       if (b.classList.contains('hidden')) return;
       const dragging = this.root.classList.contains('dragging-machine');
       const els: (Element | null)[] = [this.root.querySelector('.drop-trash'), this.root.querySelector('.move-banner')];
-      if (!dragging) els.push(this.root.querySelector('.toolbar'), this.palette, this.toolOpts);
+      if (!dragging) els.push(this.root.querySelector('.toolbar'), this.palette);
       let top = window.innerHeight;
       for (const el of els) {
         if (!el || el.classList.contains('hidden')) continue;

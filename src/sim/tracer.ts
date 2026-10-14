@@ -11,6 +11,8 @@ export interface TraceCell {
   inDir: Dir;
   /** Case de tapis déjà construite qu'on prolonge. */
   existing?: boolean;
+  /** Première case d'un tracé parti d'une case vide : elle ne prend rien à la machine collée derrière elle. */
+  noIn?: boolean;
   /** Pont : nombre de cases enjambées après celle-ci. */
   jump?: number;
   /** En hauteur (étage 2). */
@@ -347,7 +349,8 @@ export class BeltTracer {
       else if (this.extend) inDir = this.extend.inDir;
       else if (this.startDir !== null) inDir = this.startDir;
       else inDir = dir;
-      out.push({ x: c.x, y: c.y, dir, inDir, existing: i === 0 && !!this.extend, ...(c.jump ? { jump: c.jump } : {}), ...(c.z ? { z: 1 as const } : {}) });
+      const fresh = i === 0 && !this.extend && !this.startMachine && !this.splitFrom;
+      out.push({ x: c.x, y: c.y, dir, inDir, existing: i === 0 && !!this.extend, ...(fresh ? { noIn: true } : {}), ...(c.jump ? { jump: c.jump } : {}), ...(c.z ? { z: 1 as const } : {}) });
     }
     return out;
   }
