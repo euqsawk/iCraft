@@ -958,8 +958,12 @@ export class Game {
     const bridges = cells.filter((c) => c.jump).length + (split?.jump ? 1 : 0);
     const cost = fresh.length * RULES.beltCost + bridges * RULES.bridgeCost + (split && !split.from.node ? RULES.nodeCost : 0);
     // Rien de neuf : seulement le bout d'un tapis qui se tourne (vers une machine collée, par exemple).
-    const turns = cells.some((c) => c.existing && this.view.beltAt(c.x, c.y, c.z ?? 0)?.dir !== c.dir);
-    if (fresh.length === 0 && !turns) return false;
+    const turns = cells.some((c) => { const b = c.existing ? this.view.beltAt(c.x, c.y, c.z ?? 0) : undefined; return !!b && (b.dir !== c.dir || !!b.lone); });
+    // Ou le bout d'un tapis qu'on relie à une boîte posée seule.
+    const lastC = cells[cells.length - 1];
+    const tgt = lastC ? this.view.beltAt(lastC.x + DX[lastC.dir], lastC.y + DY[lastC.dir], lastC.z ?? 0) : undefined;
+    const joins = !!tgt?.ins && !tgt.ins.includes((lastC.dir + 2) % 4);
+    if (fresh.length === 0 && !turns && !joins) return false;
     if (split && !this.isUnlocked('separateur')) {
       this.emit({ type: 'toast', text: 'Séparateur : à débloquer dans l’arbre (Logistique)', tone: 'warn' });
       return false;
@@ -1536,6 +1540,16 @@ export class Game {
     if (items?.length && b.node !== 'tri') { if (!this.placeNode(b, 'tri')) return; }
     this.view.setNodeRule(b, d, items);
     this.emit({ type: 'factory' });
+  }
+
+  /** Brancher une boîte sur un tapis déjà collé à elle, de ce côté (la boîte le nourrit). */
+  linkBoxSide(b: Belt, d: number): boolean {
+    const nb = this.view.beltAt(b.x + DX[d], b.y + DY[d], b.z ?? 0);
+    if (!b.node || !nb) return false;
+    if (nb.ins && !nb.ins.includes((d + 2) % 4)) nb.ins = [...nb.ins, (d + 2) % 4];
+    if (!this.setNodeOutput(b, d, true)) return false;
+    this.emit({ type: 'toast', text: 'Branché', tone: 'good' });
+    return true;
   }
 
   /** Une sortie de côté (ou vers l'autre étage) : ouverte, ou coupée (« Rien »). */

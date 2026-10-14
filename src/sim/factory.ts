@@ -631,13 +631,19 @@ export class Factory {
    * Ce qu'une boîte nourrirait de ce côté : un tapis qui part de là (il commence contre la boîte), ou une machine collée.
    * `ignoreOff` : même si ce côté est coupé.
    */
-  private sideTarget(b: Belt, d: number, ignoreOff = false): Next {
+  private sideTarget(b: Belt, d: number, ignoreOff = false, strict = false): Next {
     if (!ignoreOff && !b.open?.includes(d)) return null;
     const L = 1 + (b.jumps?.[d] ?? 0);
     const nx = b.x + DX[d] * L, ny = b.y + DY[d] * L;
     // Au même étage ; sinon un tapis de l'autre étage qui part de là (un ascenseur dès la première case).
     const nb = this.beltAt(nx, ny, b.z ?? 0) ?? (L === 1 ? this.liftAt(b, nx, ny) : null);
-    if (nb) return nb.inDir === d && !nb.jump && !(nb.x + DX[nb.dir] * span(nb) === b.x && nb.y + DY[nb.dir] * span(nb) === b.y) ? { kind: 'belt', belt: nb, side: false } : null;
+    // Un tapis qui part de là (tout droit), ou (branché à la main) un tapis qui passe : on le rejoint par le côté.
+    if (nb) {
+      if (nb.jump || (nb.x + DX[nb.dir] * span(nb) === b.x && nb.y + DY[nb.dir] * span(nb) === b.y)) return null;
+      if (nb.ins && !nb.ins.includes((d + 2) % 4)) return null;
+      if (nb.inDir === d) return { kind: 'belt', belt: nb, side: false };
+      return strict || (nb.z ?? 0) !== (b.z ?? 0) ? null : { kind: 'belt', belt: nb, side: true };
+    }
     if (L > 1) return null;
     const m = this.machineAt(nx, ny);
     return m ? { kind: 'machine', machine: m } : null;
@@ -2530,7 +2536,7 @@ export class Factory {
     // Les anciens séparateurs ne nourrissaient que leurs dérivations : les autres côtés sont coupés.
     for (const { b, outs } of oldSplits) for (const d of outs) this.setNodeOff(b, d, false);
     for (const { b, off } of oldNodes) {
-      for (let d = 0; d < 4; d++) if (d !== b.dir && !off.includes(d) && !(d === opposite(b.inDir) && this.backFed(b)) && this.sideTarget(b, d, true)) this.setNodeOff(b, d, false);
+      for (let d = 0; d < 4; d++) if (d !== b.dir && !off.includes(d) && !(d === opposite(b.inDir) && this.backFed(b)) && this.sideTarget(b, d, true, true)) this.setNodeOff(b, d, false);
     }
     this.nextId = Math.max(this.nextId, s.nextId);
     this.lines.clear();

@@ -44,6 +44,8 @@ export class BeltTracer {
   linkMachine: Machine | null = null;
   /** Depuis un tapis vers une machine qu'il longe : le tapis la nourrit par le côté. */
   intoMachine: Dir | null = null;
+  /** Depuis une boîte, le doigt va sur un tapis collé : on branche cette sortie (sans case nouvelle). */
+  boxLink: Dir | null = null;
   readonly extend: Belt | null = null;
   /** Tapis existant d'où part une dérivation (il devient un séparateur). */
   readonly splitFrom: Belt | null = null;
@@ -173,11 +175,19 @@ export class BeltTracer {
   /** Le bout d'un tapis se tourne simplement vers une machine (ou un tapis) collée, sans case nouvelle. */
   get turnsOnly(): boolean {
     return !!this.extend && this.cells.length === 1 && this.endTarget !== null && !this.extend.jump
-      && dirBetween(this.extend.x, this.extend.y, this.endTarget.x, this.endTarget.y) !== this.extend.dir;
+      && (dirBetween(this.extend.x, this.extend.y, this.endTarget.x, this.endTarget.y) !== this.extend.dir || !!this.extend.lone);
+  }
+
+  /** Le bout d'un tapis touche une boîte posée seule qui ne le prend pas encore : lâcher les relie. */
+  get joinsBox(): boolean {
+    if (!this.extend || this.cells.length !== 1 || !this.endTarget) return false;
+    const t = this.factory.beltAt(this.endTarget.x, this.endTarget.y, this.extend.z ?? 0);
+    const d = dirBetween(this.extend.x, this.extend.y, this.endTarget.x, this.endTarget.y);
+    return !!t?.ins && d !== null && !t.ins.includes(opposite(d));
   }
 
   get valid(): boolean {
-    if (this.turnsOnly) return true;
+    if (this.turnsOnly || this.joinsBox) return true;
     return this.newCount >= 1 && (this.cells.length >= 2 || this.endTarget !== null || this.startMachine !== null || this.splitFrom !== null);
   }
 
@@ -203,6 +213,7 @@ export class BeltTracer {
       if (Math.max(Math.abs(dx), Math.abs(dy)) < 0.8) return;
       const d: Dir = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 0 : 2) : (dy > 0 ? 1 : 3);
       this.intoMachine = null;
+      this.boxLink = null;
       if (d === sb.dir || (d === opposite(sb.inDir) && this.factory.backFed(sb)) || this.factory.nodeOutputs(sb).some((o) => o.d === d)) return;
       const x = sb.x + DX[d], y = sb.y + DY[d];
       if (this.factory.machineAt(x, y)) { this.intoMachine = d; this.blocked = true; return; }
@@ -212,7 +223,13 @@ export class BeltTracer {
         // Un tapis collé sur ce côté : avec les ponts (au sol), la dérivation passe par-dessus quand le doigt va au-delà.
         const k = this.bridges && !L && !sz && this.factory.beltAt(x, y) ? this.landing(sb.x, sb.y, d) : 0;
         const ahead = (fx - (sb.x + 0.5)) * DX[d] + (fy - (sb.y + 0.5)) * DY[d];
-        if (!k || ahead < k - 0.4) { this.blocked = true; return; }
+        if (!k || ahead < k - 0.4) {
+          // Un tapis collé à une boîte, au même étage : on peut le brancher en lâchant dessus.
+          const nb = this.factory.beltAt(x, y, sz);
+          if (sb.node && nb && !nb.jump && sz === L && !(nb.x + DX[nb.dir] === sb.x && nb.y + DY[nb.dir] === sb.y)) this.boxLink = d;
+          this.blocked = true;
+          return;
+        }
         this.startDir = d;
         this.splitJump = k - 1;
         this.cells.push({ x: sb.x + DX[d] * k, y: sb.y + DY[d] * k, z: 0 });

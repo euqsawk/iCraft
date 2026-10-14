@@ -1159,6 +1159,10 @@ export class Hud implements GestureHandlers {
         this.showBubble(sx, sy - 56, `Lâche pour relier à ${esc(machineDef(this.tracer.linkMachine.type).name.toLowerCase())}`, false);
         return;
       }
+      if (this.tracer.boxLink !== null || this.tracer.joinsBox) {
+        this.showBubble(sx, sy - 56, 'Lâche pour les relier', false);
+        return;
+      }
       if (this.tracer.intoMachine !== null) {
         this.showBubble(sx, sy - 56, 'Lâche pour que le tapis nourrisse cette machine', false);
         return;
@@ -1212,6 +1216,8 @@ export class Hud implements GestureHandlers {
         this.game.linkMachines(this.tracer.startMachine, this.tracer.linkMachine);
       } else if (this.tool === 'tapis' && this.tracer?.linkBelt && this.tracer.linkDir !== null) {
         this.game.linkMachineToBelt(this.tracer.linkBelt, this.tracer.linkDir);
+      } else if (this.tool === 'tapis' && this.tracer?.splitFrom && this.tracer.boxLink !== null) {
+        this.game.linkBoxSide(this.tracer.splitFrom, this.tracer.boxLink);
       } else if (this.tool === 'tapis' && this.tracer?.splitFrom && this.tracer.intoMachine !== null) {
         this.game.linkBeltToMachine(this.tracer.splitFrom, this.tracer.intoMachine);
       } else if (this.tool === 'tapis' && this.tracer?.valid) {
@@ -2629,7 +2635,7 @@ export class Hud implements GestureHandlers {
   private destOptions(current: string | undefined): PickOpt[] {
     const g = this.game;
     const list: [string, string][] = [['@noyau', 'Ce qui manque à la mission du Noyau'], ['@labo', 'Ce qui manque au Laboratoire pour les déblocages']];
-    if (g.order) list.push(['@comptoir', 'Ce qui manque à la commande du Comptoir']);
+    list.push(['@comptoir', g.order ? 'Ce qui manque à la commande du Comptoir' : 'Ce qui manquera à la prochaine commande du Comptoir (rien tant qu’il n’y en a pas)']);
     if (g.freight) list.push(['@train', 'Ce qui manque à la commande du train']);
     return list.map(([id, sub]) => ({ id, label: this.filterInfo(id).name, sub, icon: this.filterInfo(id).icon, on: current === id, group: 'Destinations' }));
   }

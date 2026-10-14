@@ -994,6 +994,33 @@ test('tapis gommé à la sortie d’une boîte : les objets qui y partaient revi
   g.factory.tick(0.05);
   assert(fb.items.every((i) => i.p <= 0.5 + 1e-9), `au milieu : ${JSON.stringify(fb.items)}`);
 });
+test('brancher une boîte sur des tapis déjà collés à elle (entrée, sortie, tapis qui passe)', () => {
+  const g = new Game('TEST-BL'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const src = g.placeMachine('coffre', -5, 9)!, eR = g.placeMachine('coffre', 4, 9)!, eD = g.placeMachine('coffre', 4, 10)!;
+  assert(g.placeBelts([-4, -3, -2, -1].map((x) => ({ x, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'entrée');
+  assert(g.placeBelts([1, 2, 3].map((x) => ({ x, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'sortie');
+  assert(g.placeBelts([-1, 0, 1, 2, 3].map((x) => ({ x, y: 10, dir: 0, inDir: 0 })) as TraceCell[]), 'tapis qui passe dessous');
+  assert(g.placeBox('boite_sep', 0, 9, 0), 'séparateur seul, collé à tout');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const fb = g.factory.beltAt(0, 9)!;
+  assert(!g.factory.next(g.factory.beltAt(-1, 9)!) && !g.factory.next(fb), 'rien de branché');
+  // Sortie : du séparateur vers le tapis collé à droite.
+  const t1 = trace(g, [[0.5, 9.5], [1.5, 9.5]]);
+  assert(t1.valid && g.placeBelts(t1.result()) && (g.factory.next(fb) as { belt?: unknown })?.belt === g.factory.beltAt(1, 9), 'sortie branchée');
+  // Entrée : du bout du tapis de gauche vers le séparateur.
+  const t2 = trace(g, [[-0.5, 9.5], [0.5, 9.5]]);
+  assert(t2.joinsBox && t2.valid && g.placeBelts(t2.result()), 'entrée branchée');
+  // Le tapis qui passe dessous : du séparateur vers lui.
+  const t3 = trace(g, [[0.5, 9.5], [0.5, 10.5]]);
+  assert(t3.boxLink === 1 && g.linkBoxSide(t3.splitFrom!, 1), 'branché sur le tapis qui passe');
+  g.factory.putInStorage(src, 'fer', 10);
+  run(g, 40);
+  assert((eR.inBuf.fer ?? 0) === 5 && (eD.inBuf.fer ?? 0) === 5, `partagé : ${JSON.stringify([eR.inBuf, eD.inBuf])}`);
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');
