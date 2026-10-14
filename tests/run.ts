@@ -946,6 +946,11 @@ test('un tapis tracé depuis la case vide à côté d’un coffre ne se branche 
   assert(g.factory.beltAt(0, 6)!.items.length === 0, 'le tapis reste vide');
   const s2 = JSON.parse(JSON.stringify(g.serialize()));
   assert(new Game(s2.seed, s2).factory.beltAt(0, 6)!.noIn === 1, 'sauvegardé');
+  // On le relie ensuite en traçant depuis le coffre vers ce tapis : le coffre le nourrit.
+  const t2 = trace(g, [[0.5, 5.5], [0.5, 6.6]]);
+  assert(t2.linkBelt === g.factory.beltAt(0, 6) && t2.linkDir !== null && g.linkMachineToBelt(t2.linkBelt!, t2.linkDir!), 'relié');
+  run(g, 10);
+  assert(g.factory.beltAt(0, 10)!.items.length + [...g.factory.belts.values()].reduce((n, b) => n + b.items.length, 0) > 0, 'le coffre sort sur le tapis');
 });
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {

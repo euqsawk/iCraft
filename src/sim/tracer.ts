@@ -246,7 +246,8 @@ export class BeltTracer {
       if (lb) {
         const toMachine = opposite(this.startDir as Dir);
         const intoMachine = lb.dir === toMachine;
-        const fromMachine = opposite(lb.inDir) === toMachine;
+        // Un tapis qui part déjà de la machine (et qu'elle nourrit) : rien à relier.
+        const fromMachine = opposite(lb.inDir) === toMachine && this.factory.backMachine(lb) === m;
         if (!intoMachine && !fromMachine) { this.linkBelt = lb; this.linkDir = toMachine; }
         this.blocked = true;
         return;

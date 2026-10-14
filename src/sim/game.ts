@@ -1422,7 +1422,12 @@ export class Game {
   linkMachineToBelt(b: Belt, dir: Dir): boolean {
     const m = this.view.machineAt(b.x + DX[dir], b.y + DY[dir]);
     if (!m) return false;
-    this.view.addFeed(b, dir);
+    // La machine est derrière le tapis (il part de la case d'à côté) : elle le nourrit par l'arrière.
+    if (dir === (b.inDir + 2) % 4) {
+      delete b.noIn;
+      if (b.ins && !b.ins.includes(dir)) b.ins = [...b.ins, dir];
+      this.view.markBuilt();
+    } else this.view.addFeed(b, dir);
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: `${machineDef(m.type).name} reliée au tapis`, tone: 'good' });
     return true;

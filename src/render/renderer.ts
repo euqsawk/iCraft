@@ -715,8 +715,10 @@ export class GameRenderer {
         const e0 = under(b, back), e2 = under(b, b.dir);
         // Pont : seule la rampe (jusqu'au milieu de la case) est au sol ; le tablier est dessiné à part, plus haut.
         if (b.jump) { g.moveTo(p[0].x + DX[back] * e0, p[0].y + DY[back] * e0 + dy).lineTo(p[1].x, p[1].y + dy); continue; }
-        const s0 = openStart(b) ? p[1] : { x: p[0].x + DX[back] * e0, y: p[0].y + DY[back] * e0 };
-        const s2 = openEnd(b) ? p[1] : { x: p[2].x + DX[b.dir] * e2, y: p[2].y + DY[b.dir] * e2 };
+        // Libre des deux côtés (une seule case) : un rond (un trait minuscule aux bouts arrondis).
+        const tiny = (k: number) => ({ x: p[1].x + DX[b.dir] * k, y: p[1].y + DY[b.dir] * k });
+        const s0 = openStart(b) ? tiny(-0.3) : { x: p[0].x + DX[back] * e0, y: p[0].y + DY[back] * e0 };
+        const s2 = openEnd(b) ? tiny(0.3) : { x: p[2].x + DX[b.dir] * e2, y: p[2].y + DY[b.dir] * e2 };
         g.moveTo(s0.x, s0.y + dy).lineTo(p[1].x, p[1].y + dy).lineTo(s2.x, s2.y + dy);
         // Les sorties de côté d'une boîte : un bout de tapis jusqu'au bord (les ponts sont dessinés à part).
         if (b.node) for (const o of f.nodeOutputs(b)) {
@@ -2084,20 +2086,28 @@ export class GameRenderer {
     } else if (pv?.kind === 'trace') {
       const cells = pv.tracer.result();
       const ok = pv.tracer.valid && !pv.tracer.blocked;
+      // Comme les tapis posés : un bout libre s'arrête au milieu de sa case.
+      const freeEnd = !pv.tracer.endTarget;
+      const pathOf = (c: (typeof cells)[number], i: number) => {
+        const p = this.beltPath(c);
+        const mid = (k: number) => ({ x: p[1].x + DX[c.dir] * k, y: p[1].y + DY[c.dir] * k });
+        return [i === 0 && c.noIn ? mid(-0.3) : p[0], p[1], i === cells.length - 1 && freeEnd ? mid(0.3) : p[2]];
+      };
       // En hauteur : une ombre décalée au sol.
       const ups = cells.filter((c) => c.z);
-      for (const c of ups) { const p = this.beltPath(c); g.moveTo(p[0].x, p[0].y + 10).lineTo(p[1].x, p[1].y + 10).lineTo(p[2].x, p[2].y + 10); }
+      cells.forEach((c, i) => { if (!c.z) return; const p = pathOf(c, i); g.moveTo(p[0].x, p[0].y + 10).lineTo(p[1].x, p[1].y + 10).lineTo(p[2].x, p[2].y + 10); });
       if (ups.length) g.stroke({ width: 15, color: PALETTE.ink, alpha: 0.15, cap: 'butt', join: 'round' });
-      for (const c of cells) {
-        const p = this.beltPath(c);
+      cells.forEach((c, i) => {
+        const p = pathOf(c, i);
         g.moveTo(p[0].x, p[0].y).lineTo(p[1].x, p[1].y).lineTo(p[2].x, p[2].y);
-      }
+      });
       g.stroke({ width: 14, color: ok ? PALETTE.white : 0xffd9d0, alpha: 0.95, cap: 'round', join: 'round' });
-      for (const c of cells) dashedPolyline(g, this.beltPath(c), 6, 5);
+      cells.forEach((c, i) => dashedPolyline(g, pathOf(c, i), 6, 5));
       g.stroke({ width: 2.5, color: ok ? PALETTE.ink : PALETTE.coral, alpha: 0.45, cap: 'round' });
       const last = cells[cells.length - 1];
       if (last) {
-        const cx = (last.x + 0.5) * CELL + DX[last.dir] * 9, cy = (last.y + 0.5) * CELL + DY[last.dir] * 9;
+        const k = freeEnd ? 0 : 9;
+        const cx = (last.x + 0.5) * CELL + DX[last.dir] * k, cy = (last.y + 0.5) * CELL + DY[last.dir] * k;
         const fx = DX[last.dir], fy = DY[last.dir];
         g.poly([cx + fx * 6, cy + fy * 6, cx - fy * 6, cy + fx * 6, cx + fy * 6, cy - fx * 6]).fill(ok ? PALETTE.ink : PALETTE.coral);
       }
