@@ -138,6 +138,8 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
   display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 22px; background: #fff;
   box-shadow: 0 5px 0 var(--shadow);
 }
+.pal-hint { margin: 0 2px; font-size: 12px; font-weight: 700; line-height: 1.35; color: var(--ink2); }
+.pal-hint b { color: var(--ink); font-weight: 900; }
 .pal-row { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
 .pal-row::-webkit-scrollbar, .pal-cats::-webkit-scrollbar { display: none; }
 /* Sous-menu de la palette (à partir de 10 machines) : une rangée de catégories. */
@@ -227,7 +229,7 @@ button:focus-visible { outline: 3px solid var(--coral); outline-offset: 2px; }
   align-items: center; gap: 6px; pointer-events: none;
 }
 .toast {
-  padding: 8px 14px; border-radius: 16px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 800;
+  padding: 8px 14px; border-radius: 16px; background: var(--ink); color: #fff; font-size: 13px; font-weight: 800; max-width: calc(100% - 32px); text-align: center;
   box-shadow: 0 3px 0 rgba(0, 0, 0, .15); animation: toast 2.4s forwards;
 }
 .toast.warn { background: var(--coral); }

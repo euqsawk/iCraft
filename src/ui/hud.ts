@@ -506,6 +506,12 @@ export class Hud implements GestureHandlers {
       p.append(cats);
       shown = list.filter((m) => Hud.paletteCat(m) === this.paletteTab);
     }
+    // Modules : une phrase pour expliquer à quoi ça sert.
+    if (list.length >= 10 ? this.paletteTab === 'modules' : shown.some((m) => Hud.paletteCat(m) === 'modules')) {
+      p.append(h('p', 'pal-hint', inside
+        ? 'Dans un atelier : une <b>Entrée</b> fait arriver les objets du dehors, une <b>Sortie</b> les renvoie dehors.'
+        : 'Un <b>atelier</b> range des machines dans un seul bloc de 3 × 3 qui produit pareil, et se copie. Glisse un atelier vide (ou un de tes plans) puis entre dedans ; pour ranger des machines déjà posées, prends l’outil <b>Module</b> en bas et entoure-les.'));
+    }
     const row = h('div', 'pal-row');
     for (const m of shown) {
       const b = h('button', 'mcard');
@@ -807,6 +813,7 @@ export class Hud implements GestureHandlers {
       this.r.movingId = null;
       this.root.querySelector('.move-banner')?.remove();
     }
+    if (t === 'module' && this.tool !== 'module') this.toast('Module : entoure au doigt les machines à ranger. Elles passent dans un atelier de 3 × 3 qui produit pareil (et que tu peux copier).', 'info', 6000);
     this.tool = t;
     // Câble : mode électricité, on voit les câbles sous les blocs et les machines alimentées.
     this.r.electric = t === 'cable';
@@ -3479,12 +3486,14 @@ export class Hud implements GestureHandlers {
     if (this.dragAt || this.tracer || this.cableTracer) this.toolEnd(true);
   }
 
-  toast(text: string, tone: 'info' | 'warn' | 'good' = 'info'): void {
+  toast(text: string, tone: 'info' | 'warn' | 'good' = 'info', ms = 2500): void {
     const t = h('div', `toast ${tone}`);
     t.textContent = text;
+    // Un message long reste plus longtemps.
+    if (ms !== 2500) t.style.animationDuration = `${(ms - 100) / 1000}s`;
     this.toasts.append(t);
     while (this.toasts.children.length > 3) this.toasts.firstElementChild?.remove();
-    setTimeout(() => t.remove(), 2500);
+    setTimeout(() => t.remove(), ms);
   }
 
   // ---------- Mini-carte ----------
