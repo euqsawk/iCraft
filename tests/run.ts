@@ -974,6 +974,26 @@ test('filtre sans « reste » : ce que personne ne veut attend dans le filtre (l
   run(g, 20);
   assert(dst.inBuf.cuivre === 3, 'avec « le reste », il repart');
 });
+test('tapis gommé à la sortie d’une boîte : les objets qui y partaient reviennent au milieu', () => {
+  const g = new Game('TEST-GO'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const src = g.placeMachine('coffre', -6, 9)!;
+  assert(g.placeBelts([...Array(6)].map((_, i) => ({ x: -5 + i, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'tapis');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  const fb = g.factory.beltAt(0, 9)!;
+  assert(g.placeBox('boite_sep', 0, 9, 0), 'séparateur au bout');
+  const t1 = trace(g, [[0.5, 9.5], [3.5, 9.5]]);
+  assert(g.placeBelts(t1.result(), t1.splitFrom && t1.splitDir !== null ? { from: t1.splitFrom, dir: t1.splitDir } : undefined), 'sortie');
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.factory.putInStorage(src, 'fer', 30);
+  run(g, 12);
+  for (let x = 1; x <= 3; x++) g.removeAt(x, 9);
+  g.factory.tick(0.05);
+  assert(fb.items.every((i) => i.p <= 0.5 + 1e-9), `au milieu : ${JSON.stringify(fb.items)}`);
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');
