@@ -193,6 +193,8 @@ export class GameRenderer {
   private liftPlatG = new Graphics();
   /** Les objets dans les cabines (par-dessus la plateforme). */
   private liftItemLayer = new Container();
+  /** Le cadre bleu foncé de la cabine et ses quatre poteaux : la seule chose par-dessus les objets qui entrent et sortent. */
+  private liftFrameG = new Graphics();
   private liftPool: Sprite[] = [];
   /** Les cabines : case, sens (monte ou descend), et le tapis du haut qui traverse la cabine. */
   private cabins: { x: number; y: number; up: boolean; belt: Belt; alpha: number }[] = [];
@@ -277,7 +279,7 @@ export class GameRenderer {
     this.dots.alpha = 0.5;
     this.actorLayer.addChild(this.vehicleLayer, this.portalG);
     this.vehicleLayer.setMask({ mask: this.tunnelMaskG, inverse: true });
-    this.worldLayer.addChild(this.tunnelMaskG, this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeG, this.bridgeItemLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
+    this.worldLayer.addChild(this.tunnelMaskG, this.roomG, this.dots, this.filonLayer, this.routeG, this.pipeG, this.groundShadows, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.lowFilterLayer, this.bridgeG, this.bridgeItemLayer, this.upperLayer, this.coverLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.liftFrameG, this.meterG, this.machineLayer, this.pickLayer, this.portG, this.modeTint, this.powerG, this.meterLabels, this.lightG, this.buildG, this.actorLayer, this.rocketG, this.trainG, this.fx, this.fogLayer, this.overlay);
     this.upperLayer.addChild(this.upperG, this.upperItemLayer, this.filterLayer);
     this.coverLayer.alpha = 0.5;
     this.nightLayer.addChild(this.nightDark, this.glowLayer);
@@ -806,6 +808,7 @@ export class GameRenderer {
   private drawLifts(): void {
     const g = this.liftG;
     g.clear();
+    this.liftFrameG.clear();
     const f = this.game.view;
     this.cabins = [];
     for (const b of f.belts.values()) {
@@ -818,6 +821,7 @@ export class GameRenderer {
       const alpha = b.built && to.built ? 1 : 0.5;
       this.cabins.push({ x: top.x, y: top.y, up, belt: top, alpha });
       this.cabinBase(g, top.x, top.y, alpha);
+      this.cabinFrame(this.liftFrameG, top.x, top.y, alpha);
     }
   }
 
@@ -825,20 +829,27 @@ export class GameRenderer {
   private cabinBase(g: Graphics, x: number, y: number, alpha: number): void {
     const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
     g.roundRect(cx - 12, cy - 9, 24, 24, 5).fill({ color: PALETTE.ink, alpha: 0.18 * alpha });
-    g.roundRect(cx - 12, cy - 12, 24, 24, 5).fill({ color: 0xe9f0ec, alpha }).stroke({ width: 2, color: PALETTE.ink, alpha });
+    g.roundRect(cx - 12, cy - 12, 24, 24, 5).fill({ color: 0xe9f0ec, alpha });
   }
 
-  /** La plateforme (h = 0 en bas, 1 en haut : elle grossit en montant) et les quatre poteaux de la cabine. */
+  /** Le cadre et les quatre poteaux, par-dessus les objets. */
+  private cabinFrame(g: Graphics, x: number, y: number, alpha: number): void {
+    const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL;
+    g.roundRect(cx - 12, cy - 12, 24, 24, 5).stroke({ width: 2, color: PALETTE.ink, alpha });
+    for (const [dx, dy] of [[-13.5, -13.5], [-13.5, 8.5], [8.5, -13.5], [8.5, 8.5]]) g.roundRect(cx + dx, cy + dy, 5, 5, 1.4).fill({ color: PALETTE.ink, alpha });
+  }
+
+  /** La plateforme (h = 0 en bas, 1 en haut : elle grossit en montant). */
   private cabinTop(g: Graphics, x: number, y: number, h: number, alpha: number): void {
     const cx = (x + 0.5) * CELL, cy = (y + 0.5) * CELL, s = 8 * (1 + 0.14 * h);
     g.roundRect(cx - s, cy - s, s * 2, s * 2, 3).fill({ color: 0xffffff, alpha }).stroke({ width: 2, color: 0x9fb0ba, alpha });
-    for (const [dx, dy] of [[-13.5, -13.5], [-13.5, 8.5], [8.5, -13.5], [8.5, 8.5]]) g.roundRect(cx + dx, cy + dy, 5, 5, 1.4).fill({ color: PALETTE.ink, alpha });
   }
 
   /** Une cabine entière (pendant un tracé : là où l'ascenseur sera posé). */
   private liftIcon(g: Graphics, x: number, y: number, up: boolean, alpha: number): void {
     this.cabinBase(g, x, y, alpha);
     this.cabinTop(g, x, y, up ? 0 : 1, alpha);
+    this.cabinFrame(g, x, y, alpha);
   }
 
   /**
@@ -1168,7 +1179,7 @@ export class GameRenderer {
     if (elec !== this.electricOn) {
       this.electricOn = elec;
       const a = elec ? 0.3 : 1;
-      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.filterLayer, this.lowFilterLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
+      for (const l of [this.routeG, this.cableG, this.beltShadow, this.beltTop, this.linkG, this.ghostBeltG, this.itemLayer, this.bridgeG, this.bridgeItemLayer, this.upperG, this.upperItemLayer, this.filterLayer, this.lowFilterLayer, this.liftG, this.liftPlatG, this.liftItemLayer, this.liftFrameG, this.groundShadows, this.machineLayer, this.portG]) l.alpha = a;
       this.actorLayer.alpha = elec ? 0.45 : 1;
       this.modeTint.visible = elec;
       this.powerG.visible = elec;
@@ -1454,8 +1465,13 @@ export class GameRenderer {
     pg.clear();
     let usedL = 0;
     const cabinSet = new Set<Belt>();
+    // Les cases juste avant et juste après chaque cabine : leurs objets au bord de la cabine passent par-dessus son plancher.
+    const nearCabin = new Map<Belt, 'in' | 'out'>();
     for (const c of this.cabins) {
       cabinSet.add(c.belt);
+      const fv = this.game.view, nx = fv.next(c.belt), fd = fv.feederOf(c.belt);
+      if (fd) nearCabin.set(fd, 'in');
+      if (nx?.kind === 'belt') nearCabin.set(nx.belt, 'out');
       const belt = c.belt, cx = (c.x + 0.5) * CELL, cy = (c.y + 0.5) * CELL;
       if (cx < b.x0 - CELL || cx > b.x1 + CELL || cy < b.y0 - CELL || cy > b.y1 + CELL) continue;
       const from = c.up ? 0 : 1, to = c.up ? 1 : 0;
@@ -1525,7 +1541,10 @@ export class GameRenderer {
             continue;
           }
         }
-        const s = belt.z ? sprite(this.upperPool, this.upperItemLayer, usedU++) : sprite(this.itemPool, this.itemLayer, used++);
+        const near = nearCabin.get(belt);
+        const edge = near === 'in' ? p > 0.55 : near === 'out' ? p < 0.45 : false;
+        const s = edge ? sprite(this.liftPool, this.liftItemLayer, usedL++) : belt.z ? sprite(this.upperPool, this.upperItemLayer, usedU++) : sprite(this.itemPool, this.itemLayer, used++);
+        s.scale.set(1);
         s.texture = this.itemTextures.get(it.t)!;
         // En hauteur, les objets sont plus près : un peu plus gros.
         if (belt.z) s.scale.set(1.14);
