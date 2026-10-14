@@ -465,7 +465,8 @@ export class Hud implements GestureHandlers {
     if (m.id === 'depot' || m.id === 'gare') return 'transport';
     if (m.kind === 'atelier' || m.kind === 'port_in' || m.kind === 'port_out') return 'modules';
     if (m.kind === 'drill') return 'extraction';
-    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'pump' || m.kind === 'reactor') return 'electricite';
+    if (m.kind === 'pump') return 'extraction';
+    if (m.kind === 'generator' || m.kind === 'solar' || m.kind === 'battery' || m.kind === 'reactor') return 'electricite';
     if (m.kind === 'crafter') return 'fabrication';
     if (m.kind === 'storage') return 'stockage';
     return 'outils';
@@ -1834,6 +1835,13 @@ export class Hud implements GestureHandlers {
       + `<b>${rate !== null ? `${Hud.rate(rate)}<small>/s</small>` : '&nbsp;'}</b><span class="mp-n">${esc(sub ?? item(k).name.toLowerCase())}</span></div>`;
   }
 
+  /** L'eau d'une machine qui en boit : comme un ingrédient, en L/s, et ce qu'elle en reçoit. */
+  private waterItem(lps: number, mm: Machine): string {
+    const pct = Math.round(this.game.view.waterFactor(mm) * 100);
+    return `<div class="mp-it"><span class="mp-ico"><img src="${this.itemIcons.get('eau')}" alt=""></span>`
+      + `<b>${fmtN(lps)}<small> L/s</small></b><span class="mp-n">eau${pct < 100 ? ` · ${pct} %` : ''}</span></div>`;
+  }
+
   /** Onglet Production : ce qui entre → ce qui sort, l'avancement, le charbon. */
   private machProduction(body: HTMLElement, mm: Machine): void {
     const g = this.game, f = g.view, def = machineDef(mm.type);
@@ -1881,7 +1889,10 @@ export class Hud implements GestureHandlers {
         else cap = 'Fait ce qu’on lui apporte · exemple :';
         // Le niveau de la machine accélère tout : débits et temps par pièce.
         const sp = Factory.levelSpeed(mm), tt = rec.time / sp;
-        flow = `<div class="mp-ins">${Object.entries(rec.in).map(([k, n]) => this.mpItem(k, n / tt, false, n)).join('<span class="mp-plus">+</span>')}</div>${MP_ARROW}`
+        // L'eau (par tuyau) : un ingrédient comme les autres, en litres par seconde.
+        const water = f.waterUse(mm);
+        const insHtml = [...Object.entries(rec.in).map(([k, n]) => this.mpItem(k, n / tt, false, n)), ...(water ? [this.waterItem(water, mm)] : [])];
+        flow = `<div class="mp-ins">${insHtml.join('<span class="mp-plus">+</span>')}</div>${MP_ARROW}`
           + `<div class="mp-ins">${outs.map(([k, n]) => this.mpItem(k, n / tt, true, n)).join('<span class="mp-plus">+</span>')}</div>`;
         foot = `<span>${secs(tt)} par ${esc(item(main).name.toLowerCase())}</span>`;
       }
@@ -2030,7 +2041,8 @@ export class Hud implements GestureHandlers {
       const outs = Object.keys(r.out);
       if (!outs.length) return;
       const o = outs[0];
-      const ins = Object.entries(r.in).map(([k, n]) => `<span class="mrec-i"><img src="${this.itemIcons.get(k)}" alt="">${n > 1 ? `<i>${n}</i>` : ''}</span>`).join('<b class="mp-plus">+</b>');
+      const water = g.view.waterUse(mm) ? `<b class="mp-plus">+</b><span class="mrec-i"><img src="${this.itemIcons.get('eau')}" alt=""></span>` : '';
+      const ins = Object.entries(r.in).map(([k, n]) => `<span class="mrec-i"><img src="${this.itemIcons.get(k)}" alt="">${n > 1 ? `<i>${n}</i>` : ''}</span>`).join('<b class="mp-plus">+</b>') + water;
       const tag = auto === i && mm.status === 'working' ? '<span class="mrec-tag">en cours</span>' : '';
       const row = h('button', `mrec-row${mm.plan === i ? ' on' : ''}`, `${ins}<b class="mp-plus">→</b><span class="mrec-i out"><img src="${this.itemIcons.get(o)}" alt=""></span><span class="mrec-name">${esc(item(o).name)}${tag}</span><span class="mrec-t">${secs(r.time)}</span>`);
       row.onclick = () => { g.setPlan(mm, mm.plan === i ? undefined : i); this.setMachTab('prod'); };
