@@ -986,7 +986,7 @@ export class Game {
         if (b) {
           this.view.setBeltDir(b, c.dir);
           // Une boîte (ou un ascenseur) posée seule : le premier tapis tracé depuis elle donne son sens.
-          if ((b.node || b.lift) && !this.view.backFed(b) && !this.view.feederOf(b)) b.inDir = c.dir;
+          if (b.lone) { b.inDir = c.dir; delete b.lone; }
           // Le bout d'un tapis existant peut devenir un pont (vers un tapis voisin à enjamber).
           if (c.jump) b.jump = Math.min(c.jump, RULES.bridgeSpan);
         }
@@ -997,6 +997,14 @@ export class Game {
         if (!now) this.pending.push({ kind: 'belt', k: this.view.beltKey(nb) });
         else if (!this.inAtelier && this.world.reveal(c.x, c.y, 2)) this.emit({ type: 'reveal' });
       }
+    }
+    // Un tapis tracé jusqu'à une boîte posée seule : elle prend désormais ce qui arrive de ce côté.
+    const last = cells[cells.length - 1];
+    if (last) {
+      const L = 1 + (last.jump ?? 0);
+      const t = this.view.beltAt(last.x + DX[last.dir] * L, last.y + DY[last.dir] * L, last.z ?? 0);
+      const side = (last.dir + 2) % 4;
+      if (t?.ins && !t.ins.includes(side)) t.ins = [...t.ins, side];
     }
     this.view.markBuilt();
     this.emit({ type: 'factory' });
@@ -1424,7 +1432,7 @@ export class Game {
       this.emit({ type: 'toast', text: 'Nourrir une machine depuis le milieu d’un tapis : débloque le Séparateur (Logistique)', tone: 'warn' });
       return false;
     }
-    if (b.node && !b.off?.includes(dir) && this.view.nodeOutputs(b).some((o) => o.d === dir)) return false;
+    if (b.node && this.view.nodeOutputs(b).some((o) => o.d === dir)) return false;
     if (b.node && this.view.nodeOutputs(b).length >= 4) {
       this.emit({ type: 'toast', text: 'Ce séparateur a déjà 4 sorties', tone: 'warn' });
       return false;
@@ -1432,8 +1440,6 @@ export class Game {
     if (!b.node) {
       if (!this.spend(RULES.nodeCost)) return false;
       this.view.setNode(b, 'sep');
-      // Seulement cette machine : les autres côtés restent coupés.
-      for (let d = 0; d < 4; d++) if (d !== dir && d !== b.dir && this.view.nodeSides(b)[d] === 'out') this.view.setNodeOff(b, d, true);
     }
     this.view.setNodeOff(b, dir, false);
     this.emit({ type: 'factory' });
@@ -1496,6 +1502,8 @@ export class Game {
     const now = !!this.inAtelier || Game.instantBuild;
     const nb = f.addBelt(x, y, 0, 0, now, z);
     if (lift) nb.lift = 1; else f.setNode(nb, kind);
+    // Posée seule : rien n'est branché, c'est au joueur de tracer ses entrées et ses sorties.
+    nb.lone = 1; nb.ins = [];
     if (!now) this.pending.push({ kind: 'belt', k: f.beltKey(nb) });
     this.emit({ type: 'factory' });
     this.emit({ type: 'toast', text: lift ? 'Ascenseur posé : trace un tapis depuis lui, il part au 2ᵉ étage' : `${kind === 'tri' ? 'Filtre' : 'Séparateur'} posé : trace des tapis qui en partent ou qui y arrivent`, tone: 'good' });
@@ -1505,7 +1513,10 @@ export class Game {
   /** Retire la boîte : la case redevient un tapis simple (remboursé). */
   removeNode(b: Belt): void {
     if (!b.node) return;
+    // Posée seule et jamais branchée : la case part avec elle.
+    if (b.lone && !b.items.length) { this.earn(this.refundBelt(b)); this.emit({ type: 'factory' }); return; }
     this.view.clearNode(b);
+    delete b.ins;
     this.earn(RULES.nodeCost);
     this.emit({ type: 'factory' });
   }

@@ -45,8 +45,12 @@ export interface Belt {
   node?: NodeKind;
   /** Filtre : les objets de chaque sortie (sens 0 à 3, 4 = l'autre étage). Une sortie sans liste prend « le reste ». */
   rules?: Record<number, string[]>;
-  /** Côtés coupés (« Rien ») : le tapis ou la machine de ce côté n'est pas nourri. */
-  off?: number[];
+  /** Sorties de côté branchées par le joueur (en traçant depuis la boîte, ou « Sortie » dans sa fenêtre). Rien d'autre. */
+  open?: number[];
+  /** Entrées acceptées (côtés), quand elles sont choisies : une boîte posée seule ne prend que ce qu'on y trace. */
+  ins?: number[];
+  /** Boîte ou ascenseur posé seul, sans sortie tout droit tant qu'on n'a pas tracé de tapis depuis lui. */
+  lone?: 1;
   /** Sortie vers le tapis de l'autre étage, sur la même case (dessous au 2e étage, dessus au 1er). */
   vert?: 1;
   /** Sortie de côté qui part en pont : nombre de cases enjambées, par sens. */
@@ -532,7 +536,7 @@ export class Factory {
 
   /** Retire la boîte : la case redevient un tapis simple. */
   clearNode(b: Belt): void {
-    delete b.node; delete b.rules; delete b.off; delete b.vert; delete b.jumps; delete b.toggle;
+    delete b.node; delete b.rules; delete b.open; delete b.vert; delete b.jumps; delete b.toggle;
     for (const it of b.items) delete it.o;
     this.dirty = true;
   }
@@ -548,9 +552,9 @@ export class Factory {
   /** Coupe (« Rien ») ou rétablit une sortie de côté ; 4 : la sortie vers l'autre étage. */
   setNodeOff(b: Belt, d: number, off: boolean): void {
     if (d === 4) { if (off) delete b.vert; else b.vert = 1; this.dirty = true; return; }
-    const s = new Set(b.off ?? []);
-    if (off) s.add(d); else s.delete(d);
-    if (s.size) b.off = [...s]; else delete b.off;
+    const s = new Set(b.open ?? []);
+    if (off) s.delete(d); else s.add(d);
+    if (s.size) b.open = [...s]; else delete b.open;
     this.dirty = true;
   }
 
@@ -610,6 +614,7 @@ export class Factory {
 
   /** Un tapis voisin, de ce côté, qui donne dans cette case. */
   private feedsInto(b: Belt, d: number): boolean {
+    if (b.ins && !b.ins.includes(d)) return false;
     const nb = this.beltAt(b.x + DX[d], b.y + DY[d], b.z ?? 0);
     return !!nb && nb.x + DX[nb.dir] * span(nb) === b.x && nb.y + DY[nb.dir] * span(nb) === b.y;
   }
@@ -619,7 +624,7 @@ export class Factory {
    * `ignoreOff` : même si ce côté est coupé.
    */
   private sideTarget(b: Belt, d: number, ignoreOff = false): Next {
-    if (!ignoreOff && b.off?.includes(d)) return null;
+    if (!ignoreOff && !b.open?.includes(d)) return null;
     const L = 1 + (b.jumps?.[d] ?? 0);
     const nx = b.x + DX[d] * L, ny = b.y + DY[d] * L;
     // Au même étage ; sinon un tapis de l'autre étage qui part de là (un ascenseur dès la première case).
@@ -1480,7 +1485,8 @@ export class Factory {
       const nxt = this.linkFor(b, b.dir);
       this.nextOf.set(b, nxt);
       // Sortie de machine : la case d'où vient le tapis est dans une machine.
-      const fm = this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
+      // (Une boîte posée seule ne prend que les entrées qu'on y a tracées.)
+      const fm = b.ins && !b.ins.includes(opposite(b.inDir)) ? undefined : this.machineAt(b.x - DX[b.inDir], b.y - DY[b.inDir]);
       if (fm && !(nxt?.kind === 'machine' && nxt.machine === fm)) this.outputs.get(fm)!.push(b);
       // Liaison de côté : la machine voisine dépose au milieu de la case.
       for (const fd of b.feeds ?? []) {
@@ -1539,6 +1545,8 @@ export class Factory {
 
   /** Ce qui suit une case de tapis dans une direction donnée. */
   private linkFor(b: Belt, dir: Dir): Next {
+    // Posée seule : pas de sortie tout droit avant qu'on trace un tapis depuis elle.
+    if (b.lone && dir === b.dir) return null;
     // Un pont atterrit plus loin, tout droit.
     const L = dir === b.dir ? span(b) : 1 + (b.jumps?.[dir] ?? 0);
     const nx = b.x + DX[dir] * L, ny = b.y + DY[dir] * L;
@@ -1549,6 +1557,8 @@ export class Factory {
       if (nb.x + DX[nb.dir] * span(nb) === b.x && nb.y + DY[nb.dir] * span(nb) === b.y) return null;
       // On ne monte pas sur un pont par le côté.
       if (nb.jump && nb.inDir !== dir) return null;
+      // Une boîte posée seule ne prend que les tapis qu'on y a tracés.
+      if (nb.ins && !nb.ins.includes(opposite(dir))) return null;
       return { kind: 'belt', belt: nb, side: nb.inDir !== dir };
     }
     const m = this.machineAt(nx, ny);
@@ -2387,7 +2397,7 @@ export class Factory {
       cables: [...this.cables],
       pipes: [...this.pipes],
       lines: [...this.lines.values()].map((l) => ({ id: l.id, kind: l.kind, stops: l.stops.map((st) => ({ ...st })), vehicles: l.vehicles.map((v) => ({ ...v, cargo: { ...v.cargo } })), ...(l.track ? { track: { sig: l.track.sig, gap: l.track.gap, legs: l.track.legs.map((f) => [...f]) } } : {}) })),
-      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), ...(b.off ? { f: b.off } : {}), ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift ? 1 : 0]),
+      belts: [...this.belts.values()].map((b) => [b.x, b.y, b.dir, b.inDir, b.built ? 1 : 0, b.items.map((i) => [i.t, Math.round(i.p * 1000) / 1000, i.o ?? 0]), -1, b.feeds?.length ? 10 + b.feeds.reduce<number>((a, d) => a | (1 << d), 0) : -1, b.jump ?? 0, 0, b.meter ? 1 : 0, -1, '', 0, b.lvl ?? 1, '', b.z ?? 0, b.node ? { n: b.node, ...(b.rules ? { r: b.rules } : {}), o: b.open ?? [], ...(b.vert ? { v: 1 } : {}), ...(b.jumps ? { j: b.jumps } : {}) } : 0, b.lift || b.lone || b.ins ? { ...(b.lift ? { l: 1 } : {}), ...(b.lone ? { s: 1 } : {}), ...(b.ins ? { i: b.ins } : {}) } : 0]),
       machines: [...this.machines.values()].map((m) => ({
         id: m.id, type: m.type, x: m.x, y: m.y, built: m.built, inBuf: m.inBuf, outBuf: m.outBuf,
         fuel: m.fuel, carb: m.carb, burn: m.burn, craft: m.craft, drillT: m.drillT, choice: m.choice, made: m.made, links: m.links,
@@ -2413,6 +2423,8 @@ export class Factory {
     for (const [k, v] of s.picks ?? []) if (Array.isArray(v)) oldPicks.set(k, v.filter((t) => typeof t === 'string'));
     // Anciens séparateurs (une ou deux dérivations) : des boîtes dont seules ces sorties restent ouvertes (vu plus bas).
     const oldSplits: { b: Belt; outs: number[] }[] = [];
+    // Boîtes d'avant les sorties choisies : ce qui était branché de leurs côtés le reste.
+    const oldNodes: { b: Belt; off: number[] }[] = [];
     for (const [x, y, dir, inDir, built, items, split, feed, jump, splitJump, meter, split2, filter, pick, lvl, filter2, z, node, lift] of s.belts) {
       const b = this.addBelt(x, y, dir as Dir, inDir as Dir, built === 1, z ? 1 : 0);
       if (typeof lvl === 'number' && lvl > 1) b.lvl = Math.min(5, Math.floor(lvl));
@@ -2426,7 +2438,8 @@ export class Factory {
       if (node && typeof node === 'object' && (node.n === 'sep' || node.n === 'tri')) {
         b.node = node.n;
         if (node.r && typeof node.r === 'object') for (const [d, l] of Object.entries(node.r)) if (Array.isArray(l) && l.length) (b.rules ??= {})[Number(d)] = l.filter((v) => typeof v === 'string');
-        if (Array.isArray(node.f) && node.f.length) b.off = node.f.filter((d) => d >= 0 && d < 4);
+        if (Array.isArray(node.o)) { const o = node.o.filter((d) => d >= 0 && d < 4); if (o.length) b.open = o; }
+        else oldNodes.push({ b, off: Array.isArray(node.f) ? node.f : [] });
         if (node.v) b.vert = 1;
         if (node.j && typeof node.j === 'object') for (const [d, n] of Object.entries(node.j)) if (n > 0) (b.jumps ??= {})[Number(d)] = Math.min(n, RULES.bridgeSpan);
       } else if (s1 >= 0) {
@@ -2437,7 +2450,12 @@ export class Factory {
         oldSplits.push({ b, outs: s2 >= 0 ? [s1, s2] : [s1] });
       }
       if (jump) b.jump = Math.min(jump, RULES.bridgeSpan);
-      if (lift) b.lift = 1;
+      if (lift === 1) b.lift = 1;
+      else if (lift && typeof lift === 'object') {
+        if (lift.l) b.lift = 1;
+        if (lift.s) b.lone = 1;
+        if (Array.isArray(lift.i)) b.ins = lift.i.filter((d) => d >= 0 && d < 4);
+      }
       if (meter) this.addMeter(b);
       // Parties d'avant : le trieur était rangé sur le tapis.
       if (Array.isArray(pick)) oldPicks.set(key(x, y), pick.filter((t) => typeof t === 'string'));
@@ -2496,8 +2514,9 @@ export class Factory {
       Object.assign(m, { inBuf: sm.inBuf ?? {}, outBuf: sm.outBuf ?? {}, made: sm.made ?? 0 });
     }
     // Les anciens séparateurs ne nourrissaient que leurs dérivations : les autres côtés sont coupés.
-    for (const { b, outs } of oldSplits) {
-      for (let d = 0; d < 4; d++) if (d !== b.dir && !outs.includes(d) && d !== opposite(b.inDir) && this.sideTarget(b, d, true)) this.setNodeOff(b, d, true);
+    for (const { b, outs } of oldSplits) for (const d of outs) this.setNodeOff(b, d, false);
+    for (const { b, off } of oldNodes) {
+      for (let d = 0; d < 4; d++) if (d !== b.dir && !off.includes(d) && !(d === opposite(b.inDir) && this.backFed(b)) && this.sideTarget(b, d, true)) this.setNodeOff(b, d, false);
     }
     this.nextId = Math.max(this.nextId, s.nextId);
     this.lines.clear();
@@ -2584,7 +2603,7 @@ export interface FactorySave {
   drills1?: 1;
   /** Foreuses redevenues 2 × 2 (sans groupes). */
   drills2?: 1;
-  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?, number?, (0 | { n: NodeKind; r?: Record<number, string[]>; f?: number[]; v?: 1; j?: Record<number, number> })?, number?][];
+  belts: [number, number, number, number, number, [string, number, number?][], number?, number?, number?, number?, number?, number?, string?, (number | string[])?, number?, string?, number?, (0 | { n: NodeKind; r?: Record<number, string[]>; f?: number[]; v?: 1; j?: Record<number, number>; o?: number[] })?, (number | { l?: 1; s?: 1; i?: number[] })?][];
   /** Tapis à niveaux (sans ce drapeau : une partie d'avant, où la vitesse était la même pour tous). */
   levels?: 1;
   machines: {

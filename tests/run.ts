@@ -895,6 +895,33 @@ test('une boîte posée à l’autre étage, à côté d’un tapis, ne se branc
   assert(g.factory.nodeIsLink(b) && g.factory.nodeOutputs(b).length === 2, `rien de nouveau : ${JSON.stringify(g.factory.nodeOutputs(b).map((o) => o.d))}`);
   assert(g.factory.next(g.factory.beltAt(0, 10)!)?.kind === 'belt' && (g.factory.next(g.factory.beltAt(0, 10)!) as { belt: { x: number } }).belt.x === 0, 'le tapis continue tout droit');
 });
+test('les boîtes ne se branchent jamais toutes seules : c’est au joueur de tracer', () => {
+  const g = new Game('TEST-S8'); g.money = 1e5; g.world.reveal(0, 9, 20);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  const src = g.placeMachine('coffre', -6, 9)!, end = g.placeMachine('coffre', 6, 9)!, side = g.placeMachine('coffre', 0, 10)!;
+  assert(g.placeBelts([...Array(11)].map((_, i) => ({ x: -5 + i, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'tapis');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  // Sur le tapis, à côté d'un coffre : il ne le nourrit pas tant qu'on n'a pas branché cette sortie.
+  const sb = g.factory.beltAt(0, 9)!;
+  assert(g.placeBox('boite_sep', 0, 9, 0), 'séparateur sur le tapis');
+  assert(g.factory.nodeOutputs(sb).length === 1 && g.factory.nodeSides(sb)[1] === 'off', `pas branché : ${JSON.stringify(g.factory.nodeSides(sb))}`);
+  g.factory.putInStorage(src, 'fer', 6);
+  run(g, 30);
+  assert(end.inBuf.fer === 6 && !side.inBuf.fer, `tout droit : ${JSON.stringify([end.inBuf, side.inBuf])}`);
+  assert(g.setNodeOutput(sb, 1, true) && g.factory.nodeOutputs(sb).length === 2, 'branché à la main');
+  // Seul, collé au tapis (au-dessus) et au coffre de droite : rien ne se branche, ni dedans ni dehors.
+  const top = g.placeMachine('coffre', 6, 8)!; top.built = true; g.factory.markBuilt();
+  const m0 = g.money;
+  assert(g.placeBox('boite_tri', 5, 8, 0), 'filtre seul');
+  const fb = g.factory.beltAt(5, 8)!;
+  assert(g.factory.next(fb) === null && g.factory.nodeOutputs(fb).length === 0, 'pas de sortie');
+  assert(g.factory.next(fb) === null && g.factory.next(g.factory.beltAt(4, 9)!)?.kind === 'belt', 'pas même vers le coffre collé ; le tapis continue');
+  g.removeNode(fb);
+  assert(!g.factory.beltAt(5, 8) && g.money === m0, 'retiré : la case part avec, tout est rendu');
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');

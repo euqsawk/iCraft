@@ -2670,7 +2670,7 @@ export class Hud implements GestureHandlers {
         const open = st === 'main' || st === 'out';
         const col = hexCss(nodeColor(b.dir, d));
         const body = st === 'in' ? '<b class="ns-in">Entrée</b>' : open ? `<span class="ns-what">${what(d)}</span>`
-          : st === 'off' ? '<small>coupée</small>' : '<small>rien</small>';
+          : st === 'off' ? '<small>pas branchée</small>' : '<small>rien</small>';
         const el = h('button', `ns-tile ${st}${d === sel ? ' sel' : ''}`, `<span class="ns-name"${open ? ` style="color:${col}"` : ''}>${NAME[d]}</span>${body}`);
         if (open) el.style.borderColor = col;
         if (d === sel) el.style.boxShadow = `0 0 0 4px ${open ? col : '#9AAFA4'}40`;
@@ -2712,7 +2712,7 @@ export class Hud implements GestureHandlers {
           ['Sortie', st === 'out', () => { if (g.setNodeOutput(b, sel, true)) this.refreshSheet(); }],
           ['Rien', st === 'off', () => { g.setNodeOutput(b, sel, false); this.refreshSheet(); }],
         ]);
-        if (st === 'off') hint(`Coupée : rien ne part ${sel === 4 ? `au ${below}` : 'par ici'}, même si un tapis part de ce côté.`);
+        if (st === 'off') hint(`Pas branchée : rien ne part ${sel === 4 ? `au ${below}` : 'par ici'}. Touche « Sortie » pour y envoyer des objets.`);
       }
       if (open && !tri) hint(outs.length > 1 ? `Chacun son tour : un objet sur ${outs.length} part par ici. Si une sortie est pleine, l’objet prend la suivante.` : 'Tout passe par ici pour l’instant : trace des tapis qui partent de la boîte (jusqu’à 4 sorties) pour partager.');
       if (open && tri) {
