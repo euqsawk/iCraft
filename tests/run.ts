@@ -1022,6 +1022,31 @@ test('brancher une boîte sur des tapis déjà collés à elle (entrée, sortie,
   run(g, 40);
   assert((eR.inBuf.fer ?? 0) === 5 && (eD.inBuf.fer ?? 0) === 5, `partagé : ${JSON.stringify([eR.inBuf, eD.inBuf])}`);
 });
+test('filtre « pour le Comptoir » : il compte tout ce qui va au Comptoir, même ce qui arrive par un autre tapis', () => {
+  const g = new Game('TEST-CPT'); g.money = 1e5; g.world.reveal(4, 12, 30);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  for (const m of [...g.factory.machines.values()]) if (m.type === 'comptoir') g.factory.removeMachine(m);
+  g.factory.addMachine('comptoir', 10, 6, true);
+  g.order = { id: 1, rarity: 'commune' as never, lines: [{ item: 'tuyau_acier', qty: 10, done: 0 }, { item: 'vis', qty: 50, done: 0 }], xp: 0, money: 0 };
+  const src = g.placeMachine('coffre', 4, 12)!, rest = g.placeMachine('coffre', 16, 12)!, other = g.placeMachine('coffre', -8, 9)!;
+  assert(g.placeBelts([...Array(11)].map((_, i) => ({ x: 5 + i, y: 12, dir: 0, inDir: 0 })) as TraceCell[]), 'tapis');
+  assert(g.placeBox('boite_tri', 10, 12, 0), 'filtre');
+  const fb = g.factory.beltAt(10, 12)!;
+  assert(g.placeBelts([11, 10, 9, 8].map((y) => ({ x: 10, y, dir: 3, inDir: 3 })) as TraceCell[], { from: fb, dir: 3 }), 'vers le Comptoir');
+  // Un autre coffre dépose aussi des tuyaux sur ce chemin, par le côté.
+  assert(g.placeBelts([...Array(17)].map((_, i) => ({ x: -7 + i, y: 9, dir: 0, inDir: 0 })) as TraceCell[]), 'tapis du coffre qui rejoint');
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  g.setNodeRule(fb, 3, ['@comptoir']);
+  g.factory.putInStorage(other, 'tuyau_acier', 4);
+  g.factory.putInStorage(src, 'tuyau_acier', 30);
+  run(g, 90);
+  const stuck = [...g.factory.belts.values()].filter((b) => b.x === 10 && b.y < 12).reduce((n, b) => n + b.items.length, 0);
+  assert(g.order!.lines[0].done === 10 && stuck === 0, `10 livrés, rien de coincé : ${g.order!.lines[0].done}, ${stuck} sur le chemin`);
+  assert((rest.inBuf.tuyau_acier ?? 0) === 24, `le reste : ${JSON.stringify(rest.inBuf)}`);
+});
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
   const g = new Game('TEST-27');

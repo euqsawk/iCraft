@@ -1602,23 +1602,35 @@ export class Factory {
     let m = this.transit.get(dest);
     if (m) return m;
     m = new Map();
-    const tag = `@${dest}`;
     const add = (t: string) => m!.set(t, (m!.get(t) ?? 0) + 1);
+    const type = ({ noyau: 'noyau', labo: 'laboratoire', comptoir: 'comptoir', train: 'quai' } as Record<string, string>)[dest];
+    // Tout ce qui roule vers ce bâtiment, d'où qu'il vienne (filtres, machines, tapis qui se rejoignent) :
+    // on remonte les tapis depuis ceux qui y entrent. Une boîte : seulement ce qu'elle envoie de ce côté, et on s'arrête là.
+    const back = new Map<Belt, { from: Belt; d: number }[]>();
+    const starts: { b: Belt; d: number }[] = [];
+    const link = (from: Belt, d: number, n: Next) => {
+      if (!n) return;
+      if (n.kind === 'machine') { if (n.machine.type === type) starts.push({ b: from, d }); return; }
+      let l = back.get(n.belt);
+      if (!l) back.set(n.belt, l = []);
+      l.push({ from, d });
+    };
     for (const b of this.belts.values()) {
-      if (!b.rules) continue;
-      for (const o of this.nodeOuts.get(b) ?? []) {
-        if (!b.rules[o.d]?.includes(tag)) continue;
-        const link = o.next;
-        for (const it of b.items) if ((it.o === undefined ? b.dir : it.o - 1) === o.d) add(it.t);
-        // Les tapis de la dérivation, jusqu'au bâtiment (ou au bout).
-        const seen = new Set<Belt>();
-        let nx = link;
-        while (nx && nx.kind === 'belt' && !seen.has(nx.belt) && seen.size < 400) {
-          seen.add(nx.belt);
-          for (const it of nx.belt.items) add(it.t);
-          nx = this.nextOf.get(nx.belt) ?? null;
-        }
+      if (b.node) for (const o of this.nodeOuts.get(b) ?? []) link(b, o.d, o.next);
+      else link(b, b.dir, this.nextOf.get(b) ?? null);
+    }
+    const seen = new Set<Belt>();
+    const stack = starts.map((x) => ({ from: x.b, d: x.d }));
+    while (stack.length) {
+      const { from: b, d } = stack.pop()!;
+      if (b.node) {
+        for (const it of b.items) if ((it.o === undefined ? b.dir : it.o - 1) === d) add(it.t);
+        continue;
       }
+      if (seen.has(b)) continue;
+      seen.add(b);
+      for (const it of b.items) add(it.t);
+      for (const f of back.get(b) ?? []) stack.push(f);
     }
     this.transit.set(dest, m);
     return m;
