@@ -1641,7 +1641,8 @@ export class Factory {
     const dest = filter.slice(1);
     if (!this.needCache) this.needCache = new Map();
     let needs = this.needCache.get(dest);
-    if (!needs) { needs = this.destNeeds?.(dest) ?? {}; this.needCache.set(dest, needs); }
+    // Ce qui manque et ce qui est en route : toujours calculés au même moment (sinon un objet livré entre les deux compte double).
+    if (!needs) { needs = this.destNeeds?.(dest) ?? {}; this.needCache.set(dest, needs); this.transit?.delete(dest); this.inTransit(dest); }
     const need = needs[t] ?? 0;
     if (need <= 0) return false;
     const tr = this.inTransit(dest);
@@ -1818,7 +1819,7 @@ export class Factory {
 
   private give(m: Machine, item: string): void {
     const def = machineDef(m.type);
-    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'freight') { this.onDeliver(m, item); return; }
+    if (def.kind === 'core' || def.kind === 'lab' || def.kind === 'missions' || def.kind === 'freight') { this.onDeliver(m, item); this.needCache = null; this.transit = null; return; }
     if (def.kind === 'port_out') { if (this.host) this.host.outBuf[item] = (this.host.outBuf[item] ?? 0) + 1; return; }
     if (def.kind === 'rocket') { m.inBuf[item] = (m.inBuf[item] ?? 0) + 1; return; }
     if (isFuel(item) && def.coal && !this.freeEnergy && m.fuel < this.fuelCap(m)) {

@@ -12,8 +12,8 @@ import { NODE } from '../src/data/unlocks.ts';
 import { decodeSave, encodeSave } from '../src/save/code.ts';
 import { BUILDABLE, MACHINES } from '../src/data/machines.ts';
 import { RULES } from '../src/config.ts';
-import { ROCKET_NEEDS, type Machine } from '../src/sim/factory.ts';
-import { key } from '../src/sim/geom.ts';
+import { ROCKET_NEEDS, type Belt, type Machine } from '../src/sim/factory.ts';
+import { key, type Dir } from '../src/sim/geom.ts';
 
 let failed = 0, passed = 0;
 function test(name: string, fn: () => void): void {
@@ -1046,6 +1046,35 @@ test('filtre « pour le Comptoir » : il compte tout ce qui va au Comptoir, mêm
   const stuck = [...g.factory.belts.values()].filter((b) => b.x === 10 && b.y < 12).reduce((n, b) => n + b.items.length, 0);
   assert(g.order!.lines[0].done === 10 && stuck === 0, `10 livrés, rien de coincé : ${g.order!.lines[0].done}, ${stuck} sur le chemin`);
   assert((rest.inBuf.tuyau_acier ?? 0) === 24, `le reste : ${JSON.stringify(rest.inBuf)}`);
+});
+test('commande du Comptoir à deux lignes, deux filtres : rien de plus une fois la commande livrée', () => {
+  const g = new Game('TEST-CPT3'); g.money = 1e5; g.world.reveal(10, 12, 30);
+  g.unlocks.add('separateur');
+  (g as unknown as { applyUnlocks(): void }).applyUnlocks();
+  for (const m of [...g.factory.machines.values()]) if (m.type === 'comptoir') g.factory.removeMachine(m);
+  g.factory.addMachine('comptoir', 4, 10, true);
+  g.order = { id: 1, rarity: 'commune' as never, lines: [{ item: 'batterie', qty: 10, done: 0 }, { item: 'moteur', qty: 10, done: 0 }], xp: 0, money: 0 };
+  const P = (c: TraceCell[], sp?: { from: Belt; dir: Dir }) => g.placeBelts(c, sp);
+  const s1 = g.placeMachine('coffre', 18, 10)!, s2 = g.placeMachine('coffre', 18, 16)!;
+  P([17, 16, 15, 14, 13, 12].map((x) => ({ x, y: 10, dir: 2, inDir: 2 })) as TraceCell[]);
+  P([17, 16, 15, 14, 13, 12].map((x) => ({ x, y: 16, dir: 2, inDir: 2 })) as TraceCell[]);
+  const f1 = g.factory.beltAt(12, 10)!, f2 = g.factory.beltAt(12, 16)!;
+  g.placeBox('boite_tri', 12, 10, 0); g.placeBox('boite_tri', 12, 16, 0);
+  P([11, 10, 9, 8, 7, 6].map((x) => ({ x, y: 10, dir: 2, inDir: 2 })) as TraceCell[], { from: f1, dir: 2 });
+  const c2 = [11, 10, 9, 8, 7, 6, 5].map((x) => ({ x, y: 16, dir: 2, inDir: 2 })) as TraceCell[];
+  c2.push({ x: 4, y: 16, dir: 3, inDir: 2 } as TraceCell);
+  for (let y = 15; y >= 12; y--) c2.push({ x: 4, y, dir: 3, inDir: 3 } as TraceCell);
+  P(c2, { from: f2, dir: 2 });
+  for (const m of g.factory.machines.values()) m.built = true;
+  for (const b of g.factory.belts.values()) b.built = true;
+  g.pending = []; g.factory.markBuilt();
+  g.setNodeRule(f1, 2, ['@comptoir']); g.setNodeRule(f2, 2, ['@comptoir']);
+  g.factory.putInStorage(s1, 'moteur', 40); g.factory.putInStorage(s2, 'batterie', 40);
+  let done = false;
+  (g as unknown as { completeOrder(): void }).completeOrder = function (this: Game) { done = true; this.order = null; };
+  for (let i = 0; i < 4000 && !done; i++) g.tick(0.05);
+  const left = [...g.factory.belts.values()].filter((b) => (b.y === 10 && b.x < 12) || b.x === 4 || (b.y === 16 && b.x < 12)).reduce((n, b) => n + b.items.length, 0);
+  assert(done && left === 0, `commande livrée, plus rien en route : ${left}`);
 });
 console.log('Charbon');
 test('une foreuse sur du charbon s’alimente toute seule', () => {
